@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Thought Stream">
+  <defs>
+    <!-- water current gradient: light aqua at the voice source, deep slate-teal as it streams away -->
+    <linearGradient id="ts-current" gradientUnits="userSpaceOnUse" x1="600" y1="900" x2="440" y2="150">
+      <stop offset="0"   stop-color="#35606B"/>
+      <stop offset="0.55" stop-color="#517E88"/>
+      <stop offset="1"   stop-color="#9DBBBF"/>
+    </linearGradient>
+    <radialGradient id="ts-bg" cx="0.5" cy="0.42" r="0.78">
+      <stop offset="0" stop-color="#1B2E32"/>
+      <stop offset="1" stop-color="#0B1315"/>
+    </radialGradient>
+    <radialGradient id="ts-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#6F979E" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#6F979E" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- full-bleed background (iOS masks to a rounded square) -->
+  <rect width="1024" height="1024" fill="url(#ts-bg)"/>
+  <circle cx="512" cy="470" r="410" fill="url(#ts-glow)"/>
+
+  <g fill="none" stroke="url(#ts-current)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- glow pass -->
+    <g stroke-width="46" opacity="0.15">
+      <path d="M408 250 A104 104 0 0 1 616 250 L616 520 A104 104 0 0 1 408 520 Z"/>
+      <path d="M348 430 C 348 566 420 634 512 634 C 604 634 676 566 676 430"/>
+      <path d="M512 634 L512 700"/>
+      <path d="M512 700 C 512 744 448 756 448 794 C 448 830 576 820 576 856 C 576 882 512 892 512 900"/>
+    </g>
+    <!-- crisp pass -->
+    <g stroke-width="18">
+      <!-- capsule (mic body) -->
+      <path d="M408 250 A104 104 0 0 1 616 250 L616 520 A104 104 0 0 1 408 520 Z"/>
+      <!-- pickup bracket -->
+      <path d="M348 430 C 348 566 420 634 512 634 C 604 634 676 566 676 430"/>
+      <!-- stem into the stream -->
+      <path d="M512 634 L512 700"/>
+      <!-- the voice, streaming away as a current -->
+      <path d="M512 700 C 512 744 448 756 448 794 C 448 830 576 820 576 856 C 576 882 512 892 512 900"/>
+    </g>
+    <!-- grille lines across the capsule -->
+    <g stroke-width="14" opacity="0.9">
+      <path d="M452 336 L572 336"/>
+      <path d="M452 392 L572 392"/>
+      <path d="M452 448 L572 448"/>
+    </g>
+  </g>
+
+  <!-- nodes -->
+  <g>
+    <!-- soft halos -->
+    <g fill="#6F979E" opacity="0.20">
+      <circle cx="348" cy="430" r="30"/> <circle cx="676" cy="430" r="30"/>
+      <circle cx="512" cy="900" r="36"/>
+    </g>
+    <!-- bracket tips (bright) -->
+    <g fill="#EAF1F4">
+      <circle cx="348" cy="430" r="16"/> <circle cx="676" cy="430" r="16"/>
+    </g>
+    <!-- grille end nodes (subtle texture) -->
+    <g fill="#C4D6D8" opacity="0.85">
+      <circle cx="452" cy="336" r="7"/> <circle cx="572" cy="336" r="7"/>
+      <circle cx="452" cy="392" r="7"/> <circle cx="572" cy="392" r="7"/>
+      <circle cx="452" cy="448" r="7"/> <circle cx="572" cy="448" r="7"/>
+    </g>
+    <!-- confluence + stream nodes -->
+    <g fill="#C4D6D8">
+      <circle cx="512" cy="634" r="13"/>
+      <circle cx="448" cy="794" r="12"/> <circle cx="576" cy="856" r="12"/>
+    </g>
+    <!-- mouth of the stream -->
+    <circle cx="512" cy="900" r="20" fill="#C4D6D8"/>
+    <!-- source: the live voice spark (Rogue Oak family gold) -->
+    <circle cx="512" cy="250" r="40" fill="#d2a463" opacity="0.22"/>
+    <circle cx="512" cy="250" r="22" fill="#d2a463"/>
+  </g>
+</svg>
