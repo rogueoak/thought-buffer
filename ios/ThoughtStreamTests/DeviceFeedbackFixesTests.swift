@@ -552,3 +552,59 @@ final class UtteranceResetTests: XCTestCase {
             current: "the product team is built a thing and there's making a bunch"))
     }
 }
+
+/// Feedback 0008: a paragraph doubled when a Mira command followed it. A reset commits the paragraph,
+/// then the same task's final transcription STILL leads with it, and the command split commits it
+/// again. `strippingCommittedPrefix` removes the already-committed lead so it is committed only once.
+final class CommittedPrefixDedupTests: XCTestCase {
+    func testStripsExactCommittedParagraphBeforeCommand() {
+        // The reported case: P2 was committed on the pause, then the command's final transcription
+        // accumulated "P2 Mira read that back". The committed P2 must be stripped so the split does
+        // not re-commit it.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Buy milk and eggs Mira read that back", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Mira read that back")
+    }
+
+    func testKeepsResultWhenRecognizerDroppedTheCommittedLead() {
+        // The other device behavior: the recognizer internally reset, so its final transcription does
+        // NOT lead with the committed paragraph. Nothing is stripped; the new utterance is kept whole.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Mira read that back", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Mira read that back")
+    }
+
+    func testStripsDespiteWordRevisionInTheCommittedLead() {
+        // The recognizer revised "there is" -> "there's" between the committed partial and the final,
+        // so the lead is not a byte-exact prefix. It is still consumed whole, not half-left.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "I think there's Mira new note", committed: "I think there is")
+        XCTAssertEqual(result, "Mira new note")
+    }
+
+    func testResultEqualToCommittedYieldsEmpty() {
+        // The task ended right on the committed paragraph with no trailing words: everything is
+        // already committed, so nothing remains to commit again.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Buy milk and eggs", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "")
+    }
+
+    func testDifferentUtteranceIsNotStripped() {
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Sell the car Mira stop", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Sell the car Mira stop")
+    }
+
+    func testEmptyCommittedReturnsResultUnchanged() {
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Buy milk Mira new note", committed: "")
+        XCTAssertEqual(result, "Buy milk Mira new note")
+    }
+
+    func testCaseInsensitiveLeadIsStripped() {
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "buy MILK and eggs Mira read that back", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Mira read that back")
+    }
+}
