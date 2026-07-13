@@ -59,16 +59,19 @@ final class NotePlaybackModel: ObservableObject {
         self.controller = controller
     }
 
-    /// Convenience: build a private controller for this note (the detail-view case, where the
-    /// controller is not shared with a live CarPlay scene). Resolves through the given resolver.
+    /// Test-support convenience: build a private controller from just the id + audio reference.
+    /// Production callers hold a full `Note` and use the `note:` initializer (so Now Playing gets a
+    /// real title / duration); this exists for the id-only playback tests. Resolves through the given
+    /// resolver.
     convenience init(
         noteID: UUID,
         audioFileName: String?,
         resolver: AudioURLResolving,
         player: AudioNotePlayer? = nil
     ) {
-        // A minimal note carrying only the id and audio reference is enough for the resolver; when the
-        // detail view has the full note it uses the `note:` initializer so Now Playing gets a title.
+        // A minimal note carrying only the id and audio reference is enough for the resolver; the fake
+        // title / zero duration never reach production Now Playing because no production caller uses
+        // this path.
         let note = Note(
             id: noteID,
             title: "",
