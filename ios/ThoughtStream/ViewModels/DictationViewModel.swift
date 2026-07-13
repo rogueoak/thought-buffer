@@ -392,6 +392,11 @@ final class DictationViewModel: ObservableObject {
             // separate in-progress phrase of real user content. Commands that need it (new note,
             // read that back) fold it in via `foldPartialIntoParagraphs`; the rest leave it intact.
             execute(command)
+        case .unrecognizedCommand:
+            // Led with the control word but not a known command (feedback 0005): command mode, so it
+            // is NOT transcribed. Drop it and show a brief chip so the user knows it was treated as a
+            // command rather than silently lost. Leave the live partial (separate user content).
+            showUnrecognizedCommandBanner()
         case .drop:
             partial = ""
         }
@@ -561,8 +566,19 @@ final class DictationViewModel: ObservableObject {
     /// Show the command chip and auto-dismiss it after a moment. The full label (control word plus
     /// the effect, e.g. "Mira - new note") is assembled here so the view renders a plain string.
     private func showBanner(_ banner: CommandBanner) {
+        showBannerLabel("\(controlWord) - \(banner.label)")
+    }
+
+    /// The chip shown when a keyword-led phrase was treated as a command but matched none (feedback
+    /// 0005), so the user knows their words were dropped as a command rather than silently lost.
+    private func showUnrecognizedCommandBanner() {
+        showBannerLabel("Sorry, I didn't catch that command")
+    }
+
+    /// Set the transient chip label and schedule its auto-dismiss.
+    private func showBannerLabel(_ label: String) {
         commandError = nil
-        commandBanner = "\(controlWord) - \(banner.label)"
+        commandBanner = label
         bannerTask?.cancel()
         bannerTask = Task { [weak self, bannerDuration] in
             try? await Task.sleep(for: bannerDuration)

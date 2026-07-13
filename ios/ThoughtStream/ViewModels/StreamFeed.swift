@@ -30,6 +30,10 @@ final class StreamFeed: ObservableObject {
     /// Reload the list off the main thread. Call after a dictation session saves.
     func reload() async { await driver.reload() }
 
+    /// Delete a note (and its sibling recording) through the store, then reload. Call from the
+    /// list's swipe-to-delete action.
+    func delete(id: UUID) async { await driver.delete(id: id) }
+
     /// Copy the driver's current state into the published properties so observers refresh.
     private func mirror() {
         notes = driver.notes

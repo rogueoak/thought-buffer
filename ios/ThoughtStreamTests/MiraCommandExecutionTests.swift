@@ -215,6 +215,24 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(model.commandBanner, "Mira - read that back")
     }
 
+    // MARK: - Keyword-led unrecognized command: dropped + chip (feedback 0005)
+
+    func testKeywordLedUnrecognizedCommandIsDroppedAndChipped() {
+        let model = makeModel()
+        model.injectFinalized("Keep this one.")
+        // Leads with the control word but is not a known command: dropped, not transcribed.
+        model.injectFinalized("Mira do a barrel roll")
+        XCTAssertEqual(model.paragraphs, ["Keep this one."], "keyword-led gibberish must not transcribe")
+        XCTAssertEqual(model.commandBanner, "Sorry, I didn't catch that command")
+    }
+
+    func testMidSentenceKeywordMentionStillTranscribes() {
+        let model = makeModel()
+        model.injectFinalized("I told Mira about the plan.")
+        XCTAssertEqual(model.paragraphs, ["I told Mira about the plan."])
+        XCTAssertNil(model.commandBanner)
+    }
+
     // MARK: - No banner for a no-op command (no actual effect)
 
     func testNoOpRemoveOnEmptyNoteShowsNoBanner() {

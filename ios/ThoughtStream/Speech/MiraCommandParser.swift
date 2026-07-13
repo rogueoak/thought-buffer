@@ -1,26 +1,38 @@
 import Foundation
 
-/// Turns a finalized speech segment into a `MiraCommand`, or nil when the segment is ordinary
-/// speech that should be committed to the note.
+/// The outcome of running a finalized speech segment through the control-word parser.
+///
+/// The model changed after on-device feedback (feedback 0005): the user wants "anything that
+/// starts with my keyword" to STOP transcribing. So a segment that leads with the control word is
+/// always COMMAND MODE - it is never written into the note. It either matches a known command
+/// (`.command`) or is dropped as an unrecognized command (`.unrecognizedCommand`, which the view
+/// model shows as a brief "didn't catch that" chip). Only a segment that does NOT lead with the
+/// control word is ordinary `.text` to commit. This supersedes the earlier strict-match design
+/// (which committed a keyword-led non-command as text): keyword-led-unrecognized now DROPS rather
+/// than mis-firing, so there is still no wrong-command data loss.
+enum MiraParseResult: Equatable {
+    /// The segment led with the control word and matched a known command; execute it.
+    case command(MiraCommand)
+    /// The segment led with the control word but matched no known command; drop it (do NOT
+    /// transcribe) and show the user a brief "didn't catch that" chip.
+    case unrecognizedCommand
+    /// The segment did not lead with the control word; commit it to the note unchanged.
+    case text
+}
+
+/// Turns a finalized speech segment into a `MiraParseResult`.
 ///
 /// Pure and unit-testable: no side effects, no dependencies beyond the injected control word.
-/// The grammar (see `docs/specs/0003-mira-control-words.md`):
+/// The grammar (see `docs/specs/0003-mira-control-words.md` and feedback 0005):
 ///
-/// - The control word must lead the segment ("mira ..."). This keeps a passing mention of the
-///   word mid-sentence from misfiring.
-/// - Matching is case-insensitive and exact against the command phrases: the tokens after the
-///   control word (minus documented filler) must BE a command phrase, not merely contain its key
-///   tokens. This stops "Mira, there's a new note from Karen" from firing newNote and
-///   "Mira read that note back to the team" from firing readThatBack.
-/// - Documented filler ("the", "that", "it", "a", "please") is tolerated where the grammar allows,
-///   and leading/trailing punctuation is stripped by tokenization.
+/// - The control word must LEAD the segment (after trimming leading punctuation/whitespace,
+///   case-insensitive). A leading control word puts the whole segment in COMMAND MODE - it is never
+///   transcribed - so a passing mid-sentence mention of the word is still committed as text.
+/// - The remainder after the control word is parsed TOLERANTLY: leading/trailing filler ("please",
+///   "to me", "for me", "the", "that", "it") is stripped, then what is left must contain a known
+///   command phrase. If it does, that command fires; if it does not, the segment is dropped as an
+///   unrecognized command (the user gets a chip) rather than transcribed.
 /// - "delete" is a synonym of "remove".
-///
-/// Grammar (remainder after the control word, all case-insensitive; bracketed tokens optional):
-/// - removeLastSentence:  [please] (remove | delete) [the] last sentence [please]
-/// - removeLastParagraph: [please] (remove | delete) [the] last paragraph [please]
-/// - newNote:             [please] (new note | start [a] new note) [please]
-/// - readThatBack:        [please] (read [that | it] back | read back [that | it]) [please]
 struct MiraCommandParser {
     /// The control word that must lead a command. Injected so a later Settings milestone can make
     /// it configurable; fixed to "Mira" for now.
@@ -30,74 +42,102 @@ struct MiraCommandParser {
         self.controlWord = controlWord
     }
 
-    /// Filler words tolerated at the very start (after the control word) and the very end of a
-    /// command phrase. These are politeness words that carry no meaning for the grammar.
-    private static let outerFiller: Set<String> = ["please"]
+    /// Filler words/phrases tolerated at the very start and the very end of the command remainder.
+    /// These are politeness / connective words that carry no meaning for the grammar. Multi-word
+    /// filler ("to me", "for me") is matched as a token run.
+    private static let leadingFiller: Set<String> = ["please"]
+    private static let trailingFiller: [[String]] = [
+        ["please"], ["to", "me"], ["for", "me"], ["the"], ["that"], ["it"],
+    ]
 
-    /// Parse a finalized segment. Returns the recognized command, or nil to commit the text.
-    func parse(_ segment: String) -> MiraCommand? {
+    /// Parse a finalized segment. Leads with the control word -> command mode (`.command` or
+    /// `.unrecognizedCommand`); otherwise `.text`.
+    func parse(_ segment: String) -> MiraParseResult {
         let tokens = Self.tokenize(segment)
-        guard let first = tokens.first else { return nil }
-
-        // Require the control word at the very start of the segment.
-        guard first == controlWord.lowercased() else { return nil }
-
-        // Strip the control word, then any leading/trailing politeness filler, so what remains is
-        // exactly the command phrase (or nothing / something that is not a command).
-        var rest = Array(tokens.dropFirst())
-        while let f = rest.first, Self.outerFiller.contains(f) { rest.removeFirst() }
-        while let l = rest.last, Self.outerFiller.contains(l) { rest.removeLast() }
-        guard !rest.isEmpty else { return nil }
-
-        for (patterns, command) in Self.grammar {
-            if patterns.contains(where: { matches(rest, pattern: $0) }) {
-                return command
-            }
+        guard let first = tokens.first, first == controlWord.lowercased() else {
+            return .text
         }
+
+        // Command mode: the segment leads with the control word. Strip the control word and any
+        // outer filler, then look for a known command phrase in what remains.
+        var rest = Array(tokens.dropFirst())
+        rest = Self.stripLeadingFiller(rest)
+        rest = Self.stripTrailingFiller(rest)
+
+        if let command = Self.matchCommand(rest) {
+            return .command(command)
+        }
+        // Led with the control word but is not a known command: drop it (do not transcribe).
+        return .unrecognizedCommand
+    }
+
+    /// Back-compat convenience for callers/tests that only care about the matched command. Returns
+    /// the command when one matched, else nil (both "plain text" and "unrecognized command" map to
+    /// nil here; callers needing the distinction use `parse`).
+    func command(in segment: String) -> MiraCommand? {
+        if case .command(let command) = parse(segment) { return command }
         return nil
     }
 
     // MARK: - Grammar
 
-    /// A phrase pattern: a fixed sequence of `Token`s that the remainder must match exactly.
-    private enum Token: Equatable {
-        /// A required literal token, or one of a set of alternatives (e.g. remove | delete).
-        case oneOf([String])
-        /// An optional filler token, or one of a set of alternatives (e.g. [the], [that | it]).
-        case optional([String])
-    }
-
-    /// Each command's accepted phrasings, tried in order. The remainder must match one pattern
-    /// EXACTLY (every remainder token consumed, no arbitrary extra words), which is what stops the
-    /// loose-subsequence false positives.
-    private static let grammar: [([[Token]], MiraCommand)] = [
-        ([[.oneOf(["remove", "delete"]), .optional(["the"]), .oneOf(["last"]), .oneOf(["sentence"])]],
-         .removeLastSentence),
-        ([[.oneOf(["remove", "delete"]), .optional(["the"]), .oneOf(["last"]), .oneOf(["paragraph"])]],
-         .removeLastParagraph),
-        ([[.oneOf(["new"]), .oneOf(["note"])],
-          [.oneOf(["start"]), .optional(["a"]), .oneOf(["new"]), .oneOf(["note"])]],
-         .newNote),
-        ([[.oneOf(["read"]), .optional(["that", "it"]), .oneOf(["back"])],
-          [.oneOf(["read"]), .oneOf(["back"]), .optional(["that", "it"])]],
-         .readThatBack),
+    /// The known command phrases, tried in order. Each is a list of required token runs; the
+    /// remainder must match one of a command's phrasings after filler has been stripped. Matching is
+    /// tolerant: the phrase must be PRESENT as the whole remainder (filler already removed), so
+    /// "read that back" and "read back" both fire readThatBack, but a trailing real clause ("read
+    /// that note back to the team") does not - "note" is not filler, so it does not match and the
+    /// segment is dropped as an unrecognized command rather than mis-firing.
+    private static let grammar: [([[String]], MiraCommand)] = [
+        ([["remove", "last", "sentence"], ["delete", "last", "sentence"]], .removeLastSentence),
+        ([["remove", "last", "paragraph"], ["delete", "last", "paragraph"]], .removeLastParagraph),
+        ([["new", "note"], ["start", "new", "note"]], .newNote),
+        ([["read", "back"], ["read", "that", "back"], ["read", "it", "back"],
+          ["read", "back", "that"], ["read", "back", "it"]], .readThatBack),
     ]
 
-    /// True when `tokens` match `pattern` exactly: each required token consumed in order, optional
-    /// tokens consumed when present, and no leftover tokens at the end.
-    private func matches(_ tokens: [String], pattern: [Token]) -> Bool {
-        var i = 0
-        for token in pattern {
-            switch token {
-            case .oneOf(let alts):
-                guard i < tokens.count, alts.contains(tokens[i]) else { return false }
-                i += 1
-            case .optional(let alts):
-                if i < tokens.count, alts.contains(tokens[i]) { i += 1 }
+    /// Match the filler-stripped remainder against the grammar. A phrase matches when the remainder
+    /// equals it after ALSO dropping the inner optional filler ("the", "that", "it", "a") that may
+    /// sit between required tokens (e.g. "remove THE last sentence", "start A new note").
+    private static func matchCommand(_ rest: [String]) -> MiraCommand? {
+        let core = rest.filter { !innerFiller.contains($0) }
+        for (phrases, command) in grammar {
+            for phrase in phrases {
+                let phraseCore = phrase.filter { !innerFiller.contains($0) }
+                if core == phraseCore { return command }
             }
         }
-        // Exact match: every remainder token must have been consumed.
-        return i == tokens.count
+        return nil
+    }
+
+    /// Optional filler that may appear BETWEEN required command tokens and is ignored when matching
+    /// (e.g. "remove the last sentence", "start a new note", "read that back").
+    private static let innerFiller: Set<String> = ["the", "a", "that", "it"]
+
+    // MARK: - Filler stripping
+
+    private static func stripLeadingFiller(_ tokens: [String]) -> [String] {
+        var rest = tokens
+        while let f = rest.first, leadingFiller.contains(f) { rest.removeFirst() }
+        return rest
+    }
+
+    /// Strip trailing filler runs ("please", "to me", "for me", "the", "that", "it"), longest match
+    /// first, repeatedly, so "read that back to me please" reduces to "read that back".
+    private static func stripTrailingFiller(_ tokens: [String]) -> [String] {
+        var rest = tokens
+        var changed = true
+        while changed {
+            changed = false
+            // Try longer filler runs first so "to me" is consumed as a unit before "me" alone.
+            for run in trailingFiller.sorted(by: { $0.count > $1.count }) {
+                if rest.count >= run.count && Array(rest.suffix(run.count)) == run {
+                    rest.removeLast(run.count)
+                    changed = true
+                    break
+                }
+            }
+        }
+        return rest
     }
 
     // MARK: - Helpers

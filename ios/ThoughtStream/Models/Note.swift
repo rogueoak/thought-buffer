@@ -55,6 +55,23 @@ struct Note: Identifiable, Hashable {
     /// The number of paragraphs in the note.
     var paragraphCount: Int { paragraphs.count }
 
+    /// The total number of words across all paragraphs, counting runs of non-whitespace as words.
+    /// Shown on the note card (feedback 0005) instead of a paragraph count, which read oddly ("1
+    /// paragraphs") and told the user little.
+    var wordCount: Int {
+        paragraphs.reduce(0) { total, paragraph in
+            total + paragraph
+                .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+                .count
+        }
+    }
+
+    /// A short, correctly-pluralized word-count label ("1 word", "12 words") for the note card.
+    var wordCountLabel: String {
+        let count = wordCount
+        return "\(count) " + (count == 1 ? "word" : "words")
+    }
+
     /// A short preview drawn from the first paragraph.
     var snippet: String {
         paragraphs.first ?? ""

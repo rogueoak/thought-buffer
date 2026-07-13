@@ -60,28 +60,50 @@ struct StreamListView: View {
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottom) {
-                CanopyColor.bg.ignoresSafeArea()
-
+            Group {
                 if feed.notes.isEmpty && feed.didLoad {
+                    // Center in the frame that REMAINS after the record button's safe-area inset, so
+                    // the help text can never sit under the button (feedback 0005).
                     emptyState
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: CanopySpacing.x3) {
-                            ForEach(feed.notes) { note in
-                                NavigationLink(value: note) {
-                                    NoteCard(note: note)
+                    // A `List` (not a ScrollView + LazyVStack) so iOS-standard swipe-to-delete works
+                    // (feedback 0005). River Mist styling is kept by hiding the list chrome: the app
+                    // background shows through (clear row/list backgrounds), separators are hidden,
+                    // and each row keeps the NoteCard's own surface/border via inset row spacing.
+                    List {
+                        ForEach(feed.notes) { note in
+                            NavigationLink(value: note) {
+                                NoteCard(note: note)
+                            }
+                            .listRowInsets(EdgeInsets(
+                                top: CanopySpacing.x1_5,
+                                leading: CanopySpacing.x4,
+                                bottom: CanopySpacing.x1_5,
+                                trailing: CanopySpacing.x4
+                            ))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    Task { await feed.delete(id: note.id) }
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
-                        .padding(.horizontal, CanopySpacing.x4)
-                        .padding(.top, CanopySpacing.x3)
-                        // Leave room for the floating record button.
-                        .padding(.bottom, CanopySpacing.x24)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .padding(.top, CanopySpacing.x2)
                 }
-
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(CanopyColor.bg.ignoresSafeArea())
+            // Pin the record button in the bottom safe-area inset rather than overlaying content:
+            // SwiftUI then reserves its height under BOTH the empty state and the scrolling list, so
+            // the button can never overlap the empty-state help text or the last note (feedback 0005).
+            .safeAreaInset(edge: .bottom) {
                 RecordButton { sessionRoute.startNewSession() }
                     .padding(.bottom, CanopySpacing.x6)
             }

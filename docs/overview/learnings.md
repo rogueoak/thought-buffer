@@ -178,3 +178,43 @@ rule in a shared seam both the store and the UI call (so the view never reaches 
 store and the rule can't drift), and bound any user-editable persisted collection (row count,
 field length) so a stuck field cannot grow storage without limit. Generalizes to any configurable
 value that feeds a parser, a transform, or a persisted collection.
+
+## A restart-to-continue loop must commit the in-progress phrase at the seam (feedback 0005)
+
+`SFSpeechRecognitionTask` ends on its own - on a clean `isFinal` result AND on an ERROR (a
+no-speech / natural-pause timeout, a duration limit). The service auto-restarts a fresh task to keep
+dictation continuous. The bug: text was committed as a paragraph only on `isFinal`; an error-ended
+task emitted its last words as a transient partial, and the replacement task's first (empty) partials
+overwrote it, so the words spoken right before a pause vanished. The rule: when a subtask feeding a
+stream ENDS, whatever it holds must be COMMITTED at the seam, never left as transient state the next
+subtask can clobber - and "ends" includes error/timeout ends, not just clean completions. Generalizes
+to any auto-restart loop over a continuous source (speech, network reconnection, paginated cursors).
+
+## A strict "no false-fire" rule can turn into a "silent literal" bug (feedback 0005)
+
+The control-word parser was made strict (spec 0003) to avoid misfiring on a passing mention. But
+rejecting a keyword-led near-miss BACK INTO the transcript is itself a failure the user notices:
+"Mira read that back to me" got written into the note verbatim. When the user's stated intent is
+"anything starting with my keyword is a command", make keyword-led the trigger, parse the remainder
+tolerantly (strip outer/inner filler), and DROP an unrecognized keyword-led phrase with visible
+feedback (a chip) rather than transcribing it - no wrong action fires, and no command phrase is
+silently committed as text. Generalizes to any recognizer choosing between over-firing and silently
+passing input through when the trigger is explicit: prefer a visible drop over a silent literal.
+
+## Pin a floating control with safeAreaInset, not a ZStack overlay (feedback 0005)
+
+A floating Record button layered in a `ZStack(alignment: .bottom)` overlapped the centered
+empty-state text: the scrolling list padded room for it, the centered empty state did not.
+`.safeAreaInset(edge:)` reserves real layout space under ALL content states, so nothing (list or
+centered empty state) can sit under the control. Generalizes to any pinned affordance over content
+that is sometimes scrollable and sometimes centered.
+
+## Extract the perceptual mapping so a device-only feature still has a CI gate (feedback 0005)
+
+The waveform bars sat at the floor because the RMS->level mapping (`rms * 12`) was too weak for
+normal speech and the smoothing pulled it lower. The end-to-end path (mic emits level -> bars move)
+is only judgeable on a physical device, but the RMS->bar-height math is pure. Extracting it into a
+testable `normalizedLevel(fromRMS:)` (perceptual `sqrt` curve, tuned gain) lets a regression that
+flattens the bars fail in CI even though the live mic can only be confirmed on hardware. Generalizes:
+when a feature is device-only end to end, carve out the pure numeric core and unit-test it so at
+least the tunable part is guarded.

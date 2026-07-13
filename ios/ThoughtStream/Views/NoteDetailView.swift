@@ -35,7 +35,7 @@ struct NoteDetailView: View {
                         Image(systemName: "clock")
                         Text(RelativeTime.label(for: note.createdAt))
                         Text("-")
-                        Text("\(note.paragraphCount) paragraphs")
+                        Text(note.wordCountLabel)
                     }
                     .font(.system(size: CanopyFont.sizeXs))
                     .foregroundStyle(CanopyColor.textSubtle)

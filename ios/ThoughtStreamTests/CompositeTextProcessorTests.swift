@@ -43,14 +43,23 @@ final class CompositeTextProcessorTests: XCTestCase {
         XCTAssertEqual(processor.process("Call Shay tomorrow"), .text("Call Shea tomorrow"))
     }
 
-    func testNonCommandMentioningControlWordGetsOverrides() {
-        // "Mira" leads but is not a recognized command, so it is text and overrides still apply to
-        // the rest of the segment.
+    func testKeywordLedNonCommandIsUnrecognizedCommandNotText() {
+        // Feedback 0005: "Mira" LEADS the segment, so it is command mode. It is not a known command,
+        // so it is DROPPED as an unrecognized command (NOT transcribed, and never spelling-mangled),
+        // superseding the old behavior of committing it as text.
+        let overrides = [SpellingOverride(from: "Shay", to: "Shea")]
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: overrides)
+        XCTAssertEqual(processor.process("Mira told Shay a story"), .unrecognizedCommand)
+    }
+
+    func testMidSentenceControlWordMentionGetsOverrides() {
+        // The control word appears MID-sentence (not leading), so the segment is ordinary text and
+        // overrides still apply.
         let overrides = [SpellingOverride(from: "Shay", to: "Shea")]
         let processor = CompositeTextProcessor(controlWord: "Mira", overrides: overrides)
         XCTAssertEqual(
-            processor.process("Mira told Shay a story"),
-            .text("Mira told Shea a story")
+            processor.process("Call Shay and tell Mira the plan"),
+            .text("Call Shea and tell Mira the plan")
         )
     }
 }

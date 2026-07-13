@@ -8,7 +8,7 @@ The first buildable milestone: a SwiftUI app that runs in the simulator with the
 palette, the app icon, and mock data. No speech, CarPlay, or persistence yet.
 
 - **Stream list** - a scrollable feed of note cards (title, two-line snippet, timestamp,
-  paragraph count, primary accent dot) on the themed background, with a mic + gear toolbar and
+  word count, primary accent dot) on the themed background, with a mic + gear toolbar and
   a floating Record button that opens dictation.
 - **Note detail** - a read-only view of a note's paragraphs and timestamp.
 - **Dictation (mock)** - the live-capture screen with a streaming sample string, a blinking
@@ -52,9 +52,12 @@ acts on it instead of writing it into the note.
 - **Read that back** - "Mira read that back" speaks the last paragraph aloud. Capture pauses
   while Mira speaks so the audio does not feed back into recognition, then resumes.
 
-Recognition is case-insensitive and tolerant of phrasing ("delete" for "remove", optional filler
-like "the"/"that"), and requires the control word to lead the phrase so a passing mention of
-"Mira" never misfires. Each command flashes a brief control chip ("Mira - removed last sentence")
+Recognition is case-insensitive and tolerant of phrasing ("delete" for "remove", filler like
+"the"/"that"/"to me"). The control word must LEAD the phrase, and a leading control word puts the
+whole segment in command mode - it is never transcribed. An unrecognized keyword-led phrase is
+dropped (not written into the note) with a brief "didn't catch that" chip, so a passing mid-sentence
+mention of "Mira" is still transcribed but "Mira <anything>" never lands as literal text (feedback
+0005). Each command flashes a brief control chip ("Mira - removed last sentence")
 in the dictation screen. The control word is fixed to "Mira" for now; a configurable name and
 spelling overrides are still out (Settings milestone), as are CarPlay, Siri, and sync.
 
@@ -192,3 +195,23 @@ CarPlay itself needs the Audio entitlement plus a CarPlay head unit / the CarPla
 proven structurally and by tests. The lock-screen Now Playing render needs a device; the wiring is
 covered by unit tests. A waveform scrubber, per-paragraph seek, in-CarPlay live capture, and a
 "play my last note" Siri intent are out.
+
+## On-device feedback fixes (feedback 0005)
+
+Fixes from real device testing:
+
+- **Continuous feed survives a natural pause** - a recognition task that ends on a no-speech
+  timeout now commits its in-progress words as a paragraph before restarting, so a pause mid-note
+  never loses text.
+- **Keyword-led command mode** - anything that leads with the control word is treated as a command
+  and never transcribed; an unrecognized keyword-led phrase is dropped with a chip (see Mira above).
+- **Swipe to delete** - the Stream list is a `List` with iOS-standard swipe-to-delete that removes
+  the note and its sibling recording through the store, then reloads.
+- **Word count** - note cards and the detail header show a word count ("12 words" / "1 word")
+  instead of a paragraph count.
+- **Louder waveform** - the mic-level -> bar-height mapping is tuned (perceptual curve, higher gain)
+  so normal speech visibly moves the bars.
+- **Record button never overlaps content** - it lives in the bottom safe-area inset, clear of the
+  empty state and the list.
+- **Playback discovery** - notes with a recording show a small play affordance on the card; tapping
+  the card opens the detail Play control.

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A single note card in the Stream list: title, two-line snippet, timestamp,
-/// paragraph count, and a small primary accent dot.
+/// word count, a play affordance when the note has audio, and a small primary accent dot.
 struct NoteCard: View {
     let note: Note
 
@@ -27,7 +27,14 @@ struct NoteCard: View {
 
             HStack(spacing: CanopySpacing.x3) {
                 Label(RelativeTime.label(for: note.createdAt), systemImage: "clock")
-                Label("\(note.paragraphCount)", systemImage: "text.alignleft")
+                Label(note.wordCountLabel, systemImage: "text.alignleft")
+                // A small play affordance so a note with a recording is discoverable at a glance
+                // (feedback 0005); tapping the card still navigates to the detail view to play.
+                if note.hasAudio {
+                    Label("Recording", systemImage: "play.circle")
+                        .labelStyle(.iconOnly)
+                        .foregroundStyle(CanopyColor.primary)
+                }
                 Spacer(minLength: 0)
             }
             .font(.system(size: CanopyFont.sizeXs))

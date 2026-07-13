@@ -54,6 +54,17 @@ final class NoteStoreDriver {
         observer?.stop()
     }
 
+    /// Delete a note through the store (which also removes its sibling audio recording), then reload
+    /// the feed so the list reflects the removal. The delete runs on a detached task like the load,
+    /// because the iCloud store coordinates the file removal. Errors are swallowed: a failed delete
+    /// simply leaves the note in place, and the reload re-reflects the true on-disk state.
+    func delete(id: UUID) async {
+        await Task.detached(priority: .userInitiated) { [store] in
+            try? store.delete(id: id)
+        }.value
+        await reload()
+    }
+
     /// Reload the list. `loadAll()` runs on a detached task (it can block on iCloud coordination);
     /// only the assignment touches this main-actor state, then `onStateChange` fires.
     func reload() async {

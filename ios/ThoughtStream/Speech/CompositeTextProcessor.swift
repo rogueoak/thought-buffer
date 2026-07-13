@@ -19,12 +19,17 @@ struct CompositeTextProcessor: TextProcessor {
     }
 
     func process(_ text: String) -> ProcessedSegment {
-        // Detect a command on the raw segment first; a command is returned untouched.
+        // Detect command mode on the raw segment first. Both a matched command AND a keyword-led
+        // unrecognized command (feedback 0005) are returned untouched: a segment that led with the
+        // control word is command mode and must NEVER be spelling-mangled or transcribed - it either
+        // runs or is dropped with a chip.
         let commandResult = command.process(text)
-        if case .command = commandResult {
+        switch commandResult {
+        case .command, .unrecognizedCommand:
             return commandResult
+        case .text, .drop:
+            // Not command mode: apply spelling overrides to the dictated text.
+            return spelling.process(text)
         }
-        // Not a command: apply spelling overrides to the dictated text.
-        return spelling.process(text)
     }
 }
