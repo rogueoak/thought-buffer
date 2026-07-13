@@ -14,13 +14,25 @@ How the system is built and why.
 
 - `App/` - `ThoughtStreamApp` entry point. Roots to `StreamListView`; a `-uiScreen dictation`
   launch argument roots to `DictationView` instead, used only for screenshot tooling.
-- `Models/` - `Note` (id, title, paragraphs, createdAt, derived snippet + paragraph count) and
-  `MockNotes` (sample data). Views read `MockNotes` so a real store can replace it later without
-  touching the UI.
-- `Views/` - presentational SwiftUI: `StreamListView`, `NoteCard`, `NoteDetailView`,
-  `DictationView`, `SettingsView`. No business logic; mock only.
+- `Models/` - `Note` (id, title, paragraphs, createdAt, derived snippet + paragraph count) with
+  Markdown (de)serialization, plus `MockNotes` (sample data, used only by previews now). The
+  value type stays small and tolerant of unknown frontmatter keys so later fields do not break
+  files on disk.
+- `Storage/` - `NoteStore` persists each note as `Documents/ThoughtStream/<id>.md` (YAML
+  frontmatter + body). Thin and cache-free: the files are the source of truth. `loadAll` returns
+  notes newest first.
+- `Speech/` - `SpeechDictationService` owns the `AVAudioEngine`, `SFSpeechRecognizer`, and the
+  current `SFSpeechRecognitionTask`. On-device only. Emits events (partial, finalized, level,
+  failure). Auto-restarts a finished task on the same audio to keep dictation continuous.
+- `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
+  logic: it drives `DictationView` from the speech service and saves through the store.
+- `Views/` - SwiftUI screens. `StreamListView` loads from `NoteStore`; `DictationView` binds to
+  `DictationViewModel`; `NoteCard`, `NoteDetailView`, `SettingsView` stay presentational.
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.
+
+Tests live in `ios/ThoughtStreamTests/` (a `bundle.unit-test` target): `NoteStore`, `Note`
+Markdown, and `DictationViewModel` save/reload. The generated scheme runs them.
 
 ## Design tokens
 

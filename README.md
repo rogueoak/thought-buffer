@@ -99,6 +99,20 @@ xcodebuild -project ios/ThoughtStream.xcodeproj -scheme ThoughtStream \
 
 After editing `ios/project.yml` or adding source files, run `xcodegen generate` again.
 
+### First run: permissions and storage
+
+On the first Record, the app asks for microphone and speech recognition access. Grant both, or
+the dictation screen shows a message explaining what it needs and how to turn it on. Speech runs
+on device (`requiresOnDeviceRecognition`); nothing is sent to a server.
+
+Notes are saved as Markdown files under the app's `Documents/ThoughtStream/` directory, one
+`<id>.md` file per note (YAML frontmatter plus the body). The Stream list reads them straight
+from disk, newest first.
+
+Live speech capture in the simulator is unreliable: it may use the Mac microphone or decline
+on-device recognition. Verify real dictation on a physical device. To exercise the design in the
+simulator without a mic, launch with `-uiScreen dictation`, which injects sample text.
+
 ### Design tokens
 
 The River Mist tokens live in Canopy's `roots` package and are vendored into the app at

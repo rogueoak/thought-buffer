@@ -1,30 +1,43 @@
 import SwiftUI
 
-/// The notes feed: a scrollable list of mock note cards on the River Mist palette,
-/// with a toolbar (mic + gear) and a prominent record button that presents dictation.
+/// The notes feed: a scrollable list of real saved notes on the River Mist palette, with a
+/// toolbar (mic + gear) and a prominent record button that presents dictation. Notes load from
+/// the `NoteStore` and refresh after a dictation session saves.
 struct StreamListView: View {
-    private let notes = MockNotes.all
+    /// The note store, injected from the composition root (`AppDependencies`) rather than
+    /// allocated inline, so one place wires the concrete store.
+    private let store: NoteStoring
+    @State private var notes: [Note] = []
+    @State private var didLoad = false
     @State private var showDictation = false
     @State private var showSettings = false
+
+    init(store: NoteStoring) {
+        self.store = store
+    }
 
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottom) {
                 CanopyColor.bg.ignoresSafeArea()
 
-                ScrollView {
-                    LazyVStack(spacing: CanopySpacing.x3) {
-                        ForEach(notes) { note in
-                            NavigationLink(value: note) {
-                                NoteCard(note: note)
+                if notes.isEmpty && didLoad {
+                    emptyState
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: CanopySpacing.x3) {
+                            ForEach(notes) { note in
+                                NavigationLink(value: note) {
+                                    NoteCard(note: note)
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
+                        .padding(.horizontal, CanopySpacing.x4)
+                        .padding(.top, CanopySpacing.x3)
+                        // Leave room for the floating record button.
+                        .padding(.bottom, CanopySpacing.x24)
                     }
-                    .padding(.horizontal, CanopySpacing.x4)
-                    .padding(.top, CanopySpacing.x3)
-                    // Leave room for the floating record button.
-                    .padding(.bottom, CanopySpacing.x24)
                 }
 
                 RecordButton { showDictation = true }
@@ -52,14 +65,45 @@ struct StreamListView: View {
                     .tint(CanopyColor.primary)
                 }
             }
-            .sheet(isPresented: $showDictation) {
-                DictationView()
+            .fullScreenCover(isPresented: $showDictation) {
+                DictationView(model: DictationViewModel(store: store)) { savedNote in
+                    if savedNote != nil {
+                        reload()
+                    }
+                }
             }
             .sheet(isPresented: $showSettings) {
                 SettingsView()
             }
         }
         .tint(CanopyColor.primary)
+        .onAppear(perform: loadIfNeeded)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: CanopySpacing.x3) {
+            Image(systemName: "waveform")
+                .font(.system(size: CanopyFont.sizeX4xl, weight: .semibold))
+                .foregroundStyle(CanopyColor.primary)
+            Text("No notes yet")
+                .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
+                .foregroundStyle(CanopyColor.text)
+            Text("Tap Record and start talking. Your words land here as a note.")
+                .font(.system(size: CanopyFont.sizeSm))
+                .foregroundStyle(CanopyColor.textMuted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, CanopySpacing.x8)
+        }
+    }
+
+    private func loadIfNeeded() {
+        guard !didLoad else { return }
+        reload()
+    }
+
+    private func reload() {
+        notes = store.loadAll()
+        didLoad = true
     }
 }
 
@@ -85,5 +129,5 @@ private struct RecordButton: View {
 }
 
 #Preview {
-    StreamListView()
+    StreamListView(store: NoteStore())
 }
