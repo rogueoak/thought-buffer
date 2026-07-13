@@ -207,17 +207,19 @@ struct DictationView: View {
     /// the last finalized recognized text and how the processor classified it (feedback tooling so the
     /// developer can read, on their own device, exactly what the recognizer produced). Compiled OUT of
     /// Release. It only reads `model.lastDebugTrace`; it never logs, persists, or transmits anything.
-    @ViewBuilder
     private var debugReadout: some View {
-        if !model.lastDebugTrace.isEmpty {
-            Text(model.lastDebugTrace)
-                .font(.system(size: CanopyFont.sizeXs, design: .monospaced))
-                .foregroundStyle(CanopyColor.textSubtle)
-                .multilineTextAlignment(.leading)
-                .lineLimit(3)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, CanopySpacing.x4)
-        }
+        // Always visible in DEBUG (even before any speech) so it is a reliable "am I on the new
+        // build" indicator, and it updates live on every partial so it visibly moves while talking.
+        Text(model.lastDebugTrace)
+            .font(.system(size: CanopyFont.sizeXs, design: .monospaced))
+            .foregroundStyle(CanopyColor.text)
+            .multilineTextAlignment(.leading)
+            .lineLimit(3)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(CanopySpacing.x2)
+            .background(CanopyColor.muted)
+            .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.sm, style: .continuous))
+            .padding(.horizontal, CanopySpacing.x4)
     }
     #endif
 

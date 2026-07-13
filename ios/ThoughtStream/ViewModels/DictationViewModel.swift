@@ -129,7 +129,7 @@ final class DictationViewModel: ObservableObject {
     /// what the recognizer produced and how the processor split it. Compiled OUT of Release entirely.
     /// It is NEVER logged, persisted, or transmitted - it lives only in this published field and its
     /// on-screen label. The production code path does not read it, so nothing changes in Release.
-    @Published private(set) var lastDebugTrace: String = ""
+    @Published private(set) var lastDebugTrace: String = "TS-DEBUG ready - speak, then pause"
     #endif
 
     private let service: SpeechCaptureService
@@ -377,6 +377,9 @@ final class DictationViewModel: ObservableObject {
         switch event {
         case .partial(let text):
             partial = partialText(from: processor.process(text))
+            #if DEBUG
+            lastDebugTrace = "TS-DEBUG partial: \"" + String(text.suffix(50)) + "\""
+            #endif
         case .finalizedSegment(let text, let range):
             handleFinalized(text, range: range)
         case .level(let value):
