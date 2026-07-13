@@ -11,9 +11,11 @@ import Foundation
 struct MiraTextProcessor: TextProcessor {
     private let parser: MiraCommandParser
 
-    /// The default control word for this milestone. A single constant so a later Settings
-    /// milestone can make it configurable in one place.
-    static let defaultControlWord = "Mira"
+    /// The default control word. Owned by the Settings `ControlPhrase` seam (which also owns
+    /// validation and its fallback); re-exported here so callers with only the speech layer in
+    /// scope keep a stable reference. The layering points one way: this defers to `ControlPhrase`,
+    /// not the reverse.
+    static let defaultControlWord = ControlPhrase.defaultWord
 
     init(controlWord: String = MiraTextProcessor.defaultControlWord) {
         self.parser = MiraCommandParser(controlWord: controlWord)

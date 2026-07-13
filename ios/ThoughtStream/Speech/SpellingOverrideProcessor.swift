@@ -19,6 +19,16 @@ struct SpellingOverrideProcessor: TextProcessor {
 
     /// Matches a run of word characters. Only complete matches are considered for replacement, so
     /// substrings inside a longer word are never touched.
+    ///
+    /// Note: `\w+` includes the underscore, whereas `ControlPhrase`/`MiraCommandParser` tokenize on
+    /// `CharacterSet.alphanumerics` (which EXCLUDES underscore). The two tokenizers therefore differ
+    /// on underscore-containing tokens. This has no runtime impact on speech transcripts (a speech
+    /// recognizer emits words, not underscores) and the two operate on different concerns (override
+    /// matching vs command matching), so they are intentionally left independent; documented here to
+    /// avoid future confusion if the sets are ever assumed identical.
+    ///
+    /// The pattern is a compile-time-constant string literal, so `try!` cannot fail at runtime - the
+    /// regex is valid or the process would trap on the very first construction in any test/run.
     private static let wordRegex = try! NSRegularExpression(pattern: "\\w+")
 
     init(overrides: [SpellingOverride]) {

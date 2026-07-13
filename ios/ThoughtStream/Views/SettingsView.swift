@@ -58,7 +58,9 @@ struct SettingsView: View {
     private var assistantSection: some View {
         Section {
             TextField("Assistant name", text: $controlPhrase)
-                .textInputAutocapitalization(.words)
+                // A single leading token is expected, not a title-cased phrase; word-by-word
+                // autocapitalization fights that, so leave capitalization to the user.
+                .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .foregroundStyle(CanopyColor.text)
                 .onChange(of: controlPhrase) { _, newValue in
@@ -70,7 +72,7 @@ struct SettingsView: View {
         } footer: {
             VStack(alignment: .leading, spacing: CanopySpacing.x1) {
                 Text("Say this word before a command, like \"\(effectiveControlPhrase) new note\".")
-                Text("Leave it blank to use \"\(MiraTextProcessor.defaultControlWord)\". Changes apply to your next session.")
+                Text("Leave it blank to use \"\(ControlPhrase.defaultWord)\". Changes apply to your next session.")
             }
             .font(.system(size: CanopyFont.sizeXs))
             .foregroundStyle(CanopyColor.textSubtle)
@@ -125,7 +127,9 @@ struct SettingsView: View {
     private var storageSection: some View {
         Section {
             LabeledContent("Location", value: storageLabel)
-            LabeledContent("Format", value: "Markdown")
+            // Driven from the store's own format constant rather than a bare literal, so the row
+            // stays truthful if the on-disk format ever changes.
+            LabeledContent("Format", value: NoteStore.storageFormatLabel)
         } header: {
             Text("Storage")
                 .foregroundStyle(CanopyColor.textMuted)

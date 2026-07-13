@@ -19,3 +19,11 @@ protocol NoteStoring: Sendable {
     /// Delete a note by id. No-op if it does not exist.
     func delete(id: UUID) throws
 }
+
+extension NoteStoring {
+    /// The on-disk format every note store writes. Both `NoteStore` and `ICloudNoteStore`
+    /// serialize a `Note` to a `<id>.md` Markdown file, so this is a real invariant of the storage
+    /// layer, not a stub. Exposed as one constant so the Settings "Format" row is driven from the
+    /// truth rather than a duplicated literal that could silently drift.
+    static var storageFormatLabel: String { "Markdown" }
+}

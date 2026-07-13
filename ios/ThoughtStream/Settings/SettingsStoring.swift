@@ -56,6 +56,10 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         }
         set {
             let bounded = Self.bounded(newValue)
+            // `try?` yields nil only if encoding `[SpellingOverride]` fails, which cannot happen for
+            // this fixed, all-`String`/`UUID` Codable type. If it somehow did, `defaults.set` with
+            // nil clears the key, so the getter falls back to `[]` - the same safe empty state as a
+            // fresh install, never a crash and never stale data.
             let data = try? JSONEncoder().encode(bounded)
             defaults.set(data, forKey: Key.spellingOverrides)
         }

@@ -79,7 +79,17 @@ final class SettingsStoreTests: XCTestCase {
     func testValidatedControlPhraseIsPure() {
         XCTAssertEqual(ControlPhrase.validated("Nova"), "Nova")
         XCTAssertEqual(ControlPhrase.validated("  "), "Mira")
-        XCTAssertEqual(ControlPhrase.validated(String(repeating: "x", count: 40)), "Mira")
+        // The over-length fallback is covered by `testControlPhraseLengthBoundary`.
+    }
+
+    /// A phrase with no alphanumeric characters at all (only punctuation) has no first token, so it
+    /// must fall back to the default rather than storing an unmatchable control word.
+    func testAllNonAlphanumericControlPhraseFallsBackToMira() {
+        XCTAssertEqual(ControlPhrase.validated("!!!"), "Mira")
+        XCTAssertEqual(ControlPhrase.validated("--- ... ---"), "Mira")
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.controlPhrase = "!!!"
+        XCTAssertEqual(store.controlPhrase, "Mira")
     }
 
     // MARK: - Spelling overrides persistence
@@ -128,5 +138,45 @@ final class SettingsStoreTests: XCTestCase {
         let read = store.spellingOverrides[0]
         XCTAssertEqual(read.from.count, UserDefaultsSettingsStore.maxOverrideFieldLength)
         XCTAssertEqual(read.to.count, UserDefaultsSettingsStore.maxOverrideFieldLength)
+    }
+
+    /// The count cap is exercised exactly at the boundary: with `maxOverrideCount + 1` rows written,
+    /// the last accepted row (index max-1) is kept and the one over the cap is dropped. This pins
+    /// the off-by-one that `+50` would not catch.
+    func testOverrideCountBoundaryKeepsLastAcceptedAndDropsOverflow() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        let cap = UserDefaultsSettingsStore.maxOverrideCount
+        let list = (0..<(cap + 1)).map { SpellingOverride(from: "f\($0)", to: "t\($0)") }
+        store.spellingOverrides = list
+
+        let read = store.spellingOverrides
+        XCTAssertEqual(read.count, cap)
+        // The last accepted item is kept...
+        XCTAssertEqual(read.last?.from, "f\(cap - 1)")
+        // ...and the one over the cap is dropped.
+        XCTAssertFalse(read.contains { $0.from == "f\(cap)" })
+    }
+
+    // MARK: - Corrupt / missing persisted data
+
+    func testCorruptOverridesJSONFallsBackToEmpty() {
+        // Garbage bytes under the overrides key must decode to [] rather than crashing the getter.
+        defaults.set(Data([0xFF, 0x00, 0x01, 0x02, 0xAB]), forKey: "settings.spellingOverrides")
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.spellingOverrides, [])
+    }
+
+    func testTruncatedOverridesJSONFallsBackToEmpty() {
+        // A valid JSON prefix that is cut off mid-structure must also fall back to [].
+        let truncated = Data("[{\"id\":\"".utf8)
+        defaults.set(truncated, forKey: "settings.spellingOverrides")
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.spellingOverrides, [])
+    }
+
+    func testMissingOverridesKeyReturnsEmpty() {
+        // No data ever written under the key: the getter returns [] (no crash, no default rows).
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.spellingOverrides, [])
     }
 }

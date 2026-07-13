@@ -11,6 +11,11 @@ import Foundation
 /// - keeps only the FIRST alphanumeric token (so "Hey Nova" -> "Hey", "Mira!" -> "Mira"), and
 /// - falls back to the default word ("Mira") when the result is empty or over the length cap.
 enum ControlPhrase {
+    /// The default assistant control word. Lives here (not in `MiraTextProcessor`) so the layering
+    /// runs one way: the Settings seam owns the validation rule and its fallback, and the speech
+    /// processor references THIS rather than the other way around.
+    static let defaultWord = "Mira"
+
     /// A sensible upper bound. A name longer than this is almost certainly a mistake (or a whole
     /// sentence pasted in), so it falls back to the default rather than making every command start
     /// with a paragraph.
@@ -27,7 +32,7 @@ enum ControlPhrase {
             .first
             .map(String.init) ?? ""
         guard !firstToken.isEmpty, firstToken.count <= maxLength else {
-            return MiraTextProcessor.defaultControlWord
+            return defaultWord
         }
         return firstToken
     }
