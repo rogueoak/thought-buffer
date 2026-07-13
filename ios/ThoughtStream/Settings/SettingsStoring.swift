@@ -21,6 +21,12 @@ protocol SettingsStoring: AnyObject {
     /// reads this to decide whether to record at all; the auto-delete sweep reads it to expire old
     /// recordings. Persisted as a small string tag so an unknown value falls back to `.keep`.
     var audioRetention: AudioRetention { get set }
+
+    /// What title a playing recording shows on the lock screen / Control Center / CarPlay (spec
+    /// 0008). Defaults to `.noteTitle` (the note's own first line); `.generic` hides it behind a
+    /// fixed label so a sensitive first line does not appear on a system Now Playing surface.
+    /// Persisted as a small string tag so an unknown value falls back to `.noteTitle`.
+    var lockScreenTitle: LockScreenTitle { get set }
 }
 
 /// A `UserDefaults`-backed `SettingsStoring`. Persists the control phrase as a string and the
@@ -31,6 +37,7 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         static let controlPhrase = "settings.controlPhrase"
         static let spellingOverrides = "settings.spellingOverrides"
         static let audioRetention = "settings.audioRetention"
+        static let lockScreenTitle = "settings.lockScreenTitle"
     }
 
     /// Bounds on the persisted overrides so a stuck field or a paste cannot grow `UserDefaults`
@@ -80,6 +87,17 @@ final class UserDefaultsSettingsStore: SettingsStoring {
             return AudioRetention(storageTag: tag)
         }
         set { defaults.set(newValue.storageTag, forKey: Key.audioRetention) }
+    }
+
+    var lockScreenTitle: LockScreenTitle {
+        // Stored as a small string tag so a value written by a newer build never fails to decode;
+        // an absent or unknown tag falls back to `.noteTitle` (the safe default: showing the note's
+        // own title is the current behavior).
+        get {
+            guard let tag = defaults.string(forKey: Key.lockScreenTitle) else { return .default }
+            return LockScreenTitle(storageTag: tag)
+        }
+        set { defaults.set(newValue.storageTag, forKey: Key.lockScreenTitle) }
     }
 
     /// Cap the row count and per-field length so persistence and the per-segment rescan stay

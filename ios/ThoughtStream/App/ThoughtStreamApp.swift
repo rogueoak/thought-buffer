@@ -68,7 +68,8 @@ struct ThoughtStreamApp: App {
                     settingsStore: dependencies.settingsStore,
                     noteStoreKind: dependencies.noteStoreKind,
                     noteObserver: dependencies.noteObserver,
-                    sessionRoute: dependencies.sessionRoute
+                    sessionRoute: dependencies.sessionRoute,
+                    playbackController: dependencies.playbackController
                 )
             }
         } else {
@@ -88,6 +89,7 @@ private final class ScreenshotSettings: SettingsStoring {
         SpellingOverride(from: "kwan", to: "Quan"),
     ]
     var audioRetention: AudioRetention = .keep
+    var lockScreenTitle: LockScreenTitle = .noteTitle
 }
 
 /// Sample notes for screenshot mode.
@@ -113,7 +115,11 @@ private enum ScreenshotNotes {
 private final class InertAudioNotePlayer: AudioNotePlayer {
     var onFinish: (() -> Void)?
     func play(url: URL, from start: Double, duration: Double?) -> Bool { false }
+    func pause() {}
+    func resume() -> Bool { false }
     func stop() {}
+    var currentTime: Double { 0 }
+    func seek(to time: Double) {}
 }
 
 /// A resolver that always returns a fixed URL, for screenshot mode: the Play affordance renders

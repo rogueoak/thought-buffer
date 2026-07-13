@@ -37,13 +37,19 @@ How the system is built and why.
     (`AppShortcutsProvider`) registers the spoken phrases, each including `\(.applicationName)` per
     Apple's rule. This is the shippable hands-free-in-car path (Siri works in CarPlay without the
     CarPlay entitlement).
-  - `CarPlaySceneDelegate.swift` - a `CPTemplateApplicationSceneDelegate` presenting a `CPListTemplate`
-    with a "Start a thought stream" row that calls the shared starter. Wired via the
-    `CPTemplateApplicationSceneSessionRoleApplication` role in the scene manifest
-    (`ios/project.yml`), but GATED: no CarPlay entitlement is declared (Apple grants it only for
-    specific app categories, not dictation / notes), so the system never creates the scene and the
+  - `CarPlaySceneDelegate.swift` - the CarPlay Audio surface (spec 0008): a
+    `CPTemplateApplicationSceneDelegate` presenting a root `CPListTemplate` with a "Start a thought
+    stream" row (calls the shared starter) plus one row per note that HAS a recording (title, date +
+    duration), newest first, from a `RecordingsListModel` over the shared `NoteStoreDriver`, refreshed
+    live on driver change. A row tap drives the shared `NotePlaybackController` and pushes
+    `CPNowPlayingTemplate` (play / pause + skip buttons wired to the controller). The Start-row builder
+    is a static, closure-driven factory (`makeStartItem(onStart:)`) so its routing is unit-testable
+    without a connected scene. Wired via the `CPTemplateApplicationSceneSessionRoleApplication` role in
+    the scene manifest (`ios/project.yml`), but GATED: no CarPlay entitlement is declared (Apple grants
+    the CarPlay AUDIO entitlement only on approval), so the system never creates the scene and the
     unsigned Simulator build and App Store build are unaffected. Ready the day Apple grants the
     entitlement; activating it needs the entitlement plus a CarPlay head unit / the CarPlay simulator.
+    See `docs/carplay-audio-entitlement-request.md`.
 - `Models/` - `Note` (id, title, paragraphs, createdAt, derived snippet + paragraph count) with
   Markdown (de)serialization, plus `MockNotes` (sample data, used only by previews now). The
   value type stays small and tolerant of unknown frontmatter keys so later fields do not break
@@ -103,14 +109,22 @@ How the system is built and why.
     public initializer, so the service extracts their numbers and delegates). `recordingURL()`
     exposes the temp file for adoption and is documented as finalized only after `stop()`;
     `discardRecording()` removes an orphan (even a zero-frame one).
-  - **Playback (spec 0007).** `AudioNotePlayer` (production `SystemAudioNotePlayer`, `AVAudioPlayer`)
-    plays a recording seeked to a range (`play(url:from:duration:)`, a nil duration plays to the
-    end; a timer stops a ranged play since `AVAudioPlayer` has no native stop-at), mirroring
-    `SystemSpeaker`'s session handling and `onFinish`. Recorded playback of the ACTUAL voice is a
-    SAVED-note feature (finalized file) via `NotePlaybackModel` in the detail view. IN-SESSION
-    "read that back" stays on the text-to-speech `Speaker`: the live `.m4a` is still open for writing
-    (finalized only at `stop()`, not the `pause()` read-back uses), so there is no finalized file to
-    play mid-session. Both share the `readBackDidFinish` resume handshake.
+  - **Playback (spec 0007, extended in 0008).** `AudioNotePlayer` (production `SystemAudioNotePlayer`,
+    `AVAudioPlayer`) plays a recording seeked to a range (`play(url:from:duration:)`, a nil duration
+    plays to the end; a timer stops a ranged play since `AVAudioPlayer` has no native stop-at),
+    mirroring `SystemSpeaker`'s session handling and `onFinish`. Spec 0008 adds `pause()` / `resume()`
+    / `currentTime` / `seek(to:)` so the shared controller can pause, resume, publish elapsed, and
+    relative-skip. IN-SESSION "read that back" stays on the text-to-speech `Speaker`: the live `.m4a`
+    is still open for writing (finalized only at `stop()`), so there is no finalized file to play
+    mid-session; both share the `readBackDidFinish` resume handshake.
+  - **System Now Playing (spec 0008).** `NowPlayingCenter.swift` holds the media-center seam:
+    `NowPlayingInfo` (title / duration / elapsed / rate value), `NowPlayingInfoWriting` (production
+    `SystemNowPlayingInfoWriter` over `MPNowPlayingInfoCenter`), and `RemoteCommandRegistering`
+    (production `SystemRemoteCommandRegistrar` over `MPRemoteCommandCenter`, wiring
+    play / pause / toggle / stop / skip-forward / skip-back at a 15s interval). Both are protocols so
+    the playback controller is unit-testable with spies and no real media center. Adding `audio` to
+    `UIBackgroundModes` (Info.plist) makes background playback + lock-screen Now Playing work; it needs
+    no entitlement.
 - `TextProcessor` seam - a finalized segment runs through `process`, which returns a
   `ProcessedSegment`: `.text` to commit, `.command` to execute and suppress, or `.drop`
   (reserved). `PassthroughTextProcessor` always returns `.text`; `MiraTextProcessor` returns
@@ -146,10 +160,20 @@ How the system is built and why.
   block on coordinated IO, so it must not run on the main actor) and, on iCloud, wires the
   `UbiquitousNoteObserving` observer once (`start`/`stop`, `onChange` -> reload) so the list
   refreshes on synced-in / external edits without restarting the query on navigation. The load and
-  observe logic lives in the driver so any consumer can run it - a future headless CarPlay/Siri
-  session as well as SwiftUI. `StreamFeed` (`@MainActor ObservableObject`) is a thin projection over
-  the driver, republishing its `notes`/`didLoad` so a view can bind. `NoteStoring: Sendable`, so the
-  detached load is sound under strict concurrency.
+  observe logic lives in the driver so any consumer can run it - the CarPlay browser as well as
+  SwiftUI. `StreamFeed` (`@MainActor ObservableObject`) is a thin projection over the driver,
+  republishing its `notes`/`didLoad` so a view can bind. `NoteStoring: Sendable`, so the detached
+  load is sound under strict concurrency.
+  - **Shared playback + CarPlay browser (spec 0008).** `NotePlaybackController` (`@MainActor
+    ObservableObject`) is the ONE audio path: it owns an `AudioNotePlayer`, an `AudioURLResolving`
+    (lazy off-main resolution at play time, as 0007's model did), and the Now Playing / remote-command
+    seams, exposing play / pause / resume / stop / skip and one writer of `MPNowPlayingInfoCenter`.
+    Both the phone detail view (through `NotePlaybackModel`, now a thin projection over the controller
+    that keeps the simple play / stop button) and the CarPlay scene drive it. `RecordingsListModel`
+    (`@MainActor`, callback-observable like the driver, not SwiftUI - the CarPlay delegate is UIKit)
+    projects `NoteStoreDriver.notes` to only notes with a recording, newest first, each with a
+    formatted duration (`recordingDuration` = the tail of the last-ending timing range), and refreshes
+    on driver change; its duration formatting is a pure, unit-tested static.
 - `Views/` - SwiftUI screens. `StreamListView` drives a `StreamFeed` from a single `.task` and
   stays presentational; `DictationView` binds to `DictationViewModel`; `NoteCard`,
   `NoteDetailView` stay presentational. `SettingsView` edits the injected `SettingsStoring`
@@ -172,7 +196,12 @@ stub store/observer through the `StreamFeed` projection, and the hands-free sess
 `UserDefaultsSettingsStore` persistence and control-phrase validation via an isolated defaults
 suite, `SpellingOverrideProcessor` whole-word/case/multi-override/no-substring-corruption, and
 `CompositeTextProcessor` ordering (a command is detected and not spelling-mangled; the configured
-control word changes matching; a normal segment gets overrides).
+control word changes matching; a normal segment gets overrides), plus the CarPlay Audio surface
+(spec 0008): the shared `NotePlaybackController` (play / pause / resume / stop / skip via a stubbed
+player, `MPNowPlayingInfoCenter` populated via a spy, remote-command handlers calling back into the
+controller via a spy), the `RecordingsListModel` (audio-only filter, newest-first order, duration
+formatting, and driver-change -> list refresh via a stub store + observer), and the CarPlay Start row
+routing through the shared `SessionStarter`.
 The generated scheme runs them.
 
 ## Design tokens

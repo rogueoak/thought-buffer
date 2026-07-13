@@ -56,7 +56,10 @@ the spelling "Shea".
   auto-delete after a set number of days, all in Settings.
 - **Continuous feed.** Notes are a stream you can pause and resume, not a blank page each time.
 - **Voice editing.** Fix and manage notes hands-free with the control word.
-- **CarPlay support.** Capture safely while driving.
+- **CarPlay Audio surface.** Browse your voice notes and play them back in CarPlay Now Playing,
+  with play / pause / skip on the head unit, plus a Start row to begin a new note hands-free.
+- **Lock-screen playback.** Playing a note shows Now Playing on the lock screen and in Control
+  Center, and keeps playing in the background, like any audio app.
 - **Markdown storage.** Every note is a Markdown file. Point storage at an iCloud Drive folder
   and notes sync across your devices automatically.
 - **Browse and review.** A simple UI to jump back into the notes you have created.
@@ -79,6 +82,11 @@ the spelling "Shea".
   syncs only where your notes do (locally, or your own iCloud). It is never uploaded to us. Set
   recordings to transcript-only to never save audio, or auto-delete them after a number of days,
   in Settings.
+- **Now Playing shows the note title.** When you play a note, its title (the note's first line)
+  appears in the system Now Playing surface - the lock screen, Control Center, and CarPlay - like
+  any audio app shows its track title. This is your own content on your own device, never sent
+  anywhere, and iOS's own "Show on Lock Screen" controls let you hide media info on the lock screen
+  if you prefer.
 
 ## Tech and design
 
@@ -186,19 +194,30 @@ thought", "new note in Thought Stream") works, including through CarPlay's Siri 
 invocation needs a device; the intents and the shared starter are covered by unit tests in the
 simulator.
 
-**CarPlay is scaffolded but gated, pending Apple's approval.** Apple grants the CarPlay
-entitlement only for specific app categories (audio, navigation, communication, EV charging,
-parking, and a few more). A dictation / notes app is not one of them, so the CarPlay entitlement
-is generally unavailable for distribution here. The CarPlay scene delegate and its "Start a
-thought stream" template are implemented and wired via the scene manifest, but **no CarPlay
-entitlement is declared**, so:
+**CarPlay Audio surface (built, gated, pending Apple's approval).** The CarPlay scene is now a full
+Audio experience: a recordings browser (`CPListTemplate` listing notes that have a recording -
+title, date, duration, newest first, live-refreshed as notes are added or synced in) plus a
+"Start a thought stream" row, and `CPNowPlayingTemplate` with play / pause / skip when you tap a
+recording. It is driven by the shared, headless `NotePlaybackController` - the one audio path that
+also feeds the phone's lock-screen Now Playing. Apple grants the CarPlay entitlement only for
+specific app categories (audio, navigation, communication, EV charging, parking, and a few more);
+because Thought Stream records and plays back the user's voice notes, the **Audio** category
+(`com.apple.developer.carplay-audio`) fits - but it is granted only on approval, so:
 
 - The default unsigned Simulator build and the App Store build are unaffected - they build and run
   with no CarPlay entitlement and no development team.
 - Without the entitlement the system never creates the CarPlay scene, so it stays dormant. It is
-  ready the day Apple grants the entitlement (or the app's category changes).
-- Activating CarPlay needs Apple's entitlement plus a CarPlay head unit or the CarPlay simulator.
-  Until then, Siri is the hands-free-in-car capability that actually ships.
+  ready the day Apple grants the entitlement.
+- Activating CarPlay needs Apple's Audio entitlement plus a CarPlay head unit or the CarPlay
+  simulator. Until then, Siri is the hands-free-in-car capability that actually ships. See
+  [docs/carplay-audio-entitlement-request.md](docs/carplay-audio-entitlement-request.md) for the
+  request justification and the exact enable steps.
+
+**System Now Playing (ships now, no entitlement).** Playing a note - on the phone or in CarPlay -
+populates `MPNowPlayingInfoCenter` (title, duration, elapsed) and wires `MPRemoteCommandCenter`
+(play / pause / stop / skip), and the app declares the `audio` background mode, so a note shows on
+the lock screen and in Control Center and keeps playing in the background like any audio app. This
+needs a device to see on the lock screen; the wiring is covered by unit tests in the simulator.
 
 ### Design tokens
 

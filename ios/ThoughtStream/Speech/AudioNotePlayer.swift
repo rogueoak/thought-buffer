@@ -22,8 +22,25 @@ protocol AudioNotePlayer: AnyObject {
     @discardableResult
     func play(url: URL, from start: Double, duration: Double?) -> Bool
 
+    /// Pause in-progress playback in place, keeping the loaded file and position so `resume()` can
+    /// continue. A no-op when nothing is playing. Does NOT fire `onFinish` (playback is not over).
+    func pause()
+
+    /// Resume playback paused by `pause()` from where it left off. Returns false when there is
+    /// nothing to resume (never played, or already stopped). A no-op / false when already playing.
+    @discardableResult
+    func resume() -> Bool
+
     /// Stop any in-progress playback immediately.
     func stop()
+
+    /// Seconds elapsed from the start of the file for the loaded recording, or 0 when nothing is
+    /// loaded. Read by the playback controller to publish Now Playing elapsed and to seek on skip.
+    var currentTime: Double { get }
+
+    /// Seek the loaded recording to `time` seconds (clamped into the file). A no-op when nothing is
+    /// loaded. Used by relative skip.
+    func seek(to time: Double)
 }
 
 /// `AVAudioPlayer`-backed player.
@@ -74,6 +91,44 @@ final class SystemAudioNotePlayer: NSObject, AudioNotePlayer, AVAudioPlayerDeleg
             }
         }
         return true
+    }
+
+    func pause() {
+        // Cancel the ranged-stop timer while paused so it does not fire mid-pause; full-note playback
+        // (the CarPlay / Now Playing path) has no timer, so this only matters for a ranged play.
+        rangeStopTask?.cancel()
+        rangeStopTask = nil
+        guard let player, player.isPlaying else { return }
+        player.pause()
+        // No `onFinish` - playback is suspended, not over.
+    }
+
+    @discardableResult
+    func resume() -> Bool {
+        guard let player, !player.isPlaying else { return false }
+        // Reactivate the playback session in case a pause deactivated it, mirroring `play`.
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? session.setActive(true)
+        return player.play()
+    }
+
+    var currentTime: Double { player?.currentTime ?? 0 }
+
+    func seek(to time: Double) {
+        guard let player else { return }
+        // Clamp into the file so a relative skip past either end (skip-back below 0, skip-forward past
+        // the duration) lands at a valid position rather than an out-of-range one. `AVAudioPlayer`
+        // clamps its own `currentTime`, but the policy is expressed here (and unit-tested via
+        // `clampedSeekTime`) so it does not silently depend on that undocumented behavior.
+        player.currentTime = Self.clampedSeekTime(time, duration: player.duration)
+    }
+
+    /// The seek target clamped into `[0, duration]`. Pure and static so the clamp is unit-testable
+    /// without a real `AVAudioPlayer`: a removed clamp would let an out-of-range `time` through, which
+    /// the test asserts against directly.
+    static func clampedSeekTime(_ time: Double, duration: Double) -> Double {
+        max(0, min(time, duration))
     }
 
     func stop() {

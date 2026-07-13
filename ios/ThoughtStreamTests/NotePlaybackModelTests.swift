@@ -97,6 +97,63 @@ final class NotePlaybackModelTests: XCTestCase {
     /// When the note claims audio but the file is gone (resolver returns nil - swept or not synced),
     /// the play attempt resolves to nothing and leaves the model idle. Confirms the CarPlay-style
     /// re-validation: a file that vanished between navigation and play is not played as a stale URL.
+    /// The model is a projection over a shared controller: when the controller moves on to ANOTHER
+    /// note (as CarPlay might), this model reads as not playing rather than falsely showing Stop.
+    func testModelReadsNotPlayingWhenControllerLoadsAnotherNote() async {
+        let player = StubAudioNotePlayer()
+        let controller = NotePlaybackController(
+            resolver: StubResolver(url: URL(fileURLWithPath: "/tmp/rec.m4a")), player: player
+        )
+        let mine = Note(
+            id: noteID, title: "mine", paragraphs: ["p"], createdAt: Date(),
+            audioFileName: "mine.m4a", timings: [ParagraphTiming(start: 0, duration: 3)]
+        )
+        let other = Note(
+            title: "other", paragraphs: ["p"], createdAt: Date(),
+            audioFileName: "other.m4a", timings: [ParagraphTiming(start: 0, duration: 3)]
+        )
+        let model = NotePlaybackModel(note: mine, controller: controller)
+
+        model.toggle()
+        await model.settle()
+        XCTAssertTrue(model.isPlaying, "playing my note shows Stop")
+
+        // Another surface drives the shared controller to a different note.
+        controller.play(note: other)
+        await model.settle()
+        XCTAssertFalse(model.isPlaying, "the model no longer claims playback once another note loads")
+    }
+
+    /// When the shared controller is PAUSED for this note (another surface, or the lock screen,
+    /// paused it), tapping the detail button must RESUME from the paused position rather than
+    /// restarting from the top. Proven by asserting the player resumed and no second play started.
+    func testToggleResumesFromPausedPositionInsteadOfRestarting() async {
+        let player = StubAudioNotePlayer()
+        let controller = NotePlaybackController(
+            resolver: StubResolver(url: URL(fileURLWithPath: "/tmp/rec.m4a")), player: player
+        )
+        let mine = Note(
+            id: noteID, title: "mine", paragraphs: ["p"], createdAt: Date(),
+            audioFileName: "mine.m4a", timings: [ParagraphTiming(start: 0, duration: 3)]
+        )
+        let model = NotePlaybackModel(note: mine, controller: controller)
+
+        model.toggle()
+        await model.settle()
+        XCTAssertTrue(model.isPlaying)
+
+        // Another surface (or the lock screen) pauses the shared controller.
+        controller.pause()
+        XCTAssertTrue(controller.isPaused)
+        XCTAssertFalse(model.isPlaying, "the model reads paused as not playing")
+
+        // Tapping the button again resumes from the paused position, not a fresh play from the top.
+        model.toggle()
+        XCTAssertTrue(model.isPlaying, "toggle resumes playback")
+        XCTAssertEqual(player.resumeCount, 1, "it resumed rather than restarting")
+        XCTAssertEqual(player.plays.count, 1, "no second play was started from the top")
+    }
+
     func testMissingFileAtPlayTimeLeavesNotPlaying() async {
         let player = StubAudioNotePlayer()
         let resolver = StubResolver(url: nil)
@@ -115,11 +172,14 @@ final class NotePlaybackModelTests: XCTestCase {
 }
 
 private extension NotePlaybackModel {
-    /// Let the lazy resolve+play task complete before asserting. The resolver runs on a detached
-    /// task; yielding a few times lets it hop back to the main actor and start playback.
+    /// Let the lazy resolve+play task complete before asserting. The resolve runs on a detached task
+    /// (now behind the shared controller), so yield AND sleep a touch between tries - under full-suite
+    /// load a bare yield-count can race the detached hop back to the main actor, which is why this
+    /// waits real time rather than a fixed yield count.
     func settle() async {
-        for _ in 0..<20 {
+        for _ in 0..<50 {
             await Task.yield()
+            try? await Task.sleep(nanoseconds: 2_000_000)
         }
     }
 }
@@ -146,6 +206,7 @@ private final class StubAudioNotePlayer: AudioNotePlayer {
     var playSucceeds = true
     private(set) var plays: [(url: URL, start: Double, duration: Double?)] = []
     private(set) var stopCount = 0
+    private(set) var resumeCount = 0
 
     @discardableResult
     func play(url: URL, from start: Double, duration: Double?) -> Bool {
@@ -153,6 +214,10 @@ private final class StubAudioNotePlayer: AudioNotePlayer {
         return playSucceeds
     }
 
+    func pause() {}
+    func resume() -> Bool { resumeCount += 1; return true }
     func stop() { stopCount += 1 }
+    var currentTime: Double { 0 }
+    func seek(to time: Double) {}
     func finish() { onFinish?() }
 }

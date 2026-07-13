@@ -81,6 +81,15 @@ struct Note: Identifiable, Hashable {
         guard timings.indices.contains(index) else { return nil }
         return timings[index]
     }
+
+    /// The recording's length in seconds: the tail of the last-ending paragraph range (the max of
+    /// `start + duration` across timings). Zero when the note has no timings. Used to show the
+    /// recording duration in the recordings browser and to feed `MPNowPlayingInfoCenter`'s total
+    /// playback duration. Independent of paragraph ORDER (a timing math slip cannot make it negative),
+    /// so it is a stable "how long is this recording" value.
+    var recordingDuration: Double {
+        timings.map { $0.start + $0.duration }.max() ?? 0
+    }
 }
 
 // MARK: - Title derivation
