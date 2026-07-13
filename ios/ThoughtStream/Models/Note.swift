@@ -60,7 +60,20 @@ struct Note: Identifiable, Hashable {
         paragraphs.first ?? ""
     }
 
-    /// Whether this note carries a recording (a named audio file with at least one timing).
+    /// Whether this note carries a recording. Both an audio filename AND at least one timing are
+    /// required, and this is an intentional dual-guard rather than an accident:
+    ///
+    /// - `DictationViewModel.attachRecording` GUARANTEES the pairing when it saves: it only sets
+    ///   `audioFileName` after building one timing per paragraph, and it refuses to attach (deleting
+    ///   the just-saved `.m4a` and saving text-only) unless at least one timing has a real, non-zero
+    ///   duration. So a recording whose recognizer returned all-zero timings is never silently kept
+    ///   as an unplayable file with no ranges - it is dropped cleanly, audio file and all.
+    /// - On parse (`init(markdown:)`) both keys must be present for the same reason: a stray `audio:`
+    ///   key with no `timings:` (or vice versa) is treated as a text-only note, so a half-written or
+    ///   future-format file never surfaces a recording we cannot map to paragraphs.
+    ///
+    /// The storage sweep and playback both key off this, so they agree on exactly one definition of
+    /// "has a recording" and a recording is never half-recognized.
     var hasAudio: Bool { audioFileName != nil && !timings.isEmpty }
 
     /// The timing of the paragraph at `index`, or nil when there is no recorded range for it.

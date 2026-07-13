@@ -129,6 +129,112 @@ final class DualCaptureViewModelTests: XCTestCase {
         XCTAssertEqual(service.resumeCount, 1)
     }
 
+    // MARK: - Mira edits keep paragraph timings aligned (the real invariant)
+
+    /// Inject TWO timed paragraphs, remove the LAST paragraph by voice, save, and assert the
+    /// SURVIVING paragraph still maps to ITS OWN timing (start 0.0, duration 2.0) - not the dropped
+    /// paragraph's later offset - and that no stale/extra timing lingers. This pins the invariant that
+    /// a Mira edit keeps `paragraphTimings` in lockstep with `paragraphs`, so an old index never maps
+    /// to the wrong (or a removed) paragraph's range.
+    func testRemoveLastParagraphKeepsSurvivingParagraphTimingAligned() throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor(), recordsAudio: true
+        )
+
+        service.emitFinalized("First paragraph.", range: ParagraphTiming(start: 0.0, duration: 2.0))
+        service.emitFinalized("Second paragraph.", range: ParagraphTiming(start: 2.0, duration: 3.5))
+        // Command arrives as its own finalized segment (no range).
+        service.emitFinalized("Mira remove the last paragraph", range: nil)
+
+        XCTAssertEqual(model.paragraphs, ["First paragraph."], "the last paragraph was removed")
+
+        let note = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(note.paragraphs, ["First paragraph."])
+        XCTAssertTrue(note.hasAudio)
+        XCTAssertEqual(note.timings.count, 1, "exactly one timing survives - no stale/extra entry")
+        // The surviving paragraph keeps ITS timing (start 0.0), not the dropped paragraph's 2.0.
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0)
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 2.0)
+    }
+
+    /// Inject two timed paragraphs, remove the last SENTENCE, save, and assert the surviving
+    /// paragraph still maps to start 0.0. Removing the last sentence empties the second (single
+    /// sentence) paragraph, dropping it wholesale; the first paragraph's timing must be untouched.
+    func testRemoveLastSentenceKeepsSurvivingParagraphTimingAligned() throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor(), recordsAudio: true
+        )
+
+        service.emitFinalized("First paragraph.", range: ParagraphTiming(start: 0.0, duration: 2.0))
+        service.emitFinalized("Second paragraph.", range: ParagraphTiming(start: 2.0, duration: 3.5))
+        service.emitFinalized("Mira remove the last sentence", range: nil)
+
+        // The second paragraph was a single sentence, so it is removed entirely.
+        XCTAssertEqual(model.paragraphs, ["First paragraph."])
+
+        let note = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(note.timings.count, 1, "no stale timing left from the removed paragraph")
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0)
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 2.0)
+    }
+
+    /// Removing the last sentence of a MULTI-sentence last paragraph shrinks it in place. Its recorded
+    /// range no longer matches the edited text, so its timing is dropped (falls back to TTS), while
+    /// the FIRST paragraph's timing stays aligned. Confirms the arrays never drift on an in-place edit.
+    func testRemoveLastSentenceFromMultiSentenceParagraphDropsOnlyItsTiming() throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor(), recordsAudio: true
+        )
+
+        service.emitFinalized("First paragraph.", range: ParagraphTiming(start: 0.0, duration: 2.0))
+        service.emitFinalized("One. Two.", range: ParagraphTiming(start: 2.0, duration: 3.5))
+        service.emitFinalized("Mira remove the last sentence", range: nil)
+
+        XCTAssertEqual(model.paragraphs, ["First paragraph.", "One."])
+
+        let note = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(note.timings.count, 2, "still 1:1 with paragraphs")
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0, "first paragraph timing untouched")
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 2.0)
+        // The edited paragraph's timing was dropped to a zero-length placeholder (plays via TTS).
+        XCTAssertEqual(note.timing(forParagraphAt: 1)?.duration, 0.0)
+    }
+
+    // MARK: - Cancelled / empty session leaves no audio on disk
+
+    /// Cancelling a session discards the recording: the temp file is removed and no note audio is
+    /// left behind. Pins that a backed-out session never orphans an `.m4a`.
+    func testCancelledSessionDiscardsRecordingFile() throws {
+        let service = RecordingStubCaptureService()
+        let tempURL = try makeTempRecordingURL()
+        service.stubRecordingURL = tempURL
+        let model = DictationViewModel(service: service, store: store, recordsAudio: true)
+        service.emitFinalized("Something.", range: ParagraphTiming(start: 0, duration: 1.0))
+
+        model.cancel()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempURL.path), "temp recording is gone")
+        XCTAssertEqual(service.discardCount, 1)
+    }
+
+    /// Finishing with nothing captured discards the recording and saves no note - no orphan audio.
+    func testEmptyFinishDiscardsRecordingAndSavesNothing() throws {
+        let service = RecordingStubCaptureService()
+        let tempURL = try makeTempRecordingURL()
+        service.stubRecordingURL = tempURL
+        let model = DictationViewModel(service: service, store: store, recordsAudio: true)
+
+        XCTAssertNil(try model.finish(), "nothing captured, so no note")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempURL.path), "empty session leaves no audio")
+        XCTAssertEqual(store.loadAll().count, 0)
+    }
+
     private func makeTempRecordingURL() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("rec-\(UUID().uuidString).m4a")

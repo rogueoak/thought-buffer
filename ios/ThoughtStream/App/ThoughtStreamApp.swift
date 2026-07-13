@@ -32,7 +32,7 @@ struct ThoughtStreamApp: App {
                 NavigationStack {
                     NoteDetailView(
                         note: ScreenshotNotes.recorded,
-                        audioURL: URL(fileURLWithPath: "/tmp/thoughtstream-preview.m4a"),
+                        resolver: FixedAudioURLResolver(url: URL(fileURLWithPath: "/tmp/thoughtstream-preview.m4a")),
                         player: InertAudioNotePlayer()
                     )
                 }
@@ -114,4 +114,11 @@ private final class InertAudioNotePlayer: AudioNotePlayer {
     var onFinish: (() -> Void)?
     func play(url: URL, from start: Double, duration: Double?) -> Bool { false }
     func stop() {}
+}
+
+/// A resolver that always returns a fixed URL, for screenshot mode: the Play affordance renders
+/// without reaching into a real store.
+private struct FixedAudioURLResolver: AudioURLResolving {
+    let url: URL?
+    func resolveAudioURL(for noteID: UUID, audioFileName: String?) -> URL? { url }
 }

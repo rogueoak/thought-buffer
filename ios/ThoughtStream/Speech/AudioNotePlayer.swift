@@ -64,6 +64,9 @@ final class SystemAudioNotePlayer: NSObject, AudioNotePlayer, AVAudioPlayerDeleg
 
         if let duration, duration > 0 {
             // No native stop-at-time on AVAudioPlayer, so stop the ranged window ourselves.
+            // TODO(CarPlay waveform milestone): a `Task.sleep` timer is coarse for tight per-paragraph
+            // ranges; the waveform scrubber will need frame-accurate stop-at-time (e.g. a display-link
+            // or `AVPlayer` boundary observer). Out of scope here.
             rangeStopTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(duration))
                 guard !Task.isCancelled else { return }

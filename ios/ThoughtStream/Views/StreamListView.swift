@@ -81,10 +81,10 @@ struct StreamListView: View {
             }
             .navigationTitle("Stream")
             .navigationDestination(for: Note.self) { note in
-                // Resolve the note's recording from the store only when the note claims audio and the
-                // file is actually on disk (it may have been auto-deleted, or not yet synced). A nil
-                // URL hides the play affordance, so playback never points at a missing file.
-                NoteDetailView(note: note, audioURL: resolvedAudioURL(for: note))
+                // Pass the store as a lazy resolver rather than resolving here: the detail view's
+                // playback model validates the recording off the main actor at play time, so pushing
+                // into a note never blocks on the coordinated presence check (iCloud navigation jank).
+                NoteDetailView(note: note, resolver: StoreAudioURLResolver(store: store))
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -141,15 +141,6 @@ struct StreamListView: View {
                 Task { @MainActor in feed.stop() }
             }
         }
-    }
-
-    /// The recording URL for a note, or nil when it has no audio or the file is not present. The
-    /// existence check goes through the store (coordinated on iCloud) rather than a bare
-    /// `fileExists`, so a synced-but-not-yet-downloaded recording is not mis-reported and the view
-    /// does not reach into storage internals.
-    private func resolvedAudioURL(for note: Note) -> URL? {
-        guard note.hasAudio, store.audioExists(for: note.id) else { return nil }
-        return store.audioURL(for: note.id)
     }
 
     private var emptyState: some View {

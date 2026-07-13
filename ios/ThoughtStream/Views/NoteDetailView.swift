@@ -6,11 +6,17 @@ struct NoteDetailView: View {
     let note: Note
     @StateObject private var playback: NotePlaybackModel
 
-    /// Build the detail view. `audioURL` is the note's recording on disk (resolved by the caller from
-    /// the note store), or nil when the note has no audio - in which case no play affordance shows.
-    init(note: Note, audioURL: URL? = nil, player: AudioNotePlayer? = nil) {
+    /// Build the detail view. The playback model resolves the note's recording lazily (off the main
+    /// actor, at play time) through the `resolver`, so navigation never blocks on the coordinated
+    /// presence check. When the note claims no audio, no play affordance shows.
+    init(note: Note, resolver: AudioURLResolving, player: AudioNotePlayer? = nil) {
         self.note = note
-        _playback = StateObject(wrappedValue: NotePlaybackModel(audioURL: audioURL, player: player))
+        _playback = StateObject(wrappedValue: NotePlaybackModel(
+            noteID: note.id,
+            audioFileName: note.audioFileName,
+            resolver: resolver,
+            player: player
+        ))
     }
 
     var body: some View {
@@ -80,6 +86,6 @@ struct NoteDetailView: View {
 
 #Preview {
     NavigationStack {
-        NoteDetailView(note: MockNotes.all[0])
+        NoteDetailView(note: MockNotes.all[0], resolver: StoreAudioURLResolver(store: NoteStore()))
     }
 }

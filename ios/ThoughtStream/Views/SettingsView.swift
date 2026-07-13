@@ -171,7 +171,7 @@ struct SettingsView: View {
             .onChange(of: retentionMode) { _, _ in persistRetention() }
 
             if retentionMode == .autoDelete {
-                Stepper(value: $autoDeleteDays, in: AudioRetention.minDays...365) {
+                Stepper(value: $autoDeleteDays, in: AudioRetention.minDays...AudioRetention.maxDays) {
                     Text("Delete after \(autoDeleteDays) day\(autoDeleteDays == 1 ? "" : "s")")
                         .foregroundStyle(CanopyColor.text)
                 }

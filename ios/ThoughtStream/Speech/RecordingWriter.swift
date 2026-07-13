@@ -91,6 +91,18 @@ final class RecordingWriter: @unchecked Sendable {
     /// recording matches the mic's sample rate and channel count. Caller holds `lock`.
     private func openIfNeeded(matching format: AVAudioFormat) throws -> AVAudioFile {
         if let file { return file }
+        // Create the file PROTECTED before `AVAudioFile` writes any audio into it, so there is never a
+        // window where the `.m4a` exists on disk unprotected. `AVAudioFile(forWriting:)` opens the
+        // existing (empty, already-protected) file rather than creating an unprotected one; the AAC
+        // container header is then written into a file that was protected from byte zero.
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: url.path) {
+            fm.createFile(
+                atPath: url.path,
+                contents: nil,
+                attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+            )
+        }
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: format.sampleRate,
@@ -98,7 +110,9 @@ final class RecordingWriter: @unchecked Sendable {
             AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue,
         ]
         let audioFile = try AVAudioFile(forWriting: url, settings: settings)
-        try? FileManager.default.setAttributes(
+        // Re-assert protection after open in case the framework rewrote attributes; the file was
+        // already protected above, so this only reinforces the guarantee (never opens a window).
+        try? fm.setAttributes(
             [.protectionKey: FileProtectionType.completeUnlessOpen],
             ofItemAtPath: url.path
         )

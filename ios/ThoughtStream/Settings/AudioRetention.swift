@@ -20,9 +20,11 @@ enum AudioRetention: Equatable, Hashable {
     /// The default retention: keep the recording.
     static let `default`: AudioRetention = .keep
 
-    /// Sensible bounds for the auto-delete window so a stored or typed value cannot be absurd.
+    /// Sensible bounds for the auto-delete window so a stored or typed value cannot be absurd. The
+    /// max is one year: it is the same cap the Settings stepper offers, so a value can never be typed
+    /// or stored above what the UI allows (they were previously inconsistent - 365 vs 3650).
     static let minDays = 1
-    static let maxDays = 3650
+    static let maxDays = 365
 
     /// Whether audio should be written during capture under this policy. Only `transcriptOnly`
     /// skips recording; `keep` and `autoDeleteDays` both record (they differ only in cleanup).

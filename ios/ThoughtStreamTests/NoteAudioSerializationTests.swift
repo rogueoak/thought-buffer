@@ -23,6 +23,33 @@ final class NoteAudioSerializationTests: XCTestCase {
         XCTAssertEqual(parsed.paragraphs, note.paragraphs)
     }
 
+    /// Backward-compat golden string: a text-only note serializes BYTE-FOR-BYTE as it always has,
+    /// with no `audio:`/`timings:` keys. Pinned against the exact expected file so a change to the
+    /// frontmatter (a reordered key, an always-written audio line) that would break files already on
+    /// disk fails loudly here.
+    func testTextOnlyNoteSerializesByteForByteAsBefore() {
+        let id = UUID(uuidString: "11111111-2222-3333-4444-555555555555")!
+        let note = Note(
+            id: id,
+            title: "Golden note",
+            paragraphs: ["First line.", "Second line."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let expected = """
+        ---
+        id: 11111111-2222-3333-4444-555555555555
+        title: Golden note
+        created: 2023-11-14T22:13:20.000Z
+        ---
+
+        First line.
+
+        Second line.
+
+        """
+        XCTAssertEqual(note.markdown, expected)
+    }
+
     func testNoteWithAudioRoundTrips() {
         let id = UUID()
         let note = Note(

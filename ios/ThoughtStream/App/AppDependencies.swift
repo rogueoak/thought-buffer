@@ -100,7 +100,7 @@ struct AppDependencies {
         let retention = settingsStore.audioRetention
         if retention.autoDeleteDays != nil {
             let sweeper = AudioRetentionSweeper(store: selection.store)
-            _ = await Task.detached { sweeper.sweep(retention: retention) }.value
+            _ = await Task.detached { await sweeper.sweep(retention: retention) }.value
         }
         // No `makeTextProcessor` passed: the init's default factory builds a `CompositeTextProcessor`
         // from `settingsStore` each session, so control-phrase and override edits take effect next

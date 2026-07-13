@@ -14,8 +14,13 @@ struct AudioRetentionSweeper {
     /// Delete the recording of every note older than the retention window. Uses `now` and `createdAt`
     /// so the caller can inject a clock in tests. Deletion errors are swallowed per note so one
     /// stuck file does not stop the sweep. Returns the ids whose audio was deleted (for tests).
+    ///
+    /// `async` on purpose: `store.loadAll()` / `deleteAudio` do coordinated IO that can block on the
+    /// iCloud sync daemon, so this must run off the main actor. Marking it `async` (and awaiting it
+    /// from a detached task, as the launch caller does) makes it impossible for a future caller to
+    /// accidentally run this coordinated IO synchronously on the main actor.
     @discardableResult
-    func sweep(retention: AudioRetention, now: Date = Date()) -> [UUID] {
+    func sweep(retention: AudioRetention, now: Date = Date()) async -> [UUID] {
         guard let days = retention.autoDeleteDays else { return [] }
         let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
 

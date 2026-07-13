@@ -53,7 +53,7 @@ final class AudioRetentionTests: XCTestCase {
 
     // MARK: - Sweep
 
-    func testSweepDeletesAudioForNotesOlderThanWindow() throws {
+    func testSweepDeletesAudioForNotesOlderThanWindow() async throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SweepTests-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -65,7 +65,7 @@ final class AudioRetentionTests: XCTestCase {
         let recent = try saveNoteWithAudio(store: store, createdAt: now.addingTimeInterval(-2 * 86_400))
 
         let sweeper = AudioRetentionSweeper(store: store)
-        let deleted = sweeper.sweep(retention: .autoDeleteDays(30), now: now)
+        let deleted = await sweeper.sweep(retention: .autoDeleteDays(30), now: now)
 
         XCTAssertEqual(deleted, [old])
         XCTAssertFalse(FileManager.default.fileExists(atPath: store.audioURL(for: old)!.path))
@@ -74,14 +74,57 @@ final class AudioRetentionTests: XCTestCase {
         XCTAssertNotNil(store.load(id: old))
     }
 
-    func testSweepIsNoOpForKeep() throws {
+    func testSweepIsNoOpForKeep() async throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("SweepKeep-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let store = NoteStore(directory: dir)
         let id = try saveNoteWithAudio(store: store, createdAt: Date(timeIntervalSince1970: 0))
 
-        let deleted = AudioRetentionSweeper(store: store).sweep(retention: .keep, now: Date())
+        let deleted = await AudioRetentionSweeper(store: store).sweep(retention: .keep, now: Date())
+        XCTAssertTrue(deleted.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.audioURL(for: id)!.path))
+    }
+
+    /// A note created exactly ON the cutoff boundary is NOT expired: the sweep keeps anything whose
+    /// `createdAt` is not strictly older than the window (`createdAt < cutoff`). One second past the
+    /// boundary IS swept, pinning the strict-inequality edge.
+    func testSweepExpiryBoundaryIsExclusive() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SweepBoundary-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = NoteStore(directory: dir)
+
+        // Use a whole-second epoch so the on-disk ISO-8601 round-trip is exact (no sub-millisecond
+        // rounding that would make the boundary flaky).
+        let window = 30
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let cutoff = now.addingTimeInterval(-Double(window) * 86_400)
+        // Exactly at the cutoff (kept: the check is strict `createdAt < cutoff`), and one second older
+        // than the cutoff (swept).
+        let atBoundary = try saveNoteWithAudio(store: store, createdAt: cutoff)
+        let justOlder = try saveNoteWithAudio(store: store, createdAt: cutoff.addingTimeInterval(-1))
+
+        let deleted = await AudioRetentionSweeper(store: store)
+            .sweep(retention: .autoDeleteDays(window), now: now)
+
+        XCTAssertEqual(deleted, [justOlder], "only the note strictly older than the window is swept")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.audioURL(for: atBoundary)!.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.audioURL(for: justOlder)!.path))
+    }
+
+    /// Transcript-only never records, so there is nothing to expire: the sweep is a no-op even for an
+    /// ancient note that (by construction) has an audio sibling. Guards against a sweep keyed off the
+    /// wrong policy silently deleting a kept recording.
+    func testSweepIsNoOpForTranscriptOnly() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SweepTranscriptOnly-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = NoteStore(directory: dir)
+        let id = try saveNoteWithAudio(store: store, createdAt: Date(timeIntervalSince1970: 0))
+
+        let deleted = await AudioRetentionSweeper(store: store)
+            .sweep(retention: .transcriptOnly, now: Date())
         XCTAssertTrue(deleted.isEmpty)
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.audioURL(for: id)!.path))
     }
