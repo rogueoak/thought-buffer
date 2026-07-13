@@ -45,10 +45,22 @@ struct MiraCommandParser {
     /// Filler words/phrases tolerated at the very start and the very end of the command remainder.
     /// These are politeness / connective words that carry no meaning for the grammar. Multi-word
     /// filler ("to me", "for me") is matched as a token run.
+    ///
+    /// The asymmetry between the two lists is INTENTIONAL, not an oversight - do not "fix" it by
+    /// making them match. Only "please" is a natural leading filler after the control word ("Mira
+    /// please remove..."); "to"/"the"/"that"/"it" leading the remainder would be part of the command
+    /// itself ("Mira the last paragraph" is not a command), so stripping them there would swallow
+    /// meaning. Trailing, by contrast, is where politeness and connective tails pile up ("...back to
+    /// me please"), so the trailing list is deliberately fuller.
     private static let leadingFiller: Set<String> = ["please"]
     private static let trailingFiller: [[String]] = [
         ["please"], ["to", "me"], ["for", "me"], ["the"], ["that"], ["it"],
     ]
+
+    /// `trailingFiller` pre-sorted longest-run-first, so `stripTrailingFiller` matches multi-word
+    /// runs ("to me") before single words ("me") without re-sorting on every loop iteration.
+    private static let trailingFillerByLength: [[String]] =
+        trailingFiller.sorted { $0.count > $1.count }
 
     /// Parse a finalized segment. Leads with the control word -> command mode (`.command` or
     /// `.unrecognizedCommand`); otherwise `.text`.
@@ -91,8 +103,10 @@ struct MiraCommandParser {
         ([["remove", "last", "sentence"], ["delete", "last", "sentence"]], .removeLastSentence),
         ([["remove", "last", "paragraph"], ["delete", "last", "paragraph"]], .removeLastParagraph),
         ([["new", "note"], ["start", "new", "note"]], .newNote),
-        ([["read", "back"], ["read", "that", "back"], ["read", "it", "back"],
-          ["read", "back", "that"], ["read", "back", "it"]], .readThatBack),
+        // "read back that" / "read back it" are omitted: `innerFiller` drops "that"/"it", so they
+        // reduce to "read back" (already listed). The distinct phrasings kept here are the ones that
+        // differ once inner filler is removed.
+        ([["read", "back"], ["read", "that", "back"], ["read", "it", "back"]], .readThatBack),
     ]
 
     /// Match the filler-stripped remainder against the grammar. A phrase matches when the remainder
@@ -129,7 +143,8 @@ struct MiraCommandParser {
         while changed {
             changed = false
             // Try longer filler runs first so "to me" is consumed as a unit before "me" alone.
-            for run in trailingFiller.sorted(by: { $0.count > $1.count }) {
+            // Uses the pre-sorted constant so the list is not re-sorted every iteration.
+            for run in trailingFillerByLength {
                 if rest.count >= run.count && Array(rest.suffix(run.count)) == run {
                     rest.removeLast(run.count)
                     changed = true

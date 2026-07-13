@@ -30,6 +30,14 @@ final class DeviceFeedbackFixesTests: XCTestCase {
         XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: 1), 1, accuracy: 0.0001)
     }
 
+    /// A NaN (or infinite) RMS must map to 0, not crash or produce a NaN bar height. This is the
+    /// single finite guard (the duplicate in `rmsLevel` was removed in favor of this one).
+    func testLevelMappingHandlesNaNAndInfinity() {
+        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: .nan), 0, accuracy: 0.0001)
+        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: .infinity), 0, accuracy: 0.0001)
+        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: -1), 0, accuracy: 0.0001)
+    }
+
     /// The Waveform's own height mapping: a non-zero level yields a taller bar than a zero level.
     /// Mirrors the private `barHeight` math so a regression that flattens the bars is caught.
     func testWaveformBarHeightRisesWithLevel() {
@@ -69,6 +77,35 @@ final class DeviceFeedbackFixesTests: XCTestCase {
         // Extra whitespace does not inflate the count.
         let spaced = Note(title: "t", paragraphs: ["  spaced   out   words  "], createdAt: Date())
         XCTAssertEqual(spaced.wordCount, 3)
+    }
+
+    // MARK: - Note.hasAudio dual guard (a recording is not silently dropped, nor half-recognized)
+
+    /// `hasAudio` requires BOTH an audio filename AND at least one timing. Pin the two-condition
+    /// guard so a recording with a filename but no timings (or vice versa) is not treated as
+    /// playable, and a fully-formed recording is recognized. A slip here would silently drop a real
+    /// recording or surface an unplayable one.
+    func testHasAudioRequiresBothFilenameAndTimings() {
+        let timing = ParagraphTiming(start: 0, duration: 1)
+
+        // Both present: a real recording.
+        let full = Note(title: "t", paragraphs: ["a"], createdAt: Date(),
+                        audioFileName: "x.m4a", timings: [timing])
+        XCTAssertTrue(full.hasAudio)
+
+        // Filename but no timings: not a mapped recording.
+        let noTimings = Note(title: "t", paragraphs: ["a"], createdAt: Date(),
+                             audioFileName: "x.m4a", timings: [])
+        XCTAssertFalse(noTimings.hasAudio)
+
+        // Timings but no filename: nothing to play.
+        let noFile = Note(title: "t", paragraphs: ["a"], createdAt: Date(),
+                          audioFileName: nil, timings: [timing])
+        XCTAssertFalse(noFile.hasAudio)
+
+        // Neither: plainly text-only.
+        let textOnly = Note(title: "t", paragraphs: ["a"], createdAt: Date())
+        XCTAssertFalse(textOnly.hasAudio)
     }
 }
 
@@ -133,6 +170,54 @@ final class PauseRestartPreservationTests: XCTestCase {
         let note = try XCTUnwrap(try model.finish())
         XCTAssertEqual(note.paragraphs, ["First thought", "Second thought"])
     }
+
+    /// The ACTUAL reported bug (feedback 0005 #2): with prior committed paragraphs already in the
+    /// note, a pause seam (task error-end emits its words as a `.finalizedSegment`) followed by the
+    /// fresh task's empty/short partial must NOT wipe the committed text. Before the fix the last
+    /// pre-pause words came in as a partial and the restart's fresh partial clobbered them; here we
+    /// assert every prior paragraph AND the pause-seam paragraph all survive, in order.
+    func testPriorParagraphsSurvivePauseSeamAndFreshPartial() {
+        let model = makeModel()
+
+        // Two paragraphs are already committed to the note.
+        service.emit(.finalizedSegment("P1", range: nil))
+        service.emit(.finalizedSegment("P2", range: nil))
+        XCTAssertEqual(model.paragraphs, ["P1", "P2"])
+
+        // The user keeps speaking; the recognition task then ENDS at a natural pause and emits the
+        // in-progress words as a finalized segment (the commit-on-end fix).
+        service.emit(.partial("P3"))
+        service.emit(.finalizedSegment("P3", range: nil))
+        XCTAssertEqual(model.paragraphs, ["P1", "P2", "P3"],
+                       "the pause-seam paragraph must append, not replace committed text")
+
+        // The fresh task after the restart reports an empty/short partial. It must NOT clobber any
+        // committed paragraph (this is exactly what the bug did).
+        service.emit(.partial(""))
+        service.emit(.partial("a"))
+        XCTAssertEqual(model.paragraphs, ["P1", "P2", "P3"],
+                       "a fresh-task partial must never wipe committed paragraphs")
+        // And nothing bled the partial into the committed text.
+        XCTAssertEqual(model.displayParagraphs, ["P1", "P2", "P3", "a"])
+    }
+
+    /// The second guard (feedback 0005 #2): a task that ends with EMPTY (or whitespace-only) text
+    /// must NOT create a blank paragraph. The service guards empty text before emitting, and the
+    /// view model's `commitParagraph` guards trimmed-empty too; this pins both so an error-end with
+    /// no words never appends an empty paragraph.
+    func testEmptyErrorEndDoesNotCreateBlankParagraph() {
+        let model = makeModel()
+        service.emit(.finalizedSegment("P1", range: nil))
+        XCTAssertEqual(model.paragraphs, ["P1"])
+
+        // An error-ended task with no usable text arrives as an (empty / whitespace) finalized
+        // segment. It must be dropped, not appended as a blank paragraph.
+        service.emit(.finalizedSegment("", range: nil))
+        service.emit(.finalizedSegment("   ", range: nil))
+        service.emit(.finalizedSegment("\n\t ", range: nil))
+
+        XCTAssertEqual(model.paragraphs, ["P1"], "an empty error-end must not append a blank paragraph")
+    }
 }
 
 // MARK: - #4 Delete through the store from the feed
@@ -155,6 +240,45 @@ final class StreamFeedDeleteTests: XCTestCase {
         // The delete went THROUGH the store (removed there) and the feed reloaded to reflect it.
         XCTAssertEqual(store.deletedIDs, [drop.id])
         XCTAssertEqual(feed.notes.map(\.id), [keep.id])
+        XCTAssertFalse(feed.deleteFailed, "a successful delete leaves no error surfaced")
+    }
+
+    /// Feedback 0005 #4/#9: deleting a note at the feed level also removes its sibling recording, so
+    /// a delete never orphans audio on disk. Asserted through the store double's audio-delete log.
+    func testDeleteAlsoRemovesSiblingAudioAtFeedLevel() async {
+        let store = MemoryNoteStore()
+        let note = Note(title: "Recorded", paragraphs: ["spoken"], createdAt: Date())
+        try? store.save(note)
+
+        let feed = StreamFeed(store: store)
+        await feed.start()
+
+        await feed.delete(id: note.id)
+
+        XCTAssertEqual(store.deletedAudioIDs, [note.id],
+                       "deleting a note must delete its sibling recording too")
+    }
+
+    /// Feedback 0005 #4: a throwing coordinated delete must be SURFACED, not swallowed. The feed
+    /// sets `deleteFailed` so the view shows a brief message, and the note stays visible (the reload
+    /// re-reflects the true on-disk state).
+    func testFailedDeleteSurfacesErrorAndKeepsNote() async {
+        let store = ThrowingDeleteStore()
+        let note = Note(title: "Sticky", paragraphs: ["stays put"], createdAt: Date())
+        try? store.save(note)
+
+        let feed = StreamFeed(store: store)
+        await feed.start()
+        XCTAssertEqual(feed.notes.count, 1)
+
+        await feed.delete(id: note.id)
+
+        XCTAssertTrue(feed.deleteFailed, "a failed delete must surface an error state")
+        XCTAssertEqual(feed.notes.map(\.id), [note.id], "a failed delete leaves the note visible")
+
+        // The view dismisses the message after showing it.
+        feed.clearDeleteFailure()
+        XCTAssertFalse(feed.deleteFailed)
     }
 }
 
@@ -179,12 +303,15 @@ private final class EventDrivingCaptureService: SpeechCaptureService {
     func stop() {}
 }
 
-/// An in-memory note store that records saves and deletes, for the feed/delete and save tests.
-/// `@unchecked Sendable`: touched only from the test's single actor, but `NoteStoring: Sendable`
-/// requires the annotation for its mutable buffers.
+/// An in-memory note store that records saves and deletes (note AND sibling audio), for the
+/// feed/delete and save tests. `@unchecked Sendable`: touched only from the test's single actor,
+/// but `NoteStoring: Sendable` requires the annotation for its mutable buffers.
 private final class MemoryNoteStore: NoteStoring, @unchecked Sendable {
     private(set) var notes: [Note] = []
     private(set) var deletedIDs: [UUID] = []
+    /// Audio IDs whose sibling recording was deleted, so a test can assert `delete(id:)` removes the
+    /// audio too (feedback 0005 #4: a note delete must not orphan its recording).
+    private(set) var deletedAudioIDs: [UUID] = []
 
     @discardableResult
     func save(_ note: Note) throws -> URL {
@@ -197,6 +324,30 @@ private final class MemoryNoteStore: NoteStoring, @unchecked Sendable {
 
     func delete(id: UUID) throws {
         deletedIDs.append(id)
+        // Mirror the real stores: deleting a note also removes its sibling recording.
+        try deleteAudio(for: id)
         notes.removeAll { $0.id == id }
     }
+
+    func deleteAudio(for id: UUID) throws {
+        deletedAudioIDs.append(id)
+    }
+}
+
+/// A store whose `delete` always throws, to prove a failed delete is SURFACED (not swallowed).
+/// `@unchecked Sendable` for the same reason as `MemoryNoteStore`.
+private final class ThrowingDeleteStore: NoteStoring, @unchecked Sendable {
+    struct DeleteError: Error {}
+    private(set) var notes: [Note] = []
+
+    @discardableResult
+    func save(_ note: Note) throws -> URL {
+        notes.removeAll { $0.id == note.id }
+        notes.append(note)
+        return URL(fileURLWithPath: "/dev/null")
+    }
+
+    func loadAll() -> [Note] { notes.reversed() }
+
+    func delete(id: UUID) throws { throw DeleteError() }
 }

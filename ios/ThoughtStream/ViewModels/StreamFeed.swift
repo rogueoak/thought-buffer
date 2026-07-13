@@ -13,6 +13,9 @@ final class StreamFeed: ObservableObject {
     @Published private(set) var notes: [Note] = []
     /// True once an initial load has finished, so the view can tell "empty" from "not loaded yet".
     @Published private(set) var didLoad = false
+    /// Set when a delete failed, so the view can show a brief, non-blocking message. Mirrors the
+    /// driver; cleared via `clearDeleteFailure()` once the view has surfaced it.
+    @Published private(set) var deleteFailed = false
 
     private let driver: NoteStoreDriver
 
@@ -31,12 +34,16 @@ final class StreamFeed: ObservableObject {
     func reload() async { await driver.reload() }
 
     /// Delete a note (and its sibling recording) through the store, then reload. Call from the
-    /// list's swipe-to-delete action.
+    /// list's swipe-to-delete action. A failure surfaces via `deleteFailed`.
     func delete(id: UUID) async { await driver.delete(id: id) }
+
+    /// Clear a surfaced delete-failure message once the view has shown it.
+    func clearDeleteFailure() { driver.clearDeleteFailure(); mirror() }
 
     /// Copy the driver's current state into the published properties so observers refresh.
     private func mirror() {
         notes = driver.notes
         didLoad = driver.didLoad
+        deleteFailed = driver.deleteFailed
     }
 }

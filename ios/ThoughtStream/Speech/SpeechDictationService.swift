@@ -377,7 +377,8 @@ final class SpeechDictationService: SpeechCaptureService {
             sum += sample * sample
         }
         let rms = sqrt(sum / Float(frames))
-        guard rms.isFinite else { return 0 }
+        // The finite/non-negative guard lives in `normalizedLevel(fromRMS:)` (single source of
+        // truth), so a NaN/inf RMS maps to 0 there without a duplicate guard here.
         return normalizedLevel(fromRMS: rms)
     }
 
