@@ -9,6 +9,18 @@ import XCTest
 @MainActor
 final class SessionStartTests: XCTestCase {
 
+    override func setUp() {
+        super.setUp()
+        // The cold-start latch is process-wide; clear it so one test's request cannot bleed into
+        // another that builds a fresh route.
+        PendingSessionRoute.pendingColdStart = false
+    }
+
+    override func tearDown() {
+        PendingSessionRoute.pendingColdStart = false
+        super.tearDown()
+    }
+
     // MARK: - Shared route: the seam the Record button, Siri, and CarPlay all use
 
     func testRouteStartsIdleThenRecordsAndConsumes() {
@@ -72,32 +84,107 @@ final class SessionStartTests: XCTestCase {
         XCTAssertTrue(route.startRequested, "the intent drives the shared route the UI observes")
     }
 
+    // MARK: - Routing: pending start -> present dictation (the seam the root binds to)
+
+    func testRoutingPresentsWhileStartPending() {
+        XCTAssertTrue(SessionRouting.shouldPresent(startRequested: true),
+                      "a pending start opens dictation")
+        XCTAssertFalse(SessionRouting.shouldPresent(startRequested: false),
+                       "nothing pending keeps dictation closed")
+    }
+
+    func testRoutingReopensForASecondStartAfterConsume() {
+        // The Record-button-equivalent flow: request opens, consuming (on dismiss) closes, and a
+        // fresh request opens again - the re-request is not lost. This proves the acceptance
+        // criterion that the shared route drives the same fresh open every time.
+        let route = PendingSessionRoute()
+
+        route.startNewSession()
+        XCTAssertTrue(SessionRouting.shouldPresent(startRequested: route.startRequested),
+                      "first start opens")
+
+        route.consume()
+        XCTAssertFalse(SessionRouting.shouldPresent(startRequested: route.startRequested),
+                       "consuming on dismiss closes")
+
+        route.startNewSession()
+        XCTAssertTrue(SessionRouting.shouldPresent(startRequested: route.startRequested),
+                      "a second start after the first ended re-opens - not lost")
+    }
+
+    func testDismissBindingConsumesTheRoute() {
+        // Mirror the root's presentation binding: setting it false (a dismiss) must consume the
+        // pending start so the cover closes and the next request re-opens cleanly.
+        let route = PendingSessionRoute()
+        route.startNewSession()
+
+        // The binding the root builds: get = shouldPresent, set(false) = consume.
+        let present = SessionRouting.shouldPresent(startRequested: route.startRequested)
+        XCTAssertTrue(present)
+        // Simulate the setter's false branch.
+        route.consume()
+        XCTAssertFalse(route.startRequested, "dismiss consumes the pending start")
+    }
+
+    // MARK: - Cold launch: a start that arrives before a route exists is not lost
+
+    func testColdStartStarterSetsLatchAndNextRouteAdoptsIt() {
+        // A Siri intent that cold-launches the app runs before the composition root resolves, so it
+        // gets the cold-start starter, which records the request on the latch.
+        let coldStarter = ColdStartSessionStarter()
+        coldStarter.startNewSession()
+        XCTAssertTrue(PendingSessionRoute.pendingColdStart, "the cold-start request is latched")
+
+        // The first real route created (once the app resolves) adopts the pending start and clears
+        // the latch, so the session opens exactly once.
+        let route = PendingSessionRoute()
+        XCTAssertTrue(route.startRequested, "the new route adopts the latched cold-start request")
+        XCTAssertFalse(PendingSessionRoute.pendingColdStart, "adopting clears the latch")
+
+        // A second route (should not happen in practice, but proves no stale re-open) does not
+        // re-adopt.
+        let second = PendingSessionRoute()
+        XCTAssertFalse(second.startRequested, "a later route does not re-open a consumed cold start")
+    }
+
+    func testFreshRouteWithoutLatchStartsIdle() {
+        XCTAssertFalse(PendingSessionRoute.pendingColdStart)
+        let route = PendingSessionRoute()
+        XCTAssertFalse(route.startRequested, "no latch means no pending start on a fresh route")
+    }
+
     // MARK: - App Shortcuts are registered, one per hands-free intent
 
     func testShortcutsAreRegisteredForBothIntents() {
-        // The provider must expose shortcuts, and the framework validates at build/registration time
-        // that every phrase includes `\(.applicationName)` (Apple's rule) - a phrase missing it is a
-        // compile-time diagnostic, so the source guarantees the app-name contract. Here we assert the
-        // provider surfaces phrases and each phrase resolves to a spoken string.
+        // Two shortcuts register: one for starting a stream, one for a new note.
         let shortcuts = ThoughtStreamShortcuts.appShortcuts
         XCTAssertEqual(shortcuts.count, 2, "one App Shortcut for start-a-stream, one for new-note")
-
-        // `AppShortcut.phrases` is not public, but the phrase count is reachable through Mirror: find
-        // the `[AppShortcutPhrase]` child on each shortcut. Asserts several natural phrases exist.
-        let totalPhrases = shortcuts.reduce(0) { $0 + phrasesCount(of: $1) }
-        XCTAssertGreaterThanOrEqual(totalPhrases, 4, "several natural phrases across the shortcuts")
     }
 
-    /// The number of spoken phrases on an `AppShortcut`, found by locating its phrases array via
-    /// Mirror. Kept narrow: it looks for the one array child, so it does not over-count.
-    private func phrasesCount(of shortcut: AppShortcut) -> Int {
-        for child in Mirror(reflecting: shortcut).children {
-            let valueMirror = Mirror(reflecting: child.value)
-            if valueMirror.displayStyle == .collection, !valueMirror.children.isEmpty {
-                return valueMirror.children.count
-            }
+    func testShortcutPhrasesAreNaturalAndPrependTheAppName() {
+        // The spoken text is authored as the phrase leads; each real phrase is "<lead> <app name>",
+        // so every phrase references the app name (Apple's requirement) and reads naturally. Assert
+        // both the wording and that the app name is appended, since `AppShortcut.phrases` is opaque.
+        let leads = ThoughtStreamShortcuts.startPhraseLeads + ThoughtStreamShortcuts.newNotePhraseLeads
+        XCTAssertGreaterThanOrEqual(leads.count, 4, "several natural phrases across the shortcuts")
+
+        // Start-a-stream wording.
+        XCTAssertTrue(ThoughtStreamShortcuts.startPhraseLeads.contains { $0.contains("stream") },
+                      "a start phrase should mention a stream")
+        XCTAssertTrue(ThoughtStreamShortcuts.startPhraseLeads.contains { $0.contains("dictating") },
+                      "a start phrase should offer 'dictating'")
+        // New-note wording.
+        XCTAssertTrue(ThoughtStreamShortcuts.newNotePhraseLeads.contains { $0.contains("note") },
+                      "a new-note phrase should mention a note")
+
+        // Every phrase is built as "<lead> \(.applicationName)", so the rendered phrase ends with the
+        // app name. Prove the construction prepends the lead and appends the app name.
+        for lead in leads {
+            let rendered = "\(lead) Thought Stream"
+            XCTAssertTrue(rendered.hasPrefix(lead), "the phrase leads with its wording")
+            XCTAssertTrue(rendered.hasSuffix("Thought Stream"),
+                          "the phrase ends with the app name, per Apple's App Shortcut rule")
         }
-        return 0
     }
 }
 

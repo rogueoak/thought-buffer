@@ -52,10 +52,13 @@ struct AppDependencies {
     /// view tree is still injected. `@MainActor` isolates the mutable shared state.
     @MainActor private(set) static var shared: AppDependencies?
 
-    /// The shared session starter for hands-free callers (Siri App Intent, CarPlay), or nil before
-    /// the app has resolved dependencies. Both start the same route the Record button does.
+    /// The shared session starter for hands-free callers (Siri App Intent, CarPlay). Returns the
+    /// live route once the app has resolved; before that (a COLD hands-free launch, where the intent
+    /// runs before `resolve()` finishes) it returns a latch-setting starter so the request is not
+    /// dropped - the route seeds itself from the latch the moment it is created. Never nil, so a
+    /// cold-launch start always lands.
     @MainActor
-    static var sessionStarter: SessionStarter? { shared?.sessionRoute }
+    static var sessionStarter: SessionStarter { shared?.sessionRoute ?? ColdStartSessionStarter() }
 
     /// Resolve dependencies at startup, picking iCloud storage when the ubiquity container is
     /// available and falling back to local otherwise. Runs the container lookup off the main actor

@@ -36,7 +36,7 @@ struct StartThoughtStreamIntent: AppIntent {
         // The injected starter wins (tests); otherwise reach the live route from the composition
         // root, which App Intents cannot receive by injection since the system builds them outside
         // the SwiftUI tree.
-        (starter ?? AppDependencies.sessionStarter)?.startNewSession()
+        (starter ?? AppDependencies.sessionStarter).startNewSession()
         return .result()
     }
 }
@@ -64,7 +64,7 @@ struct NewNoteIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        (starter ?? AppDependencies.sessionStarter)?.startNewSession()
+        (starter ?? AppDependencies.sessionStarter).startNewSession()
         return .result()
     }
 }
@@ -72,7 +72,28 @@ struct NewNoteIntent: AppIntent {
 /// Registers the App Shortcuts so the phrases appear in the Shortcuts app and Siri on install. Each
 /// phrase includes the app name via `\(.applicationName)`, which Apple requires for every App
 /// Shortcut phrase. Friendly variants give Siri several natural ways to trigger the same intent.
+///
+/// The spoken text is mirrored as testable `static let` arrays (the leading half of each phrase,
+/// before the interpolated app name) so a unit test can assert the wording and the app-name
+/// contract - `AppShortcut.phrases` itself is not public and the phrase literals below require the
+/// `AppShortcutPhrase` builder context, so they cannot be built from these arrays. The literals and
+/// the leads must stay in step; the test asserts the leads, and each literal is `"<lead>
+/// \(.applicationName)"`.
 struct ThoughtStreamShortcuts: AppShortcutsProvider {
+    /// The leading text of each "start a stream" phrase; the app name follows in the literal below.
+    static let startPhraseLeads = [
+        "Start a thought stream in",
+        "Start a stream in",
+        "Start dictating in",
+        "New thought in"
+    ]
+
+    /// The leading text of each "new note" phrase; the app name follows in the literal below.
+    static let newNotePhraseLeads = [
+        "New note in",
+        "Start a note in"
+    ]
+
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
             intent: StartThoughtStreamIntent(),

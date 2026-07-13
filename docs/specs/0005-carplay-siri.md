@@ -83,6 +83,14 @@ outside the SwiftUI tree, so they cannot receive it by injection; they reach the
 the composition root). The intent depends on the `SessionStarter` protocol, so tests inject a stub
 and assert a start was requested without any UI.
 
+A COLD hands-free launch needs care: `openAppWhenRun` launches the app and runs the intent's
+`perform()` before `resolve()` finishes, so the live route does not exist yet. To keep the very
+request that launched the app from being dropped, `AppDependencies.sessionStarter` returns a
+`ColdStartSessionStarter` when the root is unresolved; it records the request on a process-wide
+`PendingSessionRoute.pendingColdStart` latch, and the first route created adopts and clears it. The
+root's presentation is a pure function of `startRequested` (`SessionRouting.shouldPresent`, unit
+tested), so the session opens the moment the Stream list appears.
+
 **App Intents (iOS 17+).** `StartThoughtStreamIntent` sets `openAppWhenRun = true` and, in
 `perform()`, calls the shared starter to request the route, then returns. iOS foregrounds the app;
 the root observes the pending route and opens dictation. `AppShortcutsProvider` lists phrases for
@@ -95,8 +103,9 @@ sets a `CPListTemplate` with one row, "Start a thought stream", whose handler ca
 starter. It is registered as an additional scene configuration under `UIApplicationSceneManifest`
 with the `CPTemplateApplicationSceneSessionRoleApplication` role. Without the CarPlay entitlement
 the system never creates this scene, so it is inert in the shipping build; the phone `WindowGroup`
-scene is unaffected. The manifest keeps `UIApplicationSupportsMultipleScenes` semantics intact for
-the phone.
+scene is unaffected. `UIApplicationSupportsMultipleScenes` flips to `true` so the CarPlay scene can
+coexist with the phone window; the app is iPhone-only, so this does not open multi-window on the
+phone and the single phone scene is the only one that activates without the entitlement.
 
 **Trade-offs.**
 

@@ -17,13 +17,19 @@ How the system is built and why.
   hands-free session-start seam and its entry points:
   - `SessionStarter` (protocol, one method `startNewSession()`) and `PendingSessionRoute` (its
     concrete `@MainActor ObservableObject`) are the single "start a new dictation session" seam. The
-    Record button, the Siri App Intent, and CarPlay all request a start through it; the root
-    (`StreamListView`) observes `startRequested` and opens `DictationView`, which begins capture in
-    its `.task`. "Start a session" means "route to a fresh DictationView", so every entry point
-    behaves identically and there is no parallel capture path. The route lives on `AppDependencies`;
-    `AppDependencies.shared` / `.sessionStarter` is a narrow, documented process-wide bridge so App
-    Intents and the CarPlay scene - which the system builds outside the SwiftUI tree - can reach the
-    live route. Everything inside the view tree is still injected.
+    Record button, the Siri App Intent, and CarPlay all request a start through it. The root
+    (`StreamListView`) presents `DictationView` as a pure function of `startRequested`
+    (`SessionRouting.shouldPresent`, bound so a dismiss `consume()`s the route), so a start requested
+    while backgrounded opens on appear and a re-request after a session ends re-opens - no lost-edge
+    cases. `DictationView` begins capture in its `.task`. "Start a session" means "route to a fresh
+    DictationView", so every entry point behaves identically and there is no parallel capture path.
+    The route lives on `AppDependencies`; `AppDependencies.shared` / `.sessionStarter` is a narrow,
+    documented process-wide bridge so App Intents and the CarPlay scene - which the system builds
+    outside the SwiftUI tree - can reach the live route. Everything inside the view tree is still
+    injected. A COLD hands-free launch (a Siri intent runs before `resolve()` finishes, so `shared`
+    is nil) is handled by `ColdStartSessionStarter`, which records the request on a process-wide
+    `PendingSessionRoute.pendingColdStart` latch that the route adopts the moment it is created, so
+    the request that launched the app is never dropped.
   - `ThoughtStreamIntents.swift` - `StartThoughtStreamIntent` and `NewNoteIntent` (`AppIntent`,
     `openAppWhenRun`) call the starter (injected `SessionStarter`, defaulting to the live route), so
     they are unit-testable with a stub and never touch the UI. `ThoughtStreamShortcuts`

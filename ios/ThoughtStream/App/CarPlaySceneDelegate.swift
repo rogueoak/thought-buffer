@@ -37,7 +37,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let start = CPListItem(text: "Start a thought stream", detailText: "Begin a new note by voice")
         start.handler = { _, completion in
             Task { @MainActor in
-                AppDependencies.sessionStarter?.startNewSession()
+                AppDependencies.sessionStarter.startNewSession()
                 completion()
             }
         }

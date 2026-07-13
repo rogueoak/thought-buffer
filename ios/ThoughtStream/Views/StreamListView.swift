@@ -16,8 +16,20 @@ struct StreamListView: View {
     /// while the app was backgrounded opens dictation the moment the app comes forward, and so the
     /// Record button starts a session through the same seam every other entry point uses.
     @ObservedObject private var sessionRoute: PendingSessionRoute
-    @State private var showDictation = false
     @State private var showSettings = false
+
+    /// Presentation of the dictation screen is a pure function of the pending route: it is shown
+    /// exactly while a start is pending (`SessionRouting.shouldPresent`). Setting it false - the
+    /// header chevron, a finished save, a swipe-down - consumes the pending start. Deriving the
+    /// binding from the route (rather than a separate `@State` bool synced by `onChange`) means a
+    /// start requested while backgrounded opens on appear, and a re-request right after a session
+    /// ends re-opens, with no lost-edge cases.
+    private var showDictation: Binding<Bool> {
+        Binding(
+            get: { SessionRouting.shouldPresent(startRequested: sessionRoute.startRequested) },
+            set: { present in if !present { sessionRoute.consume() } }
+        )
+    }
 
     init(
         store: NoteStoring,
@@ -80,13 +92,12 @@ struct StreamListView: View {
                     .tint(CanopyColor.primary)
                 }
             }
-            .fullScreenCover(isPresented: $showDictation) {
+            .fullScreenCover(isPresented: showDictation) {
                 DictationView(
                     model: DictationViewModel(store: store, processor: makeTextProcessor())
                 ) { savedNote in
-                    // The session is over: clear the pending route so a re-request can open a fresh
-                    // one, and refresh the feed if a note was saved.
-                    sessionRoute.consume()
+                    // The session is over: consuming the pending route (via the binding's setter on
+                    // dismiss) closes the cover; here just refresh the feed if a note was saved.
                     if savedNote != nil {
                         Task { await feed.reload() }
                     }
@@ -97,13 +108,6 @@ struct StreamListView: View {
             }
         }
         .tint(CanopyColor.primary)
-        // Open dictation whenever a session start is pending - the Record button, a Siri intent, or
-        // CarPlay all flip `startRequested`. `onChange` catches a start requested while on screen;
-        // the initial value catches one requested while the app was backgrounded (a hands-free
-        // launch), so the session opens the moment the Stream list appears.
-        .onChange(of: sessionRoute.startRequested, initial: true) { _, requested in
-            if requested { showDictation = true }
-        }
         // A `.task` (not onAppear/onDisappear) so the feed wires its observer once for the lifetime
         // of this view in the stream, and is not stopped/restarted every time we push into a note
         // detail on the same stack. `withTaskCancellationHandler` tears the observer down the moment
