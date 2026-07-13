@@ -105,9 +105,38 @@ On the first Record, the app asks for microphone and speech recognition access. 
 the dictation screen shows a message explaining what it needs and how to turn it on. Speech runs
 on device (`requiresOnDeviceRecognition`); nothing is sent to a server.
 
-Notes are saved as Markdown files under the app's `Documents/ThoughtStream/` directory, one
-`<id>.md` file per note (YAML frontmatter plus the body). The Stream list reads them straight
-from disk, newest first.
+Notes are saved as Markdown files, one `<id>.md` file per note (YAML frontmatter plus the body).
+The Stream list reads them straight from disk, newest first.
+
+Where those files live depends on iCloud. At launch the app resolves its iCloud Drive ubiquity
+container off the main thread:
+
+- **iCloud available** (signed in, container provisioned): notes read and write to the container's
+  `Documents/ThoughtStream/` folder through `NSFileCoordinator` (coordinated IO, to avoid sync
+  conflicts). The folder shows up in the Files app as "Thought Stream" and syncs across your
+  devices. An `NSMetadataQuery` watches the folder, downloads notes synced in from other devices,
+  and refreshes the Stream list on external changes.
+- **iCloud unavailable** (not signed in, no provisioning, or the Simulator with no account): the
+  app falls back to the local `Documents/ThoughtStream/` directory and behaves exactly as before.
+  Nothing is lost; the choice is made once in the composition root.
+
+#### Enabling real iCloud sync on a device
+
+The iCloud Documents capability is declared in `ios/project.yml` (entitlements plus the
+`NSUbiquitousContainers` Info.plist), targeting container `iCloud.com.rogueoak.thoughtstream`.
+The repo builds unsigned for the Simulator with no development team, so at runtime in the
+Simulator the container is nil and storage falls back to local - that is expected.
+
+To use real iCloud sync on a physical device:
+
+1. Open `ios/ThoughtStream.xcodeproj` (after `xcodegen generate`).
+2. In the ThoughtStream target's Signing & Capabilities, set your Apple Developer **Team**. With
+   automatic signing, the iCloud container provisions itself the first time you build to a device.
+3. Sign in to iCloud on the device. Run the app; notes now live in your iCloud Drive under
+   "Thought Stream" and sync across your devices.
+
+Cross-device sync cannot be verified in the Simulator (it needs your Team and an iCloud account
+on a device); the storage, coordination, selection, and fallback logic are covered by unit tests.
 
 Live speech capture in the simulator is unreliable: it may use the Mac microphone or decline
 on-device recognition. Verify real dictation on a physical device. To exercise the design in the

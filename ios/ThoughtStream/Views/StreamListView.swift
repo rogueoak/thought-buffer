@@ -10,6 +10,9 @@ struct StreamListView: View {
     /// Builds the text processor for a dictation session (Mira control words by default). Injected
     /// from the composition root so one place decides the processor.
     private let makeTextProcessor: () -> TextProcessor
+    /// Watches iCloud for external edits / synced-in notes so the list refreshes without a manual
+    /// reload. Nil when storage is local (nothing external to observe).
+    private let noteObserver: UbiquitousNoteObserving?
     @State private var notes: [Note] = []
     @State private var didLoad = false
     @State private var showDictation = false
@@ -17,10 +20,12 @@ struct StreamListView: View {
 
     init(
         store: NoteStoring,
-        makeTextProcessor: @escaping () -> TextProcessor
+        makeTextProcessor: @escaping () -> TextProcessor,
+        noteObserver: UbiquitousNoteObserving? = nil
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
+        self.noteObserver = noteObserver
     }
 
     var body: some View {
@@ -86,7 +91,17 @@ struct StreamListView: View {
             }
         }
         .tint(CanopyColor.primary)
-        .onAppear(perform: loadIfNeeded)
+        .onAppear(perform: startObservingIfNeeded)
+        .onDisappear { noteObserver?.stop() }
+    }
+
+    /// Load once, then begin observing iCloud so synced-in or externally edited notes refresh the
+    /// list. On local storage there is no observer, so this just loads.
+    private func startObservingIfNeeded() {
+        loadIfNeeded()
+        guard let noteObserver else { return }
+        noteObserver.onChange = { reload() }
+        noteObserver.start()
     }
 
     private var emptyState: some View {
