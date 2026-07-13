@@ -174,6 +174,32 @@ final class NotePlaybackControllerTests: XCTestCase {
         XCTAssertEqual(player.plays.count, 2)
     }
 
+    func testNaturalFinishClearsNowPlayingAndRemote() async {
+        let player = SpyPlayer()
+        let nowPlaying = SpyNowPlaying()
+        let remote = SpyRemote()
+        let controller = makeController(player: player, nowPlaying: nowPlaying, remote: remote)
+        controller.play(note: recordedNote())
+        await settle()
+        XCTAssertTrue(controller.isPlaying)
+
+        // The recording reaches its end on its own (the player's onFinish fires).
+        player.finish()
+
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertNil(controller.currentNote, "a natural finish clears the loaded note")
+        XCTAssertNil(nowPlaying.last ?? nil, "a natural finish clears Now Playing")
+        XCTAssertFalse(remote.isRegistered, "a natural finish drops the remote commands")
+    }
+
+    func testSkipWhileIdleIsNoOp() {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        // Nothing loaded: a stray remote skip must not seek.
+        controller.skip(by: 15)
+        XCTAssertTrue(player.seeks.isEmpty)
+    }
+
     func testPlayNoteWithoutAudioIsNoOp() async {
         let player = SpyPlayer()
         let controller = makeController(player: player)

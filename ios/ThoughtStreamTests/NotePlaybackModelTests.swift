@@ -97,6 +97,33 @@ final class NotePlaybackModelTests: XCTestCase {
     /// When the note claims audio but the file is gone (resolver returns nil - swept or not synced),
     /// the play attempt resolves to nothing and leaves the model idle. Confirms the CarPlay-style
     /// re-validation: a file that vanished between navigation and play is not played as a stale URL.
+    /// The model is a projection over a shared controller: when the controller moves on to ANOTHER
+    /// note (as CarPlay might), this model reads as not playing rather than falsely showing Stop.
+    func testModelReadsNotPlayingWhenControllerLoadsAnotherNote() async {
+        let player = StubAudioNotePlayer()
+        let controller = NotePlaybackController(
+            resolver: StubResolver(url: URL(fileURLWithPath: "/tmp/rec.m4a")), player: player
+        )
+        let mine = Note(
+            id: noteID, title: "mine", paragraphs: ["p"], createdAt: Date(),
+            audioFileName: "mine.m4a", timings: [ParagraphTiming(start: 0, duration: 3)]
+        )
+        let other = Note(
+            title: "other", paragraphs: ["p"], createdAt: Date(),
+            audioFileName: "other.m4a", timings: [ParagraphTiming(start: 0, duration: 3)]
+        )
+        let model = NotePlaybackModel(note: mine, controller: controller)
+
+        model.toggle()
+        await model.settle()
+        XCTAssertTrue(model.isPlaying, "playing my note shows Stop")
+
+        // Another surface drives the shared controller to a different note.
+        controller.play(note: other)
+        await model.settle()
+        XCTAssertFalse(model.isPlaying, "the model no longer claims playback once another note loads")
+    }
+
     func testMissingFileAtPlayTimeLeavesNotPlaying() async {
         let player = StubAudioNotePlayer()
         let resolver = StubResolver(url: nil)
