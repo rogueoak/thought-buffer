@@ -7,13 +7,20 @@ struct StreamListView: View {
     /// The note store, injected from the composition root (`AppDependencies`) rather than
     /// allocated inline, so one place wires the concrete store.
     private let store: NoteStoring
+    /// Builds the text processor for a dictation session (Mira control words by default). Injected
+    /// from the composition root so one place decides the processor.
+    private let makeTextProcessor: () -> TextProcessor
     @State private var notes: [Note] = []
     @State private var didLoad = false
     @State private var showDictation = false
     @State private var showSettings = false
 
-    init(store: NoteStoring) {
+    init(
+        store: NoteStoring,
+        makeTextProcessor: @escaping () -> TextProcessor
+    ) {
         self.store = store
+        self.makeTextProcessor = makeTextProcessor
     }
 
     var body: some View {
@@ -66,7 +73,9 @@ struct StreamListView: View {
                 }
             }
             .fullScreenCover(isPresented: $showDictation) {
-                DictationView(model: DictationViewModel(store: store)) { savedNote in
+                DictationView(
+                    model: DictationViewModel(store: store, processor: makeTextProcessor())
+                ) { savedNote in
                     if savedNote != nil {
                         reload()
                     }
@@ -129,5 +138,5 @@ private struct RecordButton: View {
 }
 
 #Preview {
-    StreamListView(store: NoteStore())
+    StreamListView(store: NoteStore(), makeTextProcessor: { MiraTextProcessor() })
 }

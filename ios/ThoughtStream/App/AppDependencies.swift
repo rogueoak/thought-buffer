@@ -7,7 +7,16 @@ struct AppDependencies {
     /// The note persistence backend used across the app.
     let noteStore: NoteStoring
 
-    init(noteStore: NoteStoring = NoteStore()) {
+    /// Builds the text processor for a dictation session. Returns a fresh one each time so a
+    /// stateful processor never leaks across sessions. Defaults to the Mira control-word
+    /// processor with the built-in control word.
+    let makeTextProcessor: () -> TextProcessor
+
+    init(
+        noteStore: NoteStoring = NoteStore(),
+        makeTextProcessor: @escaping () -> TextProcessor = { MiraTextProcessor() }
+    ) {
         self.noteStore = noteStore
+        self.makeTextProcessor = makeTextProcessor
     }
 }

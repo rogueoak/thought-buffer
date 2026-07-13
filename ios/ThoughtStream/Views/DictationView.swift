@@ -14,6 +14,10 @@ struct DictationView: View {
     /// Sample text injected in preview / screenshot mode so the design renders without a mic.
     private let previewInjection: String?
 
+    /// A command phrase injected after `previewInjection` in screenshot mode, so the command chip
+    /// renders without a mic. Fired once on appear.
+    private let previewCommand: String?
+
     @State private var caretVisible = true
     private let caretTimer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
@@ -26,10 +30,12 @@ struct DictationView: View {
     init(
         model: DictationViewModel,
         previewInjection: String? = nil,
+        previewCommand: String? = nil,
         onFinish: @escaping (Note?) -> Void = { _ in }
     ) {
         _model = StateObject(wrappedValue: model)
         self.previewInjection = previewInjection
+        self.previewCommand = previewCommand
         self.onFinish = onFinish
     }
 
@@ -52,7 +58,15 @@ struct DictationView: View {
                         .frame(height: 44)
                         .padding(.horizontal, CanopySpacing.x4)
 
-                    statusChip
+                    if let error = model.commandError {
+                        commandErrorChip(error)
+                            .transition(.opacity)
+                    } else if let banner = model.commandBanner {
+                        commandChip(banner)
+                            .transition(.opacity)
+                    } else {
+                        statusChip
+                    }
 
                     Spacer(minLength: 0)
 
@@ -66,6 +80,8 @@ struct DictationView: View {
             .padding(.top, CanopySpacing.x4)
             .padding(.bottom, CanopySpacing.x6)
         }
+        .animation(.easeInOut(duration: 0.2), value: model.commandBanner)
+        .animation(.easeInOut(duration: 0.2), value: model.commandError)
         .onReceive(caretTimer) { _ in caretVisible.toggle() }
         .alert("Could not save your note", isPresented: $showSaveError) {
             Button("OK", role: .cancel) { }
@@ -76,6 +92,9 @@ struct DictationView: View {
         .task {
             if let injection = previewInjection {
                 model.injectFinalized(injection)
+                if let command = previewCommand {
+                    model.injectFinalized(command)
+                }
             } else {
                 await model.begin()
             }
@@ -177,6 +196,46 @@ struct DictationView: View {
         .padding(.vertical, CanopySpacing.x2)
         .background(CanopyColor.muted)
         .clipShape(Capsule())
+    }
+
+    /// The transient control chip shown when a Mira command fires, in the muted token style. The
+    /// full label (e.g. "Mira - removed last sentence") is assembled in the view model, where the
+    /// active control word is known, so it stays correct once the control word is configurable.
+    private func commandChip(_ label: String) -> some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Image(systemName: "wand.and.stars")
+            Text(label)
+                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+        }
+        .font(.system(size: CanopyFont.sizeSm))
+        .foregroundStyle(CanopyColor.mutedForeground)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.muted)
+        .clipShape(Capsule())
+    }
+
+    /// The chip shown when a voice command could not complete (e.g. "new note" failed to save), so
+    /// the user sees the failure instead of a false success. Uses the danger accent.
+    private func commandErrorChip(_ error: DictationViewModel.CommandError) -> some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Image(systemName: "exclamationmark.triangle")
+            Text(commandErrorLabel(error))
+                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+        }
+        .font(.system(size: CanopyFont.sizeSm))
+        .foregroundStyle(CanopyColor.danger)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.muted)
+        .clipShape(Capsule())
+    }
+
+    private func commandErrorLabel(_ error: DictationViewModel.CommandError) -> String {
+        switch error {
+        case .newNoteSaveFailed:
+            return "Could not save - note kept"
+        }
     }
 
     private func deniedCard(_ error: DictationViewModel.DeniedReason) -> some View {

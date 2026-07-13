@@ -111,7 +111,13 @@ from disk, newest first.
 
 Live speech capture in the simulator is unreliable: it may use the Mac microphone or decline
 on-device recognition. Verify real dictation on a physical device. To exercise the design in the
-simulator without a mic, launch with `-uiScreen dictation`, which injects sample text.
+simulator without a mic, launch with `-uiScreen dictation`, which injects sample text; add
+`mira-command` to also fire a Mira control chip.
+
+Mira control words let you edit hands-free while dictating. Say "Mira" and a command: "Mira
+remove the last sentence", "Mira remove the last paragraph", "Mira new note" (saves and starts
+fresh), or "Mira read that back" (speaks the last paragraph aloud). The command phrase is not
+written into the note.
 
 ### Design tokens
 
