@@ -130,10 +130,10 @@ final class DictationViewModel: ObservableObject {
     /// Whether to record the session's audio (spec 0007). Read from settings at construction so it
     /// applies to this session; `transcriptOnly` never opens the file writer.
     private let recordsAudio: Bool
-    /// The active control word, used to assemble the command chip label (e.g. "Mira - new note").
-    /// Injected so it stays in sync with the processor's control word once Settings makes it
-    /// configurable, keeping the chip prefix out of the view.
-    private let controlWord: String
+    /// The active control word, used to assemble the command chip label (e.g. "Mira - new note") and
+    /// shown on the cheat sheet (feedback 0008). Injected so it stays in sync with the processor's
+    /// control word once Settings makes it configurable, keeping the chip prefix out of the view.
+    let controlWord: String
     private var createdAt = Date()
     private var noteID = UUID()
 

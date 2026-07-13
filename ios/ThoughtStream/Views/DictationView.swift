@@ -25,6 +25,9 @@ struct DictationView: View {
     /// note as saved and dismissing.
     @State private var showSaveError = false
 
+    /// Whether the command cheat-sheet drawer is up (feedback 0008).
+    @State private var showCheatSheet = false
+
     /// Build the screen from an explicit view model. Callers wire the model (and thus its note
     /// store) from the composition root; see `StreamListView`.
     init(
@@ -73,7 +76,8 @@ struct DictationView: View {
                     Dock(
                         isPaused: model.phase == .paused,
                         onPause: { model.togglePause() },
-                        onStop: finish
+                        onStop: finish,
+                        onCheatSheet: { showCheatSheet = true }
                     )
                 }
             }
@@ -88,6 +92,11 @@ struct DictationView: View {
         } message: {
             Text("Something went wrong writing the note to your device. Your words are still on "
                 + "screen. Tap Stop to try saving again.")
+        }
+        .sheet(isPresented: $showCheatSheet) {
+            CommandCheatSheet(controlWord: model.controlWord)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .task {
             if let injection = previewInjection {
@@ -318,11 +327,14 @@ private struct Waveform: View {
     }
 }
 
-/// The bottom dock: Pause/Resume | big circular Stop button | (label). Stop saves and closes.
+/// The bottom dock: Pause/Resume | big circular Stop button | Commands. Stop saves and closes; the
+/// Commands button (feedback 0008) opens the cheat-sheet drawer and balances the leading control so
+/// the stop button stays centered.
 private struct Dock: View {
     let isPaused: Bool
     let onPause: () -> Void
     let onStop: () -> Void
+    let onCheatSheet: () -> Void
 
     var body: some View {
         HStack {
@@ -334,8 +346,8 @@ private struct Dock: View {
             Spacer()
             stopButton
             Spacer()
-            // Balance the leading control so the stop button stays centered.
-            dockButton(title: "", system: "", action: {}).opacity(0).disabled(true)
+            dockButton(title: "Commands", system: "questionmark.circle", action: onCheatSheet)
+                .accessibilityLabel("Show voice commands")
         }
         .padding(.horizontal, CanopySpacing.x8)
     }
@@ -370,6 +382,62 @@ private struct Dock: View {
             .foregroundStyle(CanopyColor.textMuted)
             .frame(width: 64)
         }
+    }
+}
+
+/// The command cheat sheet shown in a bottom drawer from the record screen (feedback 0008): the
+/// active control word, each voice command with what it does, and a tip on pausing. Content is
+/// sourced from `MiraCommand.cheatSheet` so it stays in sync with the parser's grammar.
+struct CommandCheatSheet: View {
+    let controlWord: String
+
+    var body: some View {
+        ZStack {
+            CanopyColor.bg.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: CanopySpacing.x4) {
+                    Text("Voice commands")
+                        .font(.system(size: CanopyFont.sizeXl, weight: .bold))
+                        .foregroundStyle(CanopyColor.text)
+                    Text("Say \"\(controlWord)\" then a command. It runs the action instead of being "
+                        + "written into your note.")
+                        .font(.system(size: CanopyFont.sizeSm))
+                        .foregroundStyle(CanopyColor.textMuted)
+
+                    VStack(spacing: CanopySpacing.x2) {
+                        ForEach(Array(MiraCommand.cheatSheet.enumerated()), id: \.offset) { _, command in
+                            commandRow(phrase: "\(controlWord) \(command.spokenPhrase)",
+                                       detail: command.cheatSheetDetail)
+                        }
+                        commandRow(phrase: "Pause to think",
+                                   detail: "Stop talking for a moment to end a paragraph; keep going "
+                                       + "and your words continue in a new one.")
+                    }
+                }
+                .padding(CanopySpacing.x5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func commandRow(phrase: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: CanopySpacing.x1) {
+            Text(phrase)
+                .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
+                .foregroundStyle(CanopyColor.text)
+            Text(detail)
+                .font(.system(size: CanopyFont.sizeSm))
+                .foregroundStyle(CanopyColor.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(CanopySpacing.x4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CanopyColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
+                .stroke(CanopyColor.border, lineWidth: 1)
+        )
     }
 }
 
