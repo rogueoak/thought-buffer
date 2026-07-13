@@ -1,0 +1,17 @@
+// Signing configuration for Thought Stream.
+//
+// Simulator builds need no team: code signing is disabled for the simulator SDK, so the
+// unsigned Simulator build and the test suite stay green with no Apple Developer account.
+//
+// To run on a PHYSICAL DEVICE, create ios/Signing.local.xcconfig (git-ignored) containing:
+//
+//     DEVELOPMENT_TEAM = YOURTEAMID
+//
+// Find YOURTEAMID in Xcode > Settings > Accounts > (your Apple ID) > Manage Certificates,
+// or at https://developer.apple.com/account > Membership details (Team ID). Then run
+// `xcodegen generate` again and pick your device. Automatic signing does the rest.
+//
+// Note: the app declares an iCloud Documents capability. A paid Apple Developer account can
+// provision it automatically; a free personal team cannot use iCloud containers, so on a free
+// account you would need to remove the iCloud capability to run on device.
+#include? "Signing.local.xcconfig"

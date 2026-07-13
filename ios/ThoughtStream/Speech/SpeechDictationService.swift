@@ -366,6 +366,7 @@ final class SpeechDictationService: SpeechCaptureService {
             sum += sample * sample
         }
         let rms = sqrt(sum / Float(frames))
+        guard rms.isFinite else { return 0 }
 
         // Map RMS to 0...1 with a gentle curve so quiet speech still moves the bars.
         let normalized = min(1, max(0, rms * 12))

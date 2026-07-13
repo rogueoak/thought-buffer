@@ -36,6 +36,9 @@ dist/
 .turbo/
 *.log
 
+# Local signing (your Apple Developer Team ID; not committed)
+ios/Signing.local.xcconfig
+
 # Local env
 .env
 .env.local

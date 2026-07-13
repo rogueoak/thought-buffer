@@ -305,11 +305,16 @@ private struct Waveform: View {
     }
 
     private func barHeight(index: Int, maxHeight: CGFloat) -> CGFloat {
+        // Clamp the inputs so a non-finite or negative value can never reach a frame height
+        // (SwiftUI logs "Invalid frame dimension" for NaN/negative). `maxHeight` can be 0 on the
+        // first layout pass, and `level` is derived from live audio, so guard both.
+        let available = (maxHeight.isFinite && maxHeight > 0) ? maxHeight : 0
+        let safeLevel = level.isFinite ? min(1, max(0, level)) : 0
         // A stable pseudo-wave shape (0...1) scaled by the live level.
         let shape = (sin(Double(index) * 0.7) + 1) / 2
         let floor = 0.12
-        let factor = floor + (shape * 0.35 + 0.65) * Double(level) * (1 - floor)
-        return max(4, maxHeight * CGFloat(min(1, factor)))
+        let factor = floor + (shape * 0.35 + 0.65) * Double(safeLevel) * (1 - floor)
+        return max(4, available * CGFloat(min(1, factor)))
     }
 }
 

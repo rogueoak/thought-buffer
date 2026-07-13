@@ -12,7 +12,6 @@ settings:
     SWIFT_VERSION: "5.0"
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
-    DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
@@ -72,13 +71,19 @@ targets:
             NSUbiquitousContainerIsDocumentScopePublic: true
             NSUbiquitousContainerName: Thought Stream
             NSUbiquitousContainerSupportedFolderLevels: One
+    # Device builds sign with your team from ios/Signing.local.xcconfig (git-ignored; see
+    # ios/Signing.xcconfig for how to set it). Signing is disabled for the SIMULATOR SDK only,
+    # so unsigned Simulator builds and tests stay green with no Apple Developer team.
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rogueoak.thoughtstream
         PRODUCT_NAME: ThoughtStream
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CODE_SIGNING_REQUIRED: "NO"
-        CODE_SIGNING_ALLOWED: "NO"
+        "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": "NO"
+        "CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]": "NO"
 
   ThoughtStreamTests:
     type: bundle.unit-test
