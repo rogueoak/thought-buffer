@@ -4,6 +4,8 @@
 # Xcode / Swift
 build/
 DerivedData/
+# XcodeGen output: ios/project.yml + sources are committed, the generated project is not.
+*.xcodeproj
 *.xcuserstate
 xcuserdata/
 *.xcscmblueprint
