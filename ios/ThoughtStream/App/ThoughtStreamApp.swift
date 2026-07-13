@@ -13,15 +13,25 @@ struct ThoughtStreamApp: App {
             if CommandLine.arguments.contains("-uiScreen") ,
                CommandLine.arguments.contains("dictation") {
                 // Screenshot mode: inject sample text so the live design renders without a mic
-                // or permission prompt in the simulator.
+                // or permission prompt in the simulator. A `mira-command` argument also injects a
+                // command so the Mira control chip renders.
                 DictationView(
-                    model: DictationViewModel(store: dependencies.noteStore),
+                    model: DictationViewModel(
+                        store: dependencies.noteStore,
+                        processor: dependencies.makeTextProcessor()
+                    ),
                     previewInjection:
                         "Remember to call the supplier about the Shea butter order before noon. "
-                            + "Then draft the launch email and keep it to three short paragraphs."
+                            + "Then draft the launch email and keep it to three short paragraphs.",
+                    previewCommand: CommandLine.arguments.contains("mira-command")
+                        ? "Mira remove the last sentence"
+                        : nil
                 )
             } else {
-                StreamListView(store: dependencies.noteStore)
+                StreamListView(
+                    store: dependencies.noteStore,
+                    makeTextProcessor: dependencies.makeTextProcessor
+                )
             }
         }
     }

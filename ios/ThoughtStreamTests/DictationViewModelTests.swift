@@ -129,5 +129,5 @@ private final class RecordingNoteStore: NoteStoring {
 
 /// A processor that uppercases text, to prove the injectable transform seam is applied.
 private struct UppercasingProcessor: TextProcessor {
-    func process(_ text: String) -> String { text.uppercased() }
+    func process(_ text: String) -> ProcessedSegment { .text(text.uppercased()) }
 }

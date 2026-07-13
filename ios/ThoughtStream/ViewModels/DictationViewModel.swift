@@ -73,6 +73,34 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    /// A command that just fired, shown as a transient chip and then cleared. Nil most of the time.
+    enum CommandBanner: Equatable {
+        case removedLastSentence
+        case removedLastParagraph
+        case newNote
+        case readThatBack
+
+        init(_ command: MiraCommand) {
+            switch command {
+            case .removeLastSentence: self = .removedLastSentence
+            case .removeLastParagraph: self = .removedLastParagraph
+            case .newNote: self = .newNote
+            case .readThatBack: self = .readThatBack
+            }
+        }
+
+        /// The chip label, e.g. "removed last sentence". The control word prefix is added by the
+        /// view so the whole chip reads "Mira - removed last sentence".
+        var label: String {
+            switch self {
+            case .removedLastSentence: return "removed last sentence"
+            case .removedLastParagraph: return "removed last paragraph"
+            case .newNote: return "new note"
+            case .readThatBack: return "read that back"
+            }
+        }
+    }
+
     @Published private(set) var phase: Phase = .idle
     /// Finalized paragraphs committed to the note so far.
     @Published private(set) var paragraphs: [String] = []
@@ -80,25 +108,41 @@ final class DictationViewModel: ObservableObject {
     @Published private(set) var partial: String = ""
     /// Smoothed microphone level, 0...1, for the waveform.
     @Published private(set) var level: Float = 0
+    /// The most recent command chip, or nil. Set when a command fires, cleared after a moment.
+    @Published private(set) var commandBanner: CommandBanner?
 
     private let service: SpeechCaptureService
     private let store: NoteStoring
     private let processor: TextProcessor
-    private let createdAt = Date()
-    private let noteID = UUID()
+    private let speaker: Speaker
+    private var createdAt = Date()
+    private var noteID = UUID()
+
+    /// How long the command chip stays up before auto-dismissing.
+    private let bannerDuration: Duration = .seconds(2)
+    private var bannerTask: Task<Void, Never>?
+
+    /// True while Mira reads a paragraph aloud and capture is paused for it, so `didFinish`
+    /// resumes capture only when read-back was the thing that paused it.
+    private var isReadingBack = false
 
     init(
         service: SpeechCaptureService? = nil,
         store: NoteStoring,
-        processor: TextProcessor = PassthroughTextProcessor()
+        processor: TextProcessor = PassthroughTextProcessor(),
+        speaker: Speaker? = nil
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
         // service's main-actor-isolated initializer is not called from a nonisolated default.
         self.service = service ?? SpeechDictationService()
         self.store = store
         self.processor = processor
+        self.speaker = speaker ?? SystemSpeaker()
         self.service.onEvent = { [weak self] event in
             self?.handle(event)
+        }
+        self.speaker.onFinish = { [weak self] in
+            self?.readBackDidFinish()
         }
     }
 
@@ -157,14 +201,11 @@ final class DictationViewModel: ObservableObject {
     @discardableResult
     func finish() throws -> Note? {
         service.stop()
+        speaker.stop()
         // Fold any live partial into the committed paragraphs before saving. The partial is
         // already processed (see `handle`/`simulatePartial`), so append it directly rather than
         // running it through the processor a second time.
-        let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            paragraphs.append(trimmed)
-            partial = ""
-        }
+        foldPartialIntoParagraphs()
         level = 0
 
         guard !paragraphs.isEmpty else {
@@ -186,15 +227,17 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Inject text as if it had been finalized. Used by screenshot tooling and by tests to prove
-    /// the save flow without live audio in the simulator.
+    /// the save flow (and command routing) without live audio in the simulator.
     func injectFinalized(_ text: String) {
-        commitParagraph(text)
+        handleFinalized(text)
     }
 
     /// Set the live partial as if speech recognition had reported it. Test hook mirroring
     /// `injectFinalized`, used to prove a partial present at `finish()` lands in the saved note.
+    /// A partial is only ever shown as text: a half-spoken command must not fire until it
+    /// finalizes, so non-text results are ignored here.
     func simulatePartial(_ text: String) {
-        partial = processor.process(text)
+        partial = partialText(from: processor.process(text))
     }
 
     // MARK: - Event handling
@@ -202,10 +245,9 @@ final class DictationViewModel: ObservableObject {
     private func handle(_ event: SpeechCaptureEvent) {
         switch event {
         case .partial(let text):
-            partial = processor.process(text)
+            partial = partialText(from: processor.process(text))
         case .finalizedSegment(let text):
-            commitParagraph(text)
-            partial = ""
+            handleFinalized(text)
         case .level(let value):
             // Simple smoothing so bars glide rather than jump.
             level = level * 0.6 + value * 0.4
@@ -215,10 +257,127 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
+    /// Route a finalized segment through the processor: commit text, or run a command.
+    private func handleFinalized(_ text: String) {
+        switch processor.process(text) {
+        case .text(let value):
+            commitParagraph(value)
+            partial = ""
+        case .command(let command):
+            // A command is consumed: it never lands in the note. Clear the partial so the
+            // spoken phrase does not linger under the caret.
+            partial = ""
+            execute(command)
+        case .drop:
+            partial = ""
+        }
+    }
+
+    /// The text a partial should display: only `.text` shows; a command mid-partial waits.
+    private func partialText(from segment: ProcessedSegment) -> String {
+        if case .text(let value) = segment { return value }
+        return partial
+    }
+
     private func commitParagraph(_ text: String) {
-        let processed = processor.process(text)
-        let trimmed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         paragraphs.append(trimmed)
+    }
+
+    // MARK: - Command execution
+
+    /// Run a recognized Mira command against the in-progress note and surface a chip.
+    private func execute(_ command: MiraCommand) {
+        switch command {
+        case .removeLastSentence:
+            removeLastSentence()
+        case .removeLastParagraph:
+            removeLastParagraph()
+        case .newNote:
+            startNewNote()
+        case .readThatBack:
+            readThatBack()
+        }
+        showBanner(CommandBanner(command))
+    }
+
+    /// Drop the last sentence of the last paragraph; drop the paragraph if it empties.
+    private func removeLastSentence() {
+        guard let last = paragraphs.last else { return }
+        if let remaining = SentenceTokenizer.removingLastSentence(from: last) {
+            paragraphs[paragraphs.count - 1] = remaining
+        } else {
+            paragraphs.removeLast()
+        }
+    }
+
+    /// Drop the last committed paragraph.
+    private func removeLastParagraph() {
+        guard !paragraphs.isEmpty else { return }
+        paragraphs.removeLast()
+    }
+
+    /// Save the current note (if any) and reset to a fresh one, keeping the session running.
+    private func startNewNote() {
+        foldPartialIntoParagraphs()
+        if !paragraphs.isEmpty {
+            let title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
+            let note = Note(id: noteID, title: title, paragraphs: paragraphs, createdAt: createdAt)
+            // A save failure here is non-fatal: keep the session going rather than interrupt
+            // hands-free capture. The note stays on screen if it could not be written.
+            do {
+                try store.save(note)
+            } catch {
+                return
+            }
+        }
+        paragraphs = []
+        partial = ""
+        noteID = UUID()
+        createdAt = Date()
+    }
+
+    /// Speak the last paragraph aloud, pausing capture so the audio does not feed back in.
+    private func readThatBack() {
+        foldPartialIntoParagraphs()
+        guard let last = paragraphs.last else { return }
+        // Pause capture (tears down engine/task, deactivates the record session) so the mic is
+        // not hearing the synthesizer. `readBackDidFinish` resumes it.
+        if phase == .recording {
+            service.pause()
+            level = 0
+        }
+        isReadingBack = true
+        speaker.speak(last)
+    }
+
+    /// Restore capture once read-back finishes, if it was recording when read-back began.
+    private func readBackDidFinish() {
+        guard isReadingBack else { return }
+        isReadingBack = false
+        if phase == .recording {
+            service.resume()
+        }
+    }
+
+    /// Fold any live partial into the committed paragraphs (used before save/read-back).
+    private func foldPartialIntoParagraphs() {
+        let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            paragraphs.append(trimmed)
+            partial = ""
+        }
+    }
+
+    /// Show the command chip and auto-dismiss it after a moment.
+    private func showBanner(_ banner: CommandBanner) {
+        commandBanner = banner
+        bannerTask?.cancel()
+        bannerTask = Task { [weak self, bannerDuration] in
+            try? await Task.sleep(for: bannerDuration)
+            guard !Task.isCancelled else { return }
+            self?.commandBanner = nil
+        }
     }
 }

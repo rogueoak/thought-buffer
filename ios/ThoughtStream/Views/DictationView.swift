@@ -14,6 +14,10 @@ struct DictationView: View {
     /// Sample text injected in preview / screenshot mode so the design renders without a mic.
     private let previewInjection: String?
 
+    /// A command phrase injected after `previewInjection` in screenshot mode, so the command chip
+    /// renders without a mic. Fired once on appear.
+    private let previewCommand: String?
+
     @State private var caretVisible = true
     private let caretTimer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
@@ -26,10 +30,12 @@ struct DictationView: View {
     init(
         model: DictationViewModel,
         previewInjection: String? = nil,
+        previewCommand: String? = nil,
         onFinish: @escaping (Note?) -> Void = { _ in }
     ) {
         _model = StateObject(wrappedValue: model)
         self.previewInjection = previewInjection
+        self.previewCommand = previewCommand
         self.onFinish = onFinish
     }
 
@@ -52,7 +58,12 @@ struct DictationView: View {
                         .frame(height: 44)
                         .padding(.horizontal, CanopySpacing.x4)
 
-                    statusChip
+                    if let banner = model.commandBanner {
+                        commandChip(banner)
+                            .transition(.opacity)
+                    } else {
+                        statusChip
+                    }
 
                     Spacer(minLength: 0)
 
@@ -66,6 +77,7 @@ struct DictationView: View {
             .padding(.top, CanopySpacing.x4)
             .padding(.bottom, CanopySpacing.x6)
         }
+        .animation(.easeInOut(duration: 0.2), value: model.commandBanner)
         .onReceive(caretTimer) { _ in caretVisible.toggle() }
         .alert("Could not save your note", isPresented: $showSaveError) {
             Button("OK", role: .cancel) { }
@@ -76,6 +88,9 @@ struct DictationView: View {
         .task {
             if let injection = previewInjection {
                 model.injectFinalized(injection)
+                if let command = previewCommand {
+                    model.injectFinalized(command)
+                }
             } else {
                 await model.begin()
             }
@@ -170,6 +185,22 @@ struct DictationView: View {
         HStack(spacing: CanopySpacing.x2) {
             Image(systemName: model.phase == .paused ? "pause.circle" : "waveform")
             Text(model.phase == .paused ? "Paused - tap play to keep going" : "On-device - nothing leaves your phone")
+        }
+        .font(.system(size: CanopyFont.sizeSm))
+        .foregroundStyle(CanopyColor.mutedForeground)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.muted)
+        .clipShape(Capsule())
+    }
+
+    /// The transient control chip shown when a Mira command fires, in the muted token style,
+    /// reading e.g. "Mira - removed last sentence".
+    private func commandChip(_ banner: DictationViewModel.CommandBanner) -> some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Image(systemName: "wand.and.stars")
+            Text("Mira - " + banner.label)
+                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
         }
         .font(.system(size: CanopyFont.sizeSm))
         .foregroundStyle(CanopyColor.mutedForeground)

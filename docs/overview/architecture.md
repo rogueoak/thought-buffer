@@ -23,16 +23,32 @@ How the system is built and why.
   notes newest first.
 - `Speech/` - `SpeechDictationService` owns the `AVAudioEngine`, `SFSpeechRecognizer`, and the
   current `SFSpeechRecognitionTask`. On-device only. Emits events (partial, finalized, level,
-  failure). Auto-restarts a finished task on the same audio to keep dictation continuous.
+  failure). Auto-restarts a finished task on the same audio to keep dictation continuous. Also
+  holds the Mira control-word pieces: `MiraCommandParser` (pure segment -> `MiraCommand?`),
+  `MiraTextProcessor` (the `TextProcessor` that consumes commands), `SentenceTokenizer`
+  (`NLTokenizer`-backed, for "remove the last sentence"), and `Speaker`/`SystemSpeaker`
+  (`AVSpeechSynthesizer` text to speech for "read that back").
+- `TextProcessor` seam - a finalized segment runs through `process`, which returns a
+  `ProcessedSegment`: `.text` to commit, `.command` to execute and suppress, or `.drop`
+  (reserved). `PassthroughTextProcessor` always returns `.text`; `MiraTextProcessor` returns
+  `.command` when the parser matches. A future spelling-override processor composes here (parse
+  for a command first, else transform text and return `.text`). The composition root
+  (`AppDependencies.makeTextProcessor`) builds one per session.
 - `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
-  logic: it drives `DictationView` from the speech service and saves through the store.
+  logic: it drives `DictationView` from the speech service, routes finalized segments through the
+  `TextProcessor`, executes `MiraCommand`s (note mutations, new note save+reset, read-back), and
+  saves through the store. For read-back it pauses capture, hands the last paragraph to the
+  `Speaker`, and resumes when the speaker reports the utterance finished, so the spoken audio
+  never feeds back into recognition.
 - `Views/` - SwiftUI screens. `StreamListView` loads from `NoteStore`; `DictationView` binds to
   `DictationViewModel`; `NoteCard`, `NoteDetailView`, `SettingsView` stay presentational.
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.
 
 Tests live in `ios/ThoughtStreamTests/` (a `bundle.unit-test` target): `NoteStore`, `Note`
-Markdown, and `DictationViewModel` save/reload. The generated scheme runs them.
+Markdown, `DictationViewModel` save/reload, the `MiraCommandParser` grammar, `SentenceTokenizer`,
+and Mira command execution (note mutations, new note, read-back via a `Speaker` stub, and
+`TextProcessor` result routing via stub capture/speaker doubles). The generated scheme runs them.
 
 ## Design tokens
 
