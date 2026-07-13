@@ -82,6 +82,11 @@ the spelling "Shea".
   syncs only where your notes do (locally, or your own iCloud). It is never uploaded to us. Set
   recordings to transcript-only to never save audio, or auto-delete them after a number of days,
   in Settings.
+- **Now Playing shows the note title.** When you play a note, its title (the note's first line)
+  appears in the system Now Playing surface - the lock screen, Control Center, and CarPlay - like
+  any audio app shows its track title. This is your own content on your own device, never sent
+  anywhere, and iOS's own "Show on Lock Screen" controls let you hide media info on the lock screen
+  if you prefer.
 
 ## Tech and design
 

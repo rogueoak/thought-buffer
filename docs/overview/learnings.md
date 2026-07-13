@@ -137,6 +137,33 @@ thread-safe on its own (a lock, `@unchecked Sendable`) exactly as the tap alread
 `request.append`, so no isolated state crosses the audio thread. Generalizes to any second recorder,
 meter, or analyzer teed onto a stream whose primary consumer restarts under it.
 
+## A guard that can abort belongs before the teardown, and invisible teardown needs its own test (spec 0008)
+
+When an operation both (a) tears down current state to make room and (b) can abort early on a guard,
+run the guard BEFORE the teardown - otherwise the abort path strands half-cleared state. The playback
+controller stopped the current recording and then bailed on a no-audio note, leaving the OLD note in
+`MPNowPlayingInfoCenter` with live remote handlers wired to a stopped controller. The same shape bit
+the failed-resolve branch (cleared the note but not the system Now Playing / remote wiring). Two rules
+generalize past playback: for any "validate, then mutate shared state" sequence, the validation gate
+comes first; and give the stop/switch path ONE unambiguous helper that fully clears everything, rather
+than a "stop but keep the wiring to re-use" helper that is easy to call on an abort. The coverage twin:
+INVISIBLE teardown - clearing `MPNowPlayingInfoCenter`, unregistering `MPRemoteCommandCenter` handlers,
+dropping a singleton's state - is exactly what a happy-path test misses, because nothing on screen
+proves it. Assert the CLEARED state explicitly with a spy (Now Playing is nil, no remote wired) for
+the natural-finish, the failed-play, and the switch-to-another cases. Generalizes to any controller
+that mutates shared OS/system state on stop.
+
+## Weigh every system-surfaced value against the app's privacy posture (spec 0008)
+
+Standard platform UX can leak content on a privacy-forward app. `MPNowPlayingInfoCenter` shows the
+track title on the LOCKED lock screen and Control Center; for a private voice-notes app whose title is
+the note's first line, that is note content visible without authentication - a real regression from a
+"nothing leaves the device" posture, even though nothing does leave the device. When you add any value
+to a system surface (Now Playing, notifications, widgets, share sheets, Spotlight), weigh it against
+the posture: keep it generic, gate it behind a setting, or at minimum disclose the tradeoff in the
+privacy copy (here: the user's own content, on their own device, hideable via iOS's "Show on Lock
+Screen"). Generalizes to any feature that hands user content to an OS-rendered surface.
+
 ## Validate a config value against its consumer's contract, not just its shape (spec 0006)
 
 A user-editable setting must be validated against what DOWNSTREAM does with it, not merely that it

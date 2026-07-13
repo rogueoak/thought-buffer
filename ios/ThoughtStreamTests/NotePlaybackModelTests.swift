@@ -142,11 +142,14 @@ final class NotePlaybackModelTests: XCTestCase {
 }
 
 private extension NotePlaybackModel {
-    /// Let the lazy resolve+play task complete before asserting. The resolver runs on a detached
-    /// task; yielding a few times lets it hop back to the main actor and start playback.
+    /// Let the lazy resolve+play task complete before asserting. The resolve runs on a detached task
+    /// (now behind the shared controller), so yield AND sleep a touch between tries - under full-suite
+    /// load a bare yield-count can race the detached hop back to the main actor, which is why this
+    /// waits real time rather than a fixed yield count.
     func settle() async {
-        for _ in 0..<20 {
+        for _ in 0..<50 {
             await Task.yield()
+            try? await Task.sleep(nanoseconds: 2_000_000)
         }
     }
 }

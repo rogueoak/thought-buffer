@@ -97,6 +97,18 @@ final class RecordingsListModelTests: XCTestCase {
         XCTAssertEqual(note.recordingDuration, 10, "start + duration of the last-ending range")
     }
 
+    func testRecordingDurationIsOrderIndependent() {
+        // `recordingDuration` uses max(start + duration), not `timings.last`, so a timing list that is
+        // out of chronological order still yields the true recording length (the tail of the
+        // last-ENDING range), never a shorter earlier range.
+        let note = Note(
+            title: "t", paragraphs: ["a", "b"], createdAt: Date(),
+            audioFileName: "t.m4a",
+            timings: [ParagraphTiming(start: 8, duration: 4), ParagraphTiming(start: 0, duration: 3)]
+        )
+        XCTAssertEqual(note.recordingDuration, 12, "the longest tail wins regardless of order")
+    }
+
     // MARK: - Live refresh on driver change
 
     func testDriverChangeRefreshesTheList() async {

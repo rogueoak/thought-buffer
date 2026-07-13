@@ -213,8 +213,49 @@ final class NotePlaybackControllerTests: XCTestCase {
         XCTAssertNil(controller.currentNote)
     }
 
+    /// A no-audio note must not tear down a recording that is already playing: the guard runs before
+    /// any teardown, so the current note stays loaded and its Now Playing / remote wiring intact.
+    func testPlayNoteWithoutAudioDoesNotDisruptCurrentPlayback() async {
+        let nowPlaying = SpyNowPlaying()
+        let remote = SpyRemote()
+        let controller = makeController(nowPlaying: nowPlaying, remote: remote)
+        let playing = recordedNote(title: "playing")
+        controller.play(note: playing)
+        await settle()
+        XCTAssertTrue(controller.isPlaying)
+
+        controller.play(note: Note(title: "text", paragraphs: ["x"], createdAt: Date()))
+        await settle()
+
+        XCTAssertTrue(controller.isLoaded(playing), "the playing note is untouched")
+        XCTAssertTrue(controller.isPlaying)
+        XCTAssertEqual(nowPlaying.last??.title, "playing", "Now Playing still shows the real note")
+        XCTAssertTrue(remote.isRegistered, "remote commands stay wired to the playing note")
+    }
+
+    /// A failed play (resolver returns nil - swept / not synced) must not strand the previous note's
+    /// Now Playing item or remote commands.
+    func testFailedPlayClearsNowPlayingAndRemote() async {
+        let nowPlaying = SpyNowPlaying()
+        let remote = SpyRemote()
+        let controller = makeController(url: nil, nowPlaying: nowPlaying, remote: remote)
+
+        controller.play(note: recordedNote())
+        await settle()
+
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertNil(controller.currentNote)
+        XCTAssertNil(nowPlaying.last ?? nil, "a failed play leaves no stale Now Playing item")
+        XCTAssertFalse(remote.isRegistered, "a failed play leaves no stale remote wiring")
+    }
+
+    /// Wait out the lazy off-main resolve+play. Yield AND sleep a touch each try so a detached hop
+    /// back to the main actor is not raced under full-suite load (a bare yield-count can be too few).
     private func settle() async {
-        for _ in 0..<20 { await Task.yield() }
+        for _ in 0..<50 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
     }
 }
 

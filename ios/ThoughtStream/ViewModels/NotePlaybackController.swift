@@ -29,9 +29,14 @@ final class NotePlaybackController: ObservableObject {
     private(set) var currentNote: Note?
 
     /// Fires (on the main actor) after any transport-state change - play, pause, resume, skip, stop,
-    /// natural finish. A non-SwiftUI consumer (the CarPlay scene, or a `NotePlaybackModel` projection)
-    /// sets it to refresh its own view of the controller. `@Published` covers SwiftUI binders; this
-    /// covers the headless ones.
+    /// natural finish. A single non-SwiftUI consumer (the CarPlay scene, OR the `NotePlaybackModel`
+    /// projection - never both on one controller instance) sets it to refresh its own view of the
+    /// controller. `@Published` covers SwiftUI binders; this covers the one headless observer.
+    ///
+    /// SINGLE-OBSERVER by design: each surface owns its own controller instance, so one slot is
+    /// enough. If a future controller is genuinely shared by two headless observers at once, this must
+    /// become a multicast; until then a second assignment would clobber the first, which is why it is
+    /// documented rather than silently fanned out.
     var onTransportChange: (() -> Void)?
 
     private let resolver: AudioURLResolving
@@ -72,10 +77,14 @@ final class NotePlaybackController: ObservableObject {
     /// to "playing" so a button responds immediately; a missing or unplayable file clears it. A no-op
     /// for a note that claims no recording.
     func play(note: Note) {
-        pendingPlay?.cancel()
-        // Different note (or a fresh start): reset before loading the new one.
-        stopPlayerOnly()
+        // Guard BEFORE tearing down the current playback: a no-audio note must not stop whatever is
+        // playing and then bail, which would strand the old note in Now Playing with live remote
+        // handlers wired to a stopped controller.
         guard note.hasAudio else { return }
+        pendingPlay?.cancel()
+        // Different note (or a fresh start): fully clear the current playback (player, Now Playing,
+        // remote) before loading the new one, so no stale metadata or wiring survives the switch.
+        clearPlayback()
 
         currentNote = note
         isPlaying = true
@@ -140,22 +149,19 @@ final class NotePlaybackController: ObservableObject {
     func stop() {
         pendingPlay?.cancel()
         pendingPlay = nil
-        stopPlayerOnly()
-        currentNote = nil
-        nowPlaying.update(nil)
-        remote.unregisterAll()
+        clearPlayback()
         onTransportChange?()
     }
 
     // MARK: - Private
 
     /// Begin playback of a resolved URL. A nil or unplayable URL leaves the controller idle rather
-    /// than stuck "playing".
+    /// than stuck "playing" - and clears any Now Playing / remote wiring so a failed play never
+    /// strands stale metadata.
     private func startPlayback(note: Note, url: URL?) {
         pendingPlay = nil
         guard let url, player.play(url: url, from: 0, duration: nil) else {
-            resetState()
-            currentNote = nil
+            clearPlayback()
             onTransportChange?()
             return
         }
@@ -205,16 +211,20 @@ final class NotePlaybackController: ObservableObject {
         onTransportChange?()
     }
 
-    /// Stop the player without clearing the loaded note or the Now Playing / remote wiring (used
-    /// before loading a new note, where the wiring is about to be re-established). Suppresses the
-    /// synchronous `onFinish` so it does not run the natural-end teardown.
-    private func stopPlayerOnly() {
+    /// Fully clear playback: stop the player, drop the loaded note, and clear the Now Playing item +
+    /// remote wiring, so nothing stale survives a stop or a switch to another note. Suppresses the
+    /// synchronous `onFinish` that `player.stop()` fires so it does not run the natural-end teardown
+    /// on top of this deliberate one. Does NOT itself fire `onTransportChange` - the caller does, once.
+    private func clearPlayback() {
         if isPlaying || isPaused {
             suppressFinish = true
             player.stop()
             suppressFinish = false
         }
         resetState()
+        currentNote = nil
+        nowPlaying.update(nil)
+        remote.unregisterAll()
     }
 
     private func resetState() {
