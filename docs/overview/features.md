@@ -229,3 +229,25 @@ feeds speech (one task accumulates the whole passage and finalizes only on end):
 - **Mira commands fire mid-utterance** - the control word is detected ANYWHERE in a finalized
   segment, not only at the start. The segment splits at the first control word: the dictation before
   it is committed, and the rest is command mode (see Mira control words above).
+
+## Post-device polish (feedback 0008)
+
+Fixes and refinements from a round of on-device testing:
+
+- **No duplicate paragraph after a command** - a task can commit an utterance as a paragraph via an
+  utterance reset AND still lead with it in its final transcription, so a following command's split
+  re-committed it. The service now strips the already-committed lead from the task-end transcription
+  before committing the remainder.
+- **Cheat sheet** - a Commands button by Stop opens a bottom drawer listing the control word, each
+  voice command with what it does, and a pause-to-think tip.
+- **Thoughts list** - the list is titled "Thoughts"; note cards have no disclosure chevron and are
+  tappable across their full width.
+- **Keyboard editing** - the saved-note page has an Edit/Done toggle to correct text with the
+  keyboard; the record screen offers Edit while paused.
+- **Resume a note** - a saved note's page offers Resume, reopening it into a dictation session that
+  continues the same note. Appended text is added; the original recording is preserved (the resumed
+  portion is text-only on playback).
+- **Find recordings on the phone** - a waveform toggle in the Thoughts toolbar filters the list to
+  notes that have a kept recording (previously browsable only on CarPlay).
+- **Debug panel removed** - the on-record DEBUG diagnostic scaffolding is gone now that capture is
+  verified on device.

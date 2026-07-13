@@ -234,3 +234,18 @@ is the wrong anchor for a marker in an accumulating stream; a control token arri
 it ANYWHERE and split around it, and keep the words before it. Anchoring to position zero silently
 disables the feature for the exact continuous input it was built for. Generalizes to any restart-to-
 continue loop over a growing stream where a subtask can end empty and a marker can land anywhere.
+
+## Two commit paths over one accumulating stream double-count (feedback 0008)
+
+Committing paragraphs from BOTH the live-partial reset (0007) and the task-end result (0006) meant
+the same words could land twice: on device the recognizer's final transcription is non-monotonic and
+can restore an utterance the reset already committed, so a following command's split re-committed it
+(a paragraph doubled after "Mira ..."). The fix makes the two paths aware of each other with a single
+per-task marker: record what the reset committed (`committedThisTask`) and strip that lead from the
+task-end transcription before committing the remainder - REPLACE not append, because the recognizer's
+accumulation only ever extends from its most recent internal reset, so only the latest reset-committed
+utterance can recur. Tolerant matching (character-level common prefix, word-boundary trim) absorbs the
+recognizer's revisions, and a non-matching lead means the recognizer already dropped it, so nothing is
+stripped. Generalizes: when two independent commit paths consume one accumulating stream, give them a
+shared high-water marker so neither re-commits what the other did; reconciling after the fact by
+content is what breaks on messy, non-monotonic input.
