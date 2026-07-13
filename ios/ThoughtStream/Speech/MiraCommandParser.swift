@@ -20,17 +20,8 @@ enum MiraParseResult: Equatable {
     /// No control word anywhere in the segment; commit it to the note unchanged.
     case text
     /// A control word was found. `preText` is the dictation before it (empty if it led the segment);
-    /// `command` is the parsed outcome of the command mode that follows.
+    /// `command` is the parsed outcome of the command mode that follows (the shared `CommandOutcome`).
     case split(preText: String, command: CommandOutcome)
-
-    /// The parsed outcome of the command-mode portion (from the control word to the end).
-    enum CommandOutcome: Equatable {
-        /// Matched a known command; execute it.
-        case command(MiraCommand)
-        /// Led with the control word but matched no known command; drop it (do NOT transcribe) and
-        /// show the user a brief "didn't catch that" chip.
-        case unrecognizedCommand
-    }
 }
 
 /// Turns a finalized speech segment into a `MiraParseResult` by SPLITTING at the first control word.
@@ -89,7 +80,7 @@ struct MiraCommandParser {
         var rest = Self.stripLeadingFiller(split.commandTokens)
         rest = Self.stripTrailingFiller(rest)
 
-        let outcome: MiraParseResult.CommandOutcome
+        let outcome: CommandOutcome
         if let command = Self.matchCommand(rest) {
             outcome = .command(command)
         } else {
@@ -131,6 +122,10 @@ struct MiraCommandParser {
             guard word.lowercased() == key else { continue }
             // Found the first control-word token. Pre-text is everything before this token; the
             // command tokens are the words after it.
+            // Trim only the trailing whitespace/newlines the recognizer left between the dictation
+            // and the control word; any punctuation the user spoke just before the control word
+            // ("...before noon. Mira new note") is INTENTIONALLY kept on `preText` - it belongs to the
+            // sentence being committed, not to the command that follows.
             let preRaw = ns.substring(to: match.range.location)
             let preText = preRaw.trimmingCharacters(in: .whitespacesAndNewlines)
             let afterRange = NSRange(location: match.range.location + match.range.length,

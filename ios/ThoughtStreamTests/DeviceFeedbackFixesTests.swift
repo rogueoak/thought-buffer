@@ -122,7 +122,7 @@ final class LastPartialCommitTests: XCTestCase {
     func testNilResultEndCommitsLastPartial() {
         // The service tracks the growing partial; the resolver commits it when the result is nil.
         XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "hello world"),
-                       "hello world")
+                       .usedPartial("hello world"))
     }
 
     /// (3) A clean final does NOT double-commit: a non-empty result already CONTAINS the partial, so
@@ -132,21 +132,38 @@ final class LastPartialCommitTests: XCTestCase {
         // returns the result exactly once.
         XCTAssertEqual(
             SpeechDictationService.resolveEnd(resultText: "hello world", lastPartial: "hello"),
-            "hello world"
+            .usedResult("hello world")
         )
     }
 
     /// An end with neither a usable result NOR a partial commits nothing (no empty paragraph).
     func testEmptyResultAndEmptyPartialCommitsNothing() {
-        XCTAssertNil(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: ""))
-        XCTAssertNil(SpeechDictationService.resolveEnd(resultText: "   ", lastPartial: "  \n\t "))
-        XCTAssertNil(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "   "))
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: ""), .none)
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: "   ", lastPartial: "  \n\t "), .none)
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "   "), .none)
     }
 
     /// An empty/whitespace result falls back to the partial (the device's nil-ish end).
     func testEmptyResultFallsBackToPartial() {
         XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: "  ", lastPartial: "kept text"),
-                       "kept text")
+                       .usedPartial("kept text"))
+    }
+
+    /// The resolver now reports WHICH source it used, so `handleTaskEnd` attaches a range only when
+    /// the RESULT (which carries valid timings) was committed - never re-derived from raw inputs.
+    func testResolveEndReportsWhichSourceWasUsed() {
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: "hello world", lastPartial: "x"),
+                       .usedResult("hello world"))
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "held"),
+                       .usedPartial("held"))
+    }
+
+    /// PR #10 review (stop clears the tracked partial): after `stop()` empties `lastPartialText`, a
+    /// late cancelled-task nil-result end resolves to nothing, so no stray second finalized segment is
+    /// emitted (which would double the live paragraph after the note is already saved). Modeled at the
+    /// resolver, the source of that decision: nil result + empty partial commits nothing.
+    func testStopClearedPartialMeansLateNilEndCommitsNothing() {
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: ""), .none)
     }
 }
 
@@ -235,6 +252,50 @@ final class PauseRestartPreservationTests: XCTestCase {
             "Remember to call the supplier",
             "and draft the email",
         ])
+    }
+
+    /// Device double-commit regression (PR #10 review): on device the live partial echoes the SAME
+    /// pre-keyword words the accumulating segment then finalizes with. When "P1 Mira new note"
+    /// finalizes, the split commits "P1" - the stale partial "P1" must NOT then be folded in by
+    /// `new note`, or the SAVED note would be ["P1","P1"]. Fails without clearing the partial in the
+    /// `.split` case. A fresh note starts after the command.
+    func testSplitNewNoteDoesNotDoubleCommitEchoedPartial() throws {
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor()
+        )
+        // The recognizer's live partial for the accumulating segment is the pre-keyword text "P1".
+        model.simulatePartial("P1")
+        XCTAssertEqual(model.partial, "P1")
+        // The same segment finalizes as "P1 Mira new note": commit "P1" once, then start a new note.
+        service.emit(.finalizedSegment("P1 Mira new note", range: nil))
+
+        // The just-saved note is "P1" ONCE (not ["P1","P1"]), and a fresh empty note is now running.
+        let saved = try XCTUnwrap(store.notes.last)
+        XCTAssertEqual(saved.paragraphs, ["P1"], "new note must not double-commit the echoed partial")
+        XCTAssertTrue(model.paragraphs.isEmpty, "a fresh note starts after new note")
+        XCTAssertEqual(model.partial, "", "the stale echoed partial is cleared by the split")
+    }
+
+    /// The same device echo for `read that back`: "remember the milk Mira read that back to me"
+    /// commits "remember the milk" ONCE and read-back targets THAT paragraph - not a doubled
+    /// ["remember the milk","remember the milk"] with read-back on the wrong one. Fails without the
+    /// partial-clear in the `.split` case.
+    func testSplitReadThatBackDoesNotDoubleCommitEchoedPartial() throws {
+        let speaker = TraceSpeaker()
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor(), speaker: speaker
+        )
+        // The live partial echoes the pre-keyword dictation.
+        model.simulatePartial("remember the milk")
+        XCTAssertEqual(model.partial, "remember the milk")
+        // The accumulating segment finalizes with the command tail.
+        service.emit(.finalizedSegment("remember the milk Mira read that back to me", range: nil))
+
+        // Committed exactly once, and read-back spoke THAT paragraph (not a stale duplicate).
+        XCTAssertEqual(model.paragraphs, ["remember the milk"],
+                       "read that back must not double-commit the echoed partial")
+        XCTAssertEqual(speaker.spoken, ["remember the milk"],
+                       "read-back targets the single committed paragraph")
     }
 
     /// The committed text survives an actual stop-and-save through the store.
@@ -378,6 +439,16 @@ private final class EventDrivingCaptureService: SpeechCaptureService {
     func start() {}
     func pause() {}
     func resume() {}
+    func stop() {}
+}
+
+/// A `Speaker` stub that records what read-back spoke, so a test can assert read-back targeted the
+/// single committed paragraph (not a stale duplicate).
+@MainActor
+private final class TraceSpeaker: Speaker {
+    var onFinish: (() -> Void)?
+    private(set) var spoken: [String] = []
+    func speak(_ text: String) { spoken.append(text) }
     func stop() {}
 }
 

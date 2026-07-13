@@ -123,6 +123,15 @@ final class DictationViewModel: ObservableObject {
         case newNoteSaveFailed
     }
 
+    #if DEBUG
+    /// DEBUG-ONLY on-device diagnostic: the last FINALIZED recognized text and how it was classified,
+    /// shown as an unobtrusive on-screen label so the developer can see, on their own hardware, exactly
+    /// what the recognizer produced and how the processor split it. Compiled OUT of Release entirely.
+    /// It is NEVER logged, persisted, or transmitted - it lives only in this published field and its
+    /// on-screen label. The production code path does not read it, so nothing changes in Release.
+    @Published private(set) var lastDebugTrace: String = ""
+    #endif
+
     private let service: SpeechCaptureService
     private let store: NoteStoring
     private let processor: TextProcessor
@@ -384,7 +393,13 @@ final class DictationViewModel: ObservableObject {
     /// passage accumulates into one segment, so a spoken command lands mid/end of it, not at its
     /// start; the split commits the pre-keyword words and then runs (or drops) the command.
     private func handleFinalized(_ text: String, range: ParagraphTiming?) {
-        switch processor.process(text) {
+        let segment = processor.process(text)
+        #if DEBUG
+        // Record the raw recognized text and its classification for the on-screen diagnostic. This is
+        // the only mutation the diagnostic makes; it does not affect the routing below.
+        lastDebugTrace = Self.debugTrace(for: text, segment: segment, controlWord: controlWord)
+        #endif
+        switch segment {
         case .text(let value):
             commitParagraph(value, range: range)
             partial = ""
@@ -393,10 +408,18 @@ final class DictationViewModel: ObservableObject {
             // The segment's recording range spans the whole utterance including the command tail, so
             // it no longer maps cleanly to just the pre-text; drop the range (nil) rather than
             // over-claim it, so playback falls back to text-to-speech for this paragraph.
+            let hadPreText = !preText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             commitParagraph(preText, range: nil)
-            // The command portion never lands in the note. Do NOT blanket-clear the live partial:
-            // it is a separate in-progress phrase of real user content. Commands that need it (new
-            // note, read that back) fold it in via `foldPartialIntoParagraphs`; the rest leave it.
+            // When the split had pre-text, clear the live partial: on device the accumulating segment
+            // finalizes while its own partial still echoes the SAME pre-keyword words ("P1" for
+            // "P1 Mira new note"), so that partial is now a stale duplicate of the paragraph just
+            // committed. Leaving it would let a following command (`new note` / `read that back`) fold
+            // it in and append "P1" a SECOND time, or make read-back target the wrong paragraph.
+            //
+            // When there was NO pre-text (the segment LED with the control word), the live partial is
+            // separate, genuine user content from a prior in-progress phrase - NOT an echo - so it is
+            // left for `new note` / `read that back` to fold in as before.
+            if hadPreText { partial = "" }
             switch outcome {
             case .command(let command):
                 execute(command)
@@ -422,7 +445,9 @@ final class DictationViewModel: ObservableObject {
         case .split(let preText, _):
             return preText
         case .drop:
-            return partial
+            // A dropped segment has no displayable content; clear the live partial rather than
+            // leaving the stale prior value on screen.
+            return ""
         }
     }
 
@@ -592,6 +617,47 @@ final class DictationViewModel: ObservableObject {
     private func showUnrecognizedCommandBanner() {
         showBannerLabel("Sorry, I didn't catch that command")
     }
+
+    #if DEBUG
+    /// Build the DEBUG-only diagnostic line for a finalized segment: the recognized text (truncated)
+    /// and how the processor classified it. Pure and static; it does NOT log, persist, or transmit -
+    /// its result is only shown on screen. Compiled out of Release.
+    private static func debugTrace(for text: String, segment: ProcessedSegment, controlWord: String) -> String {
+        let recognized = truncateForTrace(text)
+        let classification: String
+        switch segment {
+        case .text:
+            classification = "text"
+        case .drop:
+            classification = "drop"
+        case .split(let preText, let outcome):
+            let pre = truncateForTrace(preText)
+            switch outcome {
+            case .command(let command):
+                classification = "split(pre=\"\(pre)\", command: \(commandName(command)))"
+            case .unrecognizedCommand:
+                classification = "split(pre=\"\(pre)\", unrecognizedCommand)"
+            }
+        }
+        return "cw=\(controlWord) | \"\(recognized)\" -> \(classification)"
+    }
+
+    /// Truncate a string to ~80 chars for the on-screen diagnostic so a long passage stays readable.
+    private static func truncateForTrace(_ text: String) -> String {
+        let limit = 80
+        return text.count > limit ? String(text.prefix(limit)) + "..." : text
+    }
+
+    /// A short label for a command in the diagnostic (e.g. `newNote`, `readThatBack`).
+    private static func commandName(_ command: MiraCommand) -> String {
+        switch command {
+        case .removeLastSentence: return "removeLastSentence"
+        case .removeLastParagraph: return "removeLastParagraph"
+        case .newNote: return "newNote"
+        case .readThatBack: return "readThatBack"
+        }
+    }
+    #endif
 
     /// Set the transient chip label and schedule its auto-dismiss.
     private func showBannerLabel(_ label: String) {

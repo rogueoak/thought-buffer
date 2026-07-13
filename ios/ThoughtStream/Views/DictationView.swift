@@ -76,6 +76,10 @@ struct DictationView: View {
                         onStop: finish
                     )
                 }
+
+                #if DEBUG
+                debugReadout
+                #endif
             }
             .padding(.top, CanopySpacing.x4)
             .padding(.bottom, CanopySpacing.x6)
@@ -197,6 +201,25 @@ struct DictationView: View {
         .background(CanopyColor.muted)
         .clipShape(Capsule())
     }
+
+    #if DEBUG
+    /// DEBUG-ONLY on-device diagnostic: a small, unobtrusive mono caption at the very bottom showing
+    /// the last finalized recognized text and how the processor classified it (feedback tooling so the
+    /// developer can read, on their own device, exactly what the recognizer produced). Compiled OUT of
+    /// Release. It only reads `model.lastDebugTrace`; it never logs, persists, or transmits anything.
+    @ViewBuilder
+    private var debugReadout: some View {
+        if !model.lastDebugTrace.isEmpty {
+            Text(model.lastDebugTrace)
+                .font(.system(size: CanopyFont.sizeXs, design: .monospaced))
+                .foregroundStyle(CanopyColor.textSubtle)
+                .multilineTextAlignment(.leading)
+                .lineLimit(3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, CanopySpacing.x4)
+        }
+    }
+    #endif
 
     /// The transient control chip shown when a Mira command fires, in the muted token style. The
     /// full label (e.g. "Mira - removed last sentence") is assembled in the view model, where the

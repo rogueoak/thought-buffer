@@ -26,15 +26,11 @@ struct MiraTextProcessor: TextProcessor {
         switch parser.parse(text) {
         case .text:
             return .text(text)
-        case .split(let preText, let command):
+        case .split(let preText, let outcome):
             // `preText` is returned raw here; `CompositeTextProcessor` applies spelling overrides to
-            // it. The command portion is never transcribed, so it carries no text.
-            switch command {
-            case .command(let matched):
-                return .split(preText: preText, command: .command(matched))
-            case .unrecognizedCommand:
-                return .split(preText: preText, command: .unrecognizedCommand)
-            }
+            // it. The command portion is never transcribed, so it carries no text. `outcome` is the
+            // shared `CommandOutcome`, so it is forwarded unchanged (no mechanical re-wrapping).
+            return .split(preText: preText, command: outcome)
         }
     }
 }

@@ -167,6 +167,11 @@ final class SpeechDictationService: SpeechCaptureService {
     /// and ready for the caller to adopt.
     func stop() {
         isCapturing = false
+        // Clear the tracked partial BEFORE tearing down: cancelling the task can deliver a late
+        // nil-result end callback after the note is already saved, and `resolveEnd(nil, lastPartial)`
+        // would otherwise fall back to that partial and emit a SECOND `.finalizedSegment`, doubling
+        // the live paragraph. Emptying it here makes that late end commit nothing.
+        lastPartialText = ""
         teardownEngineAndTask()
         deactivateSession()
         recordingWriter?.finish()
@@ -298,11 +303,15 @@ final class SpeechDictationService: SpeechCaptureService {
     /// delegated to the pure `resolveEnd`) so the accumulating-segment + nil-result-end behavior is
     /// unit-testable without a live mic.
     private func handleTaskEnd(resultText: String?, resultRange: ParagraphTiming?) {
-        if let commit = Self.resolveEnd(resultText: resultText, lastPartial: lastPartialText) {
-            // A range only applies when the RESULT carried the committed text; a partial committed
-            // from a nil-result end has no result timings, so it emits a nil range.
-            let usedResult = !(resultText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
-            emit(.finalizedSegment(commit, range: usedResult ? resultRange : nil))
+        switch Self.resolveEnd(resultText: resultText, lastPartial: lastPartialText) {
+        case .usedResult(let text):
+            // The result carried the committed text, so its timings are valid; keep the range.
+            emit(.finalizedSegment(text, range: resultRange))
+        case .usedPartial(let text):
+            // A partial committed from a nil-result end has no result timings, so emit a nil range.
+            emit(.finalizedSegment(text, range: nil))
+        case .none:
+            break
         }
         // Committed (or nothing to commit): clear the tracked partial so a restart never re-commits it.
         lastPartialText = ""
@@ -323,15 +332,30 @@ final class SpeechDictationService: SpeechCaptureService {
     /// partial) - no double commit - and never returns empty/whitespace text.
     ///
     /// Pure and static (nonisolated: no service state touched), so it is fully unit-testable off the
-    /// main actor.
-    nonisolated static func resolveEnd(resultText: String?, lastPartial: String) -> String? {
+    /// main actor. Returns which source was committed, so the caller decides whether a range applies
+    /// (only `.usedResult` carries valid result timings) WITHOUT re-deriving it from the raw inputs.
+    nonisolated static func resolveEnd(resultText: String?, lastPartial: String) -> EndCommit {
+        // Trim only to DECIDE which source is usable; the returned string is the UNTRIMMED original,
+        // so the committed paragraph preserves the user's exact leading/trailing whitespace (the
+        // view model's `commitParagraph` does the final trim before it lands in the note).
         let trimmedResult = resultText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmedResult.isEmpty {
+        if !trimmedResult.isEmpty, let resultText {
             // A clean/non-empty result supersedes the partial (it already contains it).
-            return resultText
+            return .usedResult(resultText)
         }
         let trimmedPartial = lastPartial.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmedPartial.isEmpty ? nil : lastPartial
+        return trimmedPartial.isEmpty ? .none : .usedPartial(lastPartial)
+    }
+
+    /// Which text source `resolveEnd` chose to commit at a task end, so `handleTaskEnd` can attach a
+    /// range only when the RESULT (which carries the timings) was used, without re-inspecting inputs.
+    enum EndCommit: Equatable {
+        /// Commit the task's result transcription; its recording range is valid.
+        case usedResult(String)
+        /// Commit the tracked partial (nil-result end); no result timings, so no range.
+        case usedPartial(String)
+        /// Nothing usable to commit (neither a result nor a partial).
+        case none
     }
 
     /// Tear down the finished task and start a new one, keeping the engine and its tap running.

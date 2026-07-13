@@ -13,21 +13,12 @@ enum ProcessedSegment: Equatable {
     /// The segment contained the control word (feedback 0006: on device a command lands mid/end of
     /// one accumulating segment, not at its start). `preText` is the dictation BEFORE the control
     /// word - committed as a paragraph if non-empty (with spelling overrides applied) - and `command`
-    /// is the command-mode outcome from the control word to the end (never transcribed).
+    /// is the command-mode outcome from the control word to the end (never transcribed). `command`
+    /// is the shared `CommandOutcome`, so the processor forwards the parser's outcome unchanged.
     case split(preText: String, command: CommandOutcome)
     /// Discard the segment entirely with no user feedback. Reserved; not emitted by the shipped
     /// processors.
     case drop
-
-    /// The command-mode outcome of the text from the control word to the end of a `.split`.
-    enum CommandOutcome: Equatable {
-        /// Matched a known command: suppress it from the note and execute it.
-        case command(MiraCommand)
-        /// Led with the control word but matched no known command (feedback 0005): NOT transcribed;
-        /// the view model drops it and shows a brief "didn't catch that" chip so the user knows it
-        /// was treated as a command rather than silently lost.
-        case unrecognizedCommand
-    }
 }
 
 /// A thin, injectable transform applied to speech text between recognition and the note.
