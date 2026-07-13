@@ -1,0 +1,45 @@
+import SwiftUI
+
+/// A single note card in the Stream list: title, two-line snippet, timestamp,
+/// paragraph count, and a small primary accent dot.
+struct NoteCard: View {
+    let note: Note
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: CanopySpacing.x2) {
+            HStack(alignment: .firstTextBaseline, spacing: CanopySpacing.x2) {
+                Circle()
+                    .fill(CanopyColor.primary)
+                    .frame(width: 8, height: 8)
+                    .padding(.top, CanopySpacing.x1)
+                Text(note.title)
+                    .font(.system(size: CanopyFont.sizeLg, weight: .semibold))
+                    .foregroundStyle(CanopyColor.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+
+            Text(note.snippet)
+                .font(.system(size: CanopyFont.sizeSm))
+                .foregroundStyle(CanopyColor.textMuted)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+
+            HStack(spacing: CanopySpacing.x3) {
+                Label(RelativeTime.label(for: note.createdAt), systemImage: "clock")
+                Label("\(note.paragraphCount)", systemImage: "text.alignleft")
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: CanopyFont.sizeXs))
+            .foregroundStyle(CanopyColor.textSubtle)
+        }
+        .padding(CanopySpacing.x4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CanopyColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
+                .stroke(CanopyColor.border, lineWidth: 1)
+        )
+    }
+}
