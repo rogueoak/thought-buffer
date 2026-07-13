@@ -53,13 +53,15 @@ acts on it instead of writing it into the note.
   while Mira speaks so the audio does not feed back into recognition, then resumes.
 
 Recognition is case-insensitive and tolerant of phrasing ("delete" for "remove", filler like
-"the"/"that"/"to me"). The control word must LEAD the phrase, and a leading control word puts the
-whole segment in command mode - it is never transcribed. An unrecognized keyword-led phrase is
-dropped (not written into the note) with a brief "didn't catch that" chip, so a passing mid-sentence
-mention of "Mira" is still transcribed but "Mira <anything>" never lands as literal text (feedback
-0005). Each command flashes a brief control chip ("Mira - removed last sentence")
-in the dictation screen. The control word is fixed to "Mira" for now; a configurable name and
-spelling overrides are still out (Settings milestone), as are CarPlay, Siri, and sync.
+"the"/"that"/"to me"). The control word is detected as a token ANYWHERE in a finalized segment, not
+only at the start (feedback 0006): on a real device a whole passage accumulates into one segment, so
+a spoken command lands mid/end of it. The segment is SPLIT at the first control word - the dictation
+BEFORE it is committed as a paragraph (with spelling overrides applied), and the text FROM the control
+word to the end is command mode, never transcribed. It either runs, or (keyword-led but unrecognized)
+is dropped with a brief "didn't catch that" chip. The tradeoff: a mid-sentence mention of the
+assistant's name is treated as a command from that point, so pick an uncommon name if that bites.
+Each command flashes a brief control chip ("Mira - removed last sentence") in the dictation screen.
+The control word is configurable (Settings, default "Mira"); CarPlay, Siri, and sync ship separately.
 
 ## iCloud Drive storage (spec 0004)
 
@@ -215,3 +217,15 @@ Fixes from real device testing:
   empty state and the list.
 - **Playback discovery** - notes with a recording show a small play affordance on the card; tapping
   the card opens the detail Play control.
+
+## Device speech accumulation fixes (feedback 0006)
+
+Two device-only bugs the 0005 fix missed because the simulator/tests did not model how a real device
+feeds speech (one task accumulates the whole passage and finalizes only on end):
+
+- **A long pause no longer resets the note** - a task can end with an error and a NIL result, holding
+  the words only as the in-progress partial. The service now tracks that partial and commits the best
+  available text (result, else the partial) on ANY end, so the last-heard words survive the restart.
+- **Mira commands fire mid-utterance** - the control word is detected ANYWHERE in a finalized
+  segment, not only at the start. The segment splits at the first control word: the dictation before
+  it is committed, and the rest is command mode (see Mira control words above).

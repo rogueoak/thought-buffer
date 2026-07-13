@@ -2,12 +2,13 @@ import Foundation
 
 /// The `TextProcessor` that recognizes Mira control words.
 ///
-/// Wraps a `MiraCommandParser` (with the injected control word). A finalized segment that parses
-/// as a command is returned as `.command` so the view model executes it and keeps the phrase out
-/// of the note; anything else is returned as `.text` to commit unchanged.
+/// Wraps a `MiraCommandParser` (with the injected control word). A finalized segment is SPLIT at the
+/// first control word (feedback 0006): the dictation before it becomes `.split` `preText` and the
+/// text from the control word to the end becomes the command outcome. A segment with no control word
+/// is returned as `.text` to commit unchanged.
 ///
-/// A future spelling-override processor composes here: parse for a command first, and if none,
-/// run the text transform and return `.text`.
+/// The spelling-override processor composes here (see `CompositeTextProcessor`): it applies overrides
+/// to the `preText` only, never to the command portion.
 struct MiraTextProcessor: TextProcessor {
     private let parser: MiraCommandParser
 
@@ -23,14 +24,13 @@ struct MiraTextProcessor: TextProcessor {
 
     func process(_ text: String) -> ProcessedSegment {
         switch parser.parse(text) {
-        case .command(let command):
-            return .command(command)
-        case .unrecognizedCommand:
-            // Led with the control word but not a known command: command mode, so do NOT transcribe
-            // - surface it as an unrecognized command (the view model shows a brief chip).
-            return .unrecognizedCommand
         case .text:
             return .text(text)
+        case .split(let preText, let outcome):
+            // `preText` is returned raw here; `CompositeTextProcessor` applies spelling overrides to
+            // it. The command portion is never transcribed, so it carries no text. `outcome` is the
+            // shared `CommandOutcome`, so it is forwarded unchanged (no mechanical re-wrapping).
+            return .split(preText: preText, command: outcome)
         }
     }
 }

@@ -2,40 +2,47 @@ import Foundation
 
 /// The outcome of running a finalized speech segment through the control-word parser.
 ///
-/// The model changed after on-device feedback (feedback 0005): the user wants "anything that
-/// starts with my keyword" to STOP transcribing. So a segment that leads with the control word is
-/// always COMMAND MODE - it is never written into the note. It either matches a known command
-/// (`.command`) or is dropped as an unrecognized command (`.unrecognizedCommand`, which the view
-/// model shows as a brief "didn't catch that" chip). Only a segment that does NOT lead with the
-/// control word is ordinary `.text` to commit. This supersedes the earlier strict-match design
-/// (which committed a keyword-led non-command as text): keyword-led-unrecognized now DROPS rather
-/// than mis-firing, so there is still no wrong-command data loss.
+/// The model changed after DEVICE feedback (feedback 0006): on a real device a single recognition
+/// task ACCUMULATES the whole spoken passage into one growing transcription, so a spoken command
+/// ("Mira new note") lands in the MIDDLE or END of an accumulating segment, not at its start. The
+/// old "starts-with-keyword" model therefore never fired for real continuous speech. The parser now
+/// SPLITS at the FIRST control-word token:
+///
+/// - No control word anywhere -> `.text`: commit the whole segment as a paragraph, unchanged.
+/// - A control word is present -> `.split`: the text BEFORE it is a normal dictation paragraph
+///   (may be empty when the segment leads with the control word), and the text FROM the control word
+///   to the end is COMMAND MODE - parsed tolerantly. It either matches a known command (`.command`)
+///   or is an unrecognized command that is dropped with a "didn't catch that" chip
+///   (`.unrecognizedCommand`).
+///
+/// The command portion is never transcribed; only `preText` (if non-empty) is committed to the note.
 enum MiraParseResult: Equatable {
-    /// The segment led with the control word and matched a known command; execute it.
-    case command(MiraCommand)
-    /// The segment led with the control word but matched no known command; drop it (do NOT
-    /// transcribe) and show the user a brief "didn't catch that" chip.
-    case unrecognizedCommand
-    /// The segment did not lead with the control word; commit it to the note unchanged.
+    /// No control word anywhere in the segment; commit it to the note unchanged.
     case text
+    /// A control word was found. `preText` is the dictation before it (empty if it led the segment);
+    /// `command` is the parsed outcome of the command mode that follows (the shared `CommandOutcome`).
+    case split(preText: String, command: CommandOutcome)
 }
 
-/// Turns a finalized speech segment into a `MiraParseResult`.
+/// Turns a finalized speech segment into a `MiraParseResult` by SPLITTING at the first control word.
 ///
 /// Pure and unit-testable: no side effects, no dependencies beyond the injected control word.
-/// The grammar (see `docs/specs/0003-mira-control-words.md` and feedback 0005):
+/// The grammar (see `docs/specs/0003-mira-control-words.md`, feedback 0005, and feedback 0006):
 ///
-/// - The control word must LEAD the segment (after trimming leading punctuation/whitespace,
-///   case-insensitive). A leading control word puts the whole segment in COMMAND MODE - it is never
-///   transcribed - so a passing mid-sentence mention of the word is still committed as text.
-/// - The remainder after the control word is parsed TOLERANTLY: leading/trailing filler ("please",
-///   "to me", "for me", "the", "that", "it") is stripped, then what is left must contain a known
-///   command phrase. If it does, that command fires; if it does not, the segment is dropped as an
-///   unrecognized command (the user gets a chip) rather than transcribed.
+/// - Find the FIRST control-word token anywhere in the segment (case-insensitive, tokenizing on
+///   non-alphanumerics). If there is none, the whole segment is `.text`.
+/// - If found, everything BEFORE it is the dictation `preText` (committed as a paragraph if
+///   non-empty). Everything FROM the control word to the end is COMMAND MODE, never transcribed.
+/// - The command remainder (after the control word) is parsed TOLERANTLY: leading/trailing filler
+///   ("please", "to me", "for me", "the", "that", "it") is stripped, then what is left must contain a
+///   known command phrase. Match -> `.command`; no match -> `.unrecognizedCommand` (dropped, chipped).
 /// - "delete" is a synonym of "remove".
+///
+/// TRADEOFF (feedback 0006): because the control word switches the REST of the utterance to command
+/// mode, dictation that literally contains the assistant's name mid-sentence is treated as a command
+/// from that point on. The user accepts this and can pick an uncommon control word.
 struct MiraCommandParser {
-    /// The control word that must lead a command. Injected so a later Settings milestone can make
-    /// it configurable; fixed to "Mira" for now.
+    /// The control word that triggers command mode. Injected so Settings can make it configurable.
     let controlWord: String
 
     init(controlWord: String) {
@@ -62,34 +69,76 @@ struct MiraCommandParser {
     private static let trailingFillerByLength: [[String]] =
         trailingFiller.sorted { $0.count > $1.count }
 
-    /// Parse a finalized segment. Leads with the control word -> command mode (`.command` or
-    /// `.unrecognizedCommand`); otherwise `.text`.
+    /// Parse a finalized segment. Splits at the FIRST control-word token: no control word -> `.text`;
+    /// otherwise `.split(preText:command:)` with the dictation before it and the command after it.
     func parse(_ segment: String) -> MiraParseResult {
-        let tokens = Self.tokenize(segment)
-        guard let first = tokens.first, first == controlWord.lowercased() else {
+        guard let split = Self.splitAtControlWord(segment, controlWord: controlWord) else {
             return .text
         }
 
-        // Command mode: the segment leads with the control word. Strip the control word and any
-        // outer filler, then look for a known command phrase in what remains.
-        var rest = Array(tokens.dropFirst())
-        rest = Self.stripLeadingFiller(rest)
+        // Command mode: parse what follows the control word tolerantly.
+        var rest = Self.stripLeadingFiller(split.commandTokens)
         rest = Self.stripTrailingFiller(rest)
 
+        let outcome: CommandOutcome
         if let command = Self.matchCommand(rest) {
-            return .command(command)
+            outcome = .command(command)
+        } else {
+            // Led with the control word but not a known command: drop it (do not transcribe).
+            outcome = .unrecognizedCommand
         }
-        // Led with the control word but is not a known command: drop it (do not transcribe).
-        return .unrecognizedCommand
+        return .split(preText: split.preText, command: outcome)
     }
 
     /// Back-compat convenience for callers/tests that only care about the matched command. Returns
     /// the command when one matched, else nil (both "plain text" and "unrecognized command" map to
     /// nil here; callers needing the distinction use `parse`).
     func command(in segment: String) -> MiraCommand? {
-        if case .command(let command) = parse(segment) { return command }
+        if case .split(_, .command(let command)) = parse(segment) { return command }
         return nil
     }
+
+    // MARK: - Splitting
+
+    /// The result of finding the first control word in a segment: the raw dictation text before it,
+    /// and the tokenized command remainder after it.
+    private struct Split {
+        let preText: String
+        let commandTokens: [String]
+    }
+
+    /// Find the FIRST control-word token in `segment` (case-insensitive). Returns the raw text before
+    /// that token as `preText` (trimmed of trailing whitespace/punctuation) and the tokenized words
+    /// AFTER it as `commandTokens`, or nil when the control word never appears.
+    ///
+    /// Scans the ORIGINAL string so `preText` preserves the user's exact words, casing, and inner
+    /// punctuation; only the split boundary is derived from a lowercased token comparison.
+    private static func splitAtControlWord(_ segment: String, controlWord: String) -> Split? {
+        let key = controlWord.lowercased()
+        let ns = segment as NSString
+        let matches = wordRegex.matches(in: segment, range: NSRange(location: 0, length: ns.length))
+        for match in matches {
+            let word = ns.substring(with: match.range)
+            guard word.lowercased() == key else { continue }
+            // Found the first control-word token. Pre-text is everything before this token; the
+            // command tokens are the words after it.
+            // Trim only the trailing whitespace/newlines the recognizer left between the dictation
+            // and the control word; any punctuation the user spoke just before the control word
+            // ("...before noon. Mira new note") is INTENTIONALLY kept on `preText` - it belongs to the
+            // sentence being committed, not to the command that follows.
+            let preRaw = ns.substring(to: match.range.location)
+            let preText = preRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let afterRange = NSRange(location: match.range.location + match.range.length,
+                                     length: ns.length - (match.range.location + match.range.length))
+            let after = ns.substring(with: afterRange)
+            return Split(preText: preText, commandTokens: tokenize(after))
+        }
+        return nil
+    }
+
+    /// Matches a run of alphanumeric word characters. Splitting on this is equivalent to `tokenize`
+    /// so the boundary the split finds lines up with the tokens the grammar matches.
+    private static let wordRegex = try! NSRegularExpression(pattern: "[\\p{L}\\p{N}]+")
 
     // MARK: - Grammar
 
