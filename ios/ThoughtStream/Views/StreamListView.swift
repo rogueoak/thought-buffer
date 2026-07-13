@@ -10,6 +10,11 @@ struct StreamListView: View {
     /// Builds the text processor for a dictation session (Mira control words by default). Injected
     /// from the composition root so one place decides the processor.
     private let makeTextProcessor: () -> TextProcessor
+    /// The user settings store, threaded to the Settings screen. Injected from the composition root
+    /// so Settings edits the same instance the processor factory reads.
+    private let settingsStore: SettingsStoring
+    /// Where notes are stored (iCloud vs local). Shown read-only in Settings.
+    private let noteStoreKind: NoteStoreKind
     /// The feed model: owns the notes state, the off-main load, and the iCloud observer wiring.
     @StateObject private var feed: StreamFeed
     /// The shared pending-session route. Observed so a hands-free start (Siri, CarPlay) requested
@@ -34,11 +39,15 @@ struct StreamListView: View {
     init(
         store: NoteStoring,
         makeTextProcessor: @escaping () -> TextProcessor,
+        settingsStore: SettingsStoring,
+        noteStoreKind: NoteStoreKind = .local,
         noteObserver: UbiquitousNoteObserving? = nil,
         sessionRoute: PendingSessionRoute
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
+        self.settingsStore = settingsStore
+        self.noteStoreKind = noteStoreKind
         self.sessionRoute = sessionRoute
         _feed = StateObject(wrappedValue: StreamFeed(store: store, observer: noteObserver))
     }
@@ -104,7 +113,7 @@ struct StreamListView: View {
                 }
             }
             .sheet(isPresented: $showSettings) {
-                SettingsView()
+                SettingsView(settings: settingsStore, storeKind: noteStoreKind)
             }
         }
         .tint(CanopyColor.primary)
@@ -167,6 +176,7 @@ private struct RecordButton: View {
     StreamListView(
         store: NoteStore(),
         makeTextProcessor: { MiraTextProcessor() },
+        settingsStore: UserDefaultsSettingsStore(),
         sessionRoute: PendingSessionRoute()
     )
 }

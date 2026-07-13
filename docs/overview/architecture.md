@@ -13,7 +13,8 @@ How the system is built and why.
 ## Source layout (`ios/ThoughtStream/`)
 
 - `App/` - `ThoughtStreamApp` entry point. Roots to `StreamListView`; a `-uiScreen dictation`
-  launch argument roots to `DictationView` instead, used only for screenshot tooling. Also the
+  launch argument roots to `DictationView` and a `-uiScreen settings` argument roots to a seeded
+  `SettingsView`, both used only for screenshot tooling. Also the
   hands-free session-start seam and its entry points:
   - `SessionStarter` (protocol, one method `startNewSession()`) and `PendingSessionRoute` (its
     concrete `@MainActor ObservableObject`) are the single "start a new dictation session" seam. The
@@ -79,9 +80,19 @@ How the system is built and why.
 - `TextProcessor` seam - a finalized segment runs through `process`, which returns a
   `ProcessedSegment`: `.text` to commit, `.command` to execute and suppress, or `.drop`
   (reserved). `PassthroughTextProcessor` always returns `.text`; `MiraTextProcessor` returns
-  `.command` when the parser matches. A future spelling-override processor composes here (parse
-  for a command first, else transform text and return `.text`). The composition root
-  (`AppDependencies.makeTextProcessor`) builds one per session.
+  `.command` when the parser matches (built with the configured control word);
+  `SpellingOverrideProcessor` is text -> text, applying the user's whole-word, case-insensitive
+  overrides via an `NSRegularExpression` word walk (so a substring is never corrupted).
+  `CompositeTextProcessor` composes them in the required order: detect a command on the RAW
+  segment FIRST (a control phrase must never be spelling-mangled), and only if it is not a command
+  run the spelling processor and return `.text`. The composition root
+  (`AppDependencies.makeTextProcessor`) builds one per session, reading the current control phrase
+  and overrides off `SettingsStoring` at build time - so edits in Settings apply to the next
+  session started, not one in flight.
+- `Settings/` - `SettingsStoring` (protocol) and `UserDefaultsSettingsStore` (the local
+  `UserDefaults`-backed impl, injected from the composition root) hold the control phrase
+  (validated: trimmed, non-empty, sensible max length, else falls back to "Mira") and the ordered
+  `SpellingOverride` list (persisted as JSON). Local only - no cloud sync, no per-note settings.
 - `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
   logic: it drives `DictationView` from the speech service, routes finalized segments through the
   `TextProcessor`, executes `MiraCommand`s (note mutations, new note save+reset, read-back), and
@@ -98,7 +109,9 @@ How the system is built and why.
   detached load is sound under strict concurrency.
 - `Views/` - SwiftUI screens. `StreamListView` drives a `StreamFeed` from a single `.task` and
   stays presentational; `DictationView` binds to `DictationViewModel`; `NoteCard`,
-  `NoteDetailView`, `SettingsView` stay presentational.
+  `NoteDetailView` stay presentational. `SettingsView` edits the injected `SettingsStoring`
+  instance directly (control-phrase field with validation hint, add/edit/delete override rows, a
+  read-only storage-status row from `NoteStoreKind`).
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.
 
@@ -112,7 +125,11 @@ the `UbiquitousNoteMapping` metadata-to-notes logic via stub items, and the driv
 observer wiring (start/stop, onChange -> reload, local no-observer path, no-reload-after-stop) via
 stub store/observer through the `StreamFeed` projection, and the hands-free session-start seam (the
 `PendingSessionRoute` request/consume lifecycle, both App Intents requesting a start through a stub
-`SessionStarter`, `openAppWhenRun`, and the App Shortcuts being registered).
+`SessionStarter`, `openAppWhenRun`, and the App Shortcuts being registered), plus Settings:
+`UserDefaultsSettingsStore` persistence and control-phrase validation via an isolated defaults
+suite, `SpellingOverrideProcessor` whole-word/case/multi-override/no-substring-corruption, and
+`CompositeTextProcessor` ordering (a command is detected and not spelling-mangled; the configured
+control word changes matching; a normal segment gets overrides).
 The generated scheme runs them.
 
 ## Design tokens
