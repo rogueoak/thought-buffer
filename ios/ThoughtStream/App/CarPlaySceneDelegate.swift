@@ -25,9 +25,15 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     private var interfaceController: CPInterfaceController?
     /// The recordings browser model, built from the shared dependencies on connect. Nil until then.
     private var recordings: RecordingsListModel?
-    /// The shared playback controller for the CarPlay surface. One controller feeds `CPNowPlayingTemplate`
-    /// and `MPNowPlayingInfoCenter`, driven by the row tap and the Now Playing transport buttons.
+    /// The ONE shared playback controller, reached through the composition root so the phone detail
+    /// view and this CarPlay scene drive and observe the SAME instance (one writer of
+    /// `MPNowPlayingInfoCenter`, no race on the transport observers). One controller feeds
+    /// `CPNowPlayingTemplate` and `MPNowPlayingInfoCenter`, driven by the row tap and the Now Playing
+    /// transport buttons. Nil until connect.
     private var playback: NotePlaybackController?
+    /// This scene's transport-observer registration on the shared controller, dropped on disconnect so
+    /// the scene stops observing without disturbing the phone's registration.
+    private var playbackObserver: NotePlaybackController.TransportObserverToken?
     /// The live root list template, kept so a driver change can rebuild its sections in place.
     private var rootTemplate: CPListTemplate?
 
@@ -45,7 +51,16 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let observer = AppDependencies.shared?.noteObserver
         let recordings = RecordingsListModel(store: store, observer: observer)
         self.recordings = recordings
-        self.playback = NotePlaybackController(resolver: StoreAudioURLResolver(store: store))
+        // Drive the ONE shared controller so the phone detail view and this scene never race on the
+        // media center. Fall back to a local controller only if the root has not resolved yet (rare).
+        let playback = AppDependencies.shared?.playbackController
+            ?? NotePlaybackController(resolver: StoreAudioURLResolver(store: store))
+        self.playback = playback
+        // Observe transport changes so the Now Playing template can react; multi-observer safe, so
+        // this coexists with the phone projection's observer on the shared controller.
+        self.playbackObserver = playback.addTransportObserver { [weak self] in
+            self?.refreshNowPlayingButtons()
+        }
 
         let root = CPListTemplate(title: "Thought Stream", sections: [])
         self.rootTemplate = root
@@ -63,7 +78,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     ) {
         recordings?.stop()
         recordings = nil
-        playback?.stop()
+        // Drop only THIS scene's observer; the controller is shared with the phone, so do not stop it
+        // on CarPlay disconnect (that would clobber playback the phone may still be driving).
+        if let token = playbackObserver { playback?.removeTransportObserver(token) }
+        playbackObserver = nil
         playback = nil
         rootTemplate = nil
         self.interfaceController = nil
@@ -134,6 +152,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
             self?.playback?.skip(by: SystemRemoteCommandRegistrar.skipInterval)
         }
         CPNowPlayingTemplate.shared.updateNowPlayingButtons([back, forward])
+    }
+
+    /// React to a transport change on the shared controller. Since the phone surface can now drive the
+    /// same controller, keep the CarPlay Now Playing transport buttons in sync while its template is
+    /// showing. Registered as ONE of possibly several observers, so it must not disturb the others.
+    private func refreshNowPlayingButtons() {
+        guard interfaceController?.topTemplate === CPNowPlayingTemplate.shared else { return }
+        configureNowPlayingButtons()
     }
 
     /// A CarPlay button glyph from an SF Symbol, falling back to an empty image if the symbol is

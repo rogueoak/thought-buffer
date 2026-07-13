@@ -124,6 +124,36 @@ final class NotePlaybackModelTests: XCTestCase {
         XCTAssertFalse(model.isPlaying, "the model no longer claims playback once another note loads")
     }
 
+    /// When the shared controller is PAUSED for this note (another surface, or the lock screen,
+    /// paused it), tapping the detail button must RESUME from the paused position rather than
+    /// restarting from the top. Proven by asserting the player resumed and no second play started.
+    func testToggleResumesFromPausedPositionInsteadOfRestarting() async {
+        let player = StubAudioNotePlayer()
+        let controller = NotePlaybackController(
+            resolver: StubResolver(url: URL(fileURLWithPath: "/tmp/rec.m4a")), player: player
+        )
+        let mine = Note(
+            id: noteID, title: "mine", paragraphs: ["p"], createdAt: Date(),
+            audioFileName: "mine.m4a", timings: [ParagraphTiming(start: 0, duration: 3)]
+        )
+        let model = NotePlaybackModel(note: mine, controller: controller)
+
+        model.toggle()
+        await model.settle()
+        XCTAssertTrue(model.isPlaying)
+
+        // Another surface (or the lock screen) pauses the shared controller.
+        controller.pause()
+        XCTAssertTrue(controller.isPaused)
+        XCTAssertFalse(model.isPlaying, "the model reads paused as not playing")
+
+        // Tapping the button again resumes from the paused position, not a fresh play from the top.
+        model.toggle()
+        XCTAssertTrue(model.isPlaying, "toggle resumes playback")
+        XCTAssertEqual(player.resumeCount, 1, "it resumed rather than restarting")
+        XCTAssertEqual(player.plays.count, 1, "no second play was started from the top")
+    }
+
     func testMissingFileAtPlayTimeLeavesNotPlaying() async {
         let player = StubAudioNotePlayer()
         let resolver = StubResolver(url: nil)
@@ -176,6 +206,7 @@ private final class StubAudioNotePlayer: AudioNotePlayer {
     var playSucceeds = true
     private(set) var plays: [(url: URL, start: Double, duration: Double?)] = []
     private(set) var stopCount = 0
+    private(set) var resumeCount = 0
 
     @discardableResult
     func play(url: URL, from start: Double, duration: Double?) -> Bool {
@@ -184,7 +215,7 @@ private final class StubAudioNotePlayer: AudioNotePlayer {
     }
 
     func pause() {}
-    func resume() -> Bool { true }
+    func resume() -> Bool { resumeCount += 1; return true }
     func stop() { stopCount += 1 }
     var currentTime: Double { 0 }
     func seek(to time: Double) {}

@@ -68,7 +68,8 @@ struct ThoughtStreamApp: App {
                     settingsStore: dependencies.settingsStore,
                     noteStoreKind: dependencies.noteStoreKind,
                     noteObserver: dependencies.noteObserver,
-                    sessionRoute: dependencies.sessionRoute
+                    sessionRoute: dependencies.sessionRoute,
+                    playbackController: dependencies.playbackController
                 )
             }
         } else {
@@ -88,6 +89,7 @@ private final class ScreenshotSettings: SettingsStoring {
         SpellingOverride(from: "kwan", to: "Quan"),
     ]
     var audioRetention: AudioRetention = .keep
+    var lockScreenTitle: LockScreenTitle = .noteTitle
 }
 
 /// Sample notes for screenshot mode.

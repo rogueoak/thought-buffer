@@ -32,6 +32,15 @@ struct AppDependencies {
     /// session identically. The root view observes it and opens `DictationView`.
     let sessionRoute: PendingSessionRoute
 
+    /// The ONE headless playback controller for a saved note's recording (spec 0008). Both the phone
+    /// detail view (through `NotePlaybackModel`) and the CarPlay scene drive and observe THIS shared
+    /// instance, so there is exactly one writer of `MPNowPlayingInfoCenter` and one owner of the
+    /// remote transport commands. Hoisted here (rather than per-surface) so that once the CarPlay
+    /// entitlement ships, the two surfaces cannot race on the media center or clobber each other's
+    /// transport observation - the observation is multi-observer safe on the controller itself.
+    /// `@MainActor` because the controller is main-actor.
+    let playbackController: NotePlaybackController
+
     /// `@MainActor` because the session route is a main-actor `ObservableObject`; the composition
     /// root is built on the main actor at launch (see `resolve`), so this is not a constraint in
     /// practice.
@@ -42,7 +51,8 @@ struct AppDependencies {
         noteObserver: UbiquitousNoteObserving? = nil,
         settingsStore: SettingsStoring = UserDefaultsSettingsStore(),
         makeTextProcessor: (() -> TextProcessor)? = nil,
-        sessionRoute: PendingSessionRoute? = nil
+        sessionRoute: PendingSessionRoute? = nil,
+        playbackController: NotePlaybackController? = nil
     ) {
         self.noteStore = noteStore
         self.noteStoreKind = noteStoreKind
@@ -59,6 +69,13 @@ struct AppDependencies {
         // Built here (on the main actor) when none is injected, so the route's main-actor
         // initializer is never called from a nonisolated default-argument context.
         self.sessionRoute = sessionRoute ?? PendingSessionRoute()
+        // The single shared controller, resolving recordings through the same store and reading the
+        // current lock-screen-title preference at publish time (a Settings toggle applies next
+        // update). Built here on the main actor for the same reason as the route.
+        self.playbackController = playbackController ?? NotePlaybackController(
+            resolver: StoreAudioURLResolver(store: noteStore),
+            lockScreenTitle: { settingsStore.lockScreenTitle }
+        )
     }
 
     /// The live dependencies, published once the app resolves them at launch. App Intents and the

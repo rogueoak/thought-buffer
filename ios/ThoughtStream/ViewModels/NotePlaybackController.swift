@@ -28,21 +28,28 @@ final class NotePlaybackController: ObservableObject {
     /// title its Now Playing template.
     private(set) var currentNote: Note?
 
-    /// Fires (on the main actor) after any transport-state change - play, pause, resume, skip, stop,
-    /// natural finish. A single non-SwiftUI consumer (the CarPlay scene, OR the `NotePlaybackModel`
-    /// projection - never both on one controller instance) sets it to refresh its own view of the
-    /// controller. `@Published` covers SwiftUI binders; this covers the one headless observer.
-    ///
-    /// SINGLE-OBSERVER by design: each surface owns its own controller instance, so one slot is
-    /// enough. If a future controller is genuinely shared by two headless observers at once, this must
-    /// become a multicast; until then a second assignment would clobber the first, which is why it is
-    /// documented rather than silently fanned out.
-    var onTransportChange: (() -> Void)?
+    /// An opaque handle to a registered transport-change observer, returned by
+    /// `addTransportObserver` and passed back to `removeTransportObserver` to unregister.
+    struct TransportObserverToken: Hashable {
+        fileprivate let value: UInt64
+    }
+
+    /// The registered transport-change observers, keyed by token. MULTICAST by design: this ONE
+    /// controller is shared across surfaces (the phone `NotePlaybackModel` projection and the CarPlay
+    /// scene both drive and observe it), so more than one headless observer is live at once. A single
+    /// slot would let one surface clobber the other's callback - so each registers/unregisters its own
+    /// entry here and every entry is fanned out on a transport change.
+    private var transportObservers: [TransportObserverToken: () -> Void] = [:]
+    /// Monotonic source for observer tokens, so each registration gets a distinct, non-reused key.
+    private var nextObserverToken: UInt64 = 0
 
     private let resolver: AudioURLResolving
     private let player: AudioNotePlayer
     private let nowPlaying: NowPlayingInfoWriting
     private let remote: RemoteCommandRegistering
+    /// The user's lock-screen title preference, read at publish time so a Settings toggle applies to
+    /// the very next Now Playing update. `.generic` hides a sensitive first line behind a fixed label.
+    private let lockScreenTitle: () -> LockScreenTitle
     /// Relative skip step in seconds, matching the interval advertised to the system.
     private let skipInterval: Double
 
@@ -59,14 +66,39 @@ final class NotePlaybackController: ObservableObject {
         player: AudioNotePlayer? = nil,
         nowPlaying: NowPlayingInfoWriting? = nil,
         remote: RemoteCommandRegistering? = nil,
+        lockScreenTitle: @escaping () -> LockScreenTitle = { .default },
         skipInterval: Double = defaultSkipInterval
     ) {
         self.resolver = resolver
         self.player = player ?? SystemAudioNotePlayer()
         self.nowPlaying = nowPlaying ?? SystemNowPlayingInfoWriter()
         self.remote = remote ?? SystemRemoteCommandRegistrar()
+        self.lockScreenTitle = lockScreenTitle
         self.skipInterval = skipInterval
         self.player.onFinish = { [weak self] in self?.handleFinish() }
+    }
+
+    /// Register an observer fired (on the main actor) after any transport-state change - play, pause,
+    /// resume, skip, stop, natural finish - so a surface can refresh its own view of the controller.
+    /// Multi-observer safe: the phone projection and the CarPlay scene can both observe the one shared
+    /// controller without clobbering each other. Returns a token to pass to `removeTransportObserver`.
+    @discardableResult
+    func addTransportObserver(_ observer: @escaping () -> Void) -> TransportObserverToken {
+        let token = TransportObserverToken(value: nextObserverToken)
+        nextObserverToken += 1
+        transportObservers[token] = observer
+        return token
+    }
+
+    /// Unregister a transport-change observer previously added via `addTransportObserver`.
+    func removeTransportObserver(_ token: TransportObserverToken) {
+        transportObservers.removeValue(forKey: token)
+    }
+
+    /// Fan a transport change out to every registered observer. A snapshot of the values is iterated
+    /// so an observer that removes itself during the callback does not mutate the collection mid-loop.
+    private func notifyTransportChange() {
+        for observer in transportObservers.values { observer() }
     }
 
     /// Whether the controller is loaded for `note` (its recording is the one playing / paused).
@@ -89,7 +121,7 @@ final class NotePlaybackController: ObservableObject {
         currentNote = note
         isPlaying = true
         isPaused = false
-        onTransportChange?()
+        notifyTransportChange()
 
         let resolver = resolver
         let noteID = note.id
@@ -123,7 +155,7 @@ final class NotePlaybackController: ObservableObject {
         isPlaying = false
         isPaused = true
         publishNowPlaying()
-        onTransportChange?()
+        notifyTransportChange()
     }
 
     /// Resume playback paused by `pause()`. A no-op when not paused.
@@ -132,7 +164,7 @@ final class NotePlaybackController: ObservableObject {
         isPlaying = true
         isPaused = false
         publishNowPlaying()
-        onTransportChange?()
+        notifyTransportChange()
     }
 
     /// Skip `by` seconds relative to the current position (negative to go back), then keep the
@@ -141,7 +173,7 @@ final class NotePlaybackController: ObservableObject {
         guard currentNote != nil, isPlaying || isPaused else { return }
         player.seek(to: player.currentTime + seconds)
         publishNowPlaying()
-        onTransportChange?()
+        notifyTransportChange()
     }
 
     /// Stop playback, clear Now Playing, and drop the remote commands so nothing is left wired to a
@@ -150,7 +182,7 @@ final class NotePlaybackController: ObservableObject {
         pendingPlay?.cancel()
         pendingPlay = nil
         clearPlayback()
-        onTransportChange?()
+        notifyTransportChange()
     }
 
     // MARK: - Private
@@ -162,14 +194,14 @@ final class NotePlaybackController: ObservableObject {
         pendingPlay = nil
         guard let url, player.play(url: url, from: 0, duration: nil) else {
             clearPlayback()
-            onTransportChange?()
+            notifyTransportChange()
             return
         }
         isPlaying = true
         isPaused = false
         wireRemoteCommands()
         publishNowPlaying()
-        onTransportChange?()
+        notifyTransportChange()
     }
 
     /// Wire the transport commands to this controller so the lock screen / CarPlay drive the same
@@ -185,14 +217,17 @@ final class NotePlaybackController: ObservableObject {
         )
     }
 
-    /// Publish the current Now Playing metadata from the loaded note and the player's position.
+    /// Publish the current Now Playing metadata from the loaded note and the player's position. The
+    /// title honors the user's lock-screen-title preference (read here, so a Settings toggle applies
+    /// to the next update): `.generic` publishes a fixed label instead of the note's own first line so
+    /// a sensitive title does not appear on the lock screen / Control Center / CarPlay.
     private func publishNowPlaying() {
         guard let note = currentNote else {
             nowPlaying.update(nil)
             return
         }
         nowPlaying.update(NowPlayingInfo(
-            title: note.title,
+            title: lockScreenTitle().nowPlayingTitle(for: note.title),
             duration: note.recordingDuration,
             elapsed: player.currentTime,
             rate: isPlaying ? 1 : 0
@@ -200,21 +235,22 @@ final class NotePlaybackController: ObservableObject {
     }
 
     /// The player reached the end on its own: clear state, Now Playing, and the remote wiring. When
-    /// WE initiated the stop (`suppressFinish`), the caller already handled teardown, so this only
-    /// resets the transport flags.
+    /// WE initiated the stop (`suppressFinish`), the caller (`clearPlayback`) already reset the
+    /// transport flags and torn down Now Playing / remote, so this is a no-op in that case - the
+    /// reset moved below the guard so it does not run redundantly on top of the deliberate teardown.
     private func handleFinish() {
-        resetState()
         guard !suppressFinish else { return }
+        resetState()
         currentNote = nil
         nowPlaying.update(nil)
         remote.unregisterAll()
-        onTransportChange?()
+        notifyTransportChange()
     }
 
     /// Fully clear playback: stop the player, drop the loaded note, and clear the Now Playing item +
     /// remote wiring, so nothing stale survives a stop or a switch to another note. Suppresses the
     /// synchronous `onFinish` that `player.stop()` fires so it does not run the natural-end teardown
-    /// on top of this deliberate one. Does NOT itself fire `onTransportChange` - the caller does, once.
+    /// on top of this deliberate one. Does NOT itself notify observers - the caller does, once.
     private func clearPlayback() {
         if isPlaying || isPaused {
             suppressFinish = true

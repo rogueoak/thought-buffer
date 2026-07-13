@@ -22,17 +22,26 @@ final class NotePlaybackControllerTests: XCTestCase {
         )
     }
 
+    /// The resolver behind the controller built by `makeController`, retained so a test can wait on
+    /// its `resolveCount` - resolution always runs (whether the play then succeeds or is a no-op /
+    /// failure), so it is the universal condition for "the lazy off-main resolve+play has run".
+    private var lastResolver: StubResolver!
+
     private func makeController(
         url: URL? = URL(fileURLWithPath: "/tmp/rec.m4a"),
         player: SpyPlayer? = nil,
         nowPlaying: SpyNowPlaying? = nil,
-        remote: SpyRemote? = nil
+        remote: SpyRemote? = nil,
+        lockScreenTitle: @escaping () -> LockScreenTitle = { .default }
     ) -> NotePlaybackController {
-        NotePlaybackController(
-            resolver: StubResolver(url: url),
+        let resolver = StubResolver(url: url)
+        lastResolver = resolver
+        return NotePlaybackController(
+            resolver: resolver,
             player: player ?? SpyPlayer(),
             nowPlaying: nowPlaying ?? SpyNowPlaying(),
             remote: remote ?? SpyRemote(),
+            lockScreenTitle: lockScreenTitle,
             skipInterval: 15
         )
     }
@@ -158,6 +167,111 @@ final class NotePlaybackControllerTests: XCTestCase {
         XCTAssertNil(controller.currentNote, "the remote stop command stops the controller")
     }
 
+    /// The remote PLAY command (lock screen / CarPlay play button) must resume the paused controller,
+    /// not restart it. Fired individually so the play handler's routing is proven on its own.
+    func testRemotePlayCommandResumesController() async {
+        let player = SpyPlayer()
+        let remote = SpyRemote()
+        let controller = makeController(player: player, remote: remote)
+        controller.play(note: recordedNote())
+        await settle()
+        controller.pause()
+        XCTAssertTrue(controller.isPaused)
+
+        remote.firePlay()
+        XCTAssertTrue(controller.isPlaying, "the remote play command resumes playback")
+        XCTAssertEqual(player.resumeCount, 1, "play resumes rather than restarting from the top")
+        XCTAssertEqual(player.plays.count, 1, "no new play was started")
+    }
+
+    /// The remote PAUSE command (lock screen / CarPlay pause button) must pause the controller. Fired
+    /// individually so the pause handler's routing is proven on its own.
+    func testRemotePauseCommandPausesController() async {
+        let player = SpyPlayer()
+        let remote = SpyRemote()
+        let controller = makeController(player: player, remote: remote)
+        controller.play(note: recordedNote())
+        await settle()
+        XCTAssertTrue(controller.isPlaying)
+
+        remote.firePause()
+        XCTAssertTrue(controller.isPaused, "the remote pause command pauses playback")
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertEqual(player.pauseCount, 1)
+    }
+
+    /// The remote SKIP-BACKWARD command must seek back by the interval. Fired individually so the
+    /// skip-back handler's routing is proven on its own (the forward case is covered above).
+    func testRemoteSkipBackwardCommandCallsController() async {
+        let player = SpyPlayer()
+        player.currentTimeValue = 60
+        let remote = SpyRemote()
+        let controller = makeController(player: player, remote: remote)
+        controller.play(note: recordedNote())
+        await settle()
+
+        remote.fireSkipBackward()
+        XCTAssertEqual(player.seeks.last, 45, "skip back seeks currentTime - interval")
+    }
+
+    /// Two observers on ONE shared controller (the phone projection and the CarPlay scene) must BOTH
+    /// be notified on a transport change - the multicast that closed the one-way-door race where a
+    /// single-slot callback let one surface clobber the other's.
+    func testMultipleTransportObserversAllReceiveUpdates() async {
+        let controller = makeController()
+        var firstCount = 0
+        var secondCount = 0
+        controller.addTransportObserver { firstCount += 1 }
+        controller.addTransportObserver { secondCount += 1 }
+
+        controller.play(note: recordedNote())
+        await settle()
+        controller.pause()
+
+        XCTAssertGreaterThan(firstCount, 0, "the first observer received transport updates")
+        XCTAssertGreaterThan(secondCount, 0, "the second observer received transport updates")
+        XCTAssertEqual(firstCount, secondCount, "both observers saw the same number of updates")
+    }
+
+    /// A removed observer stops receiving updates while the remaining one keeps getting them, so a
+    /// surface disconnecting (CarPlay) does not silence the other (phone).
+    func testRemovedTransportObserverStopsReceivingUpdates() async {
+        let controller = makeController()
+        var keptCount = 0
+        var removedCount = 0
+        controller.addTransportObserver { keptCount += 1 }
+        let token = controller.addTransportObserver { removedCount += 1 }
+
+        controller.play(note: recordedNote())
+        await settle()
+        let removedAtRemoval = removedCount
+        controller.removeTransportObserver(token)
+        controller.pause()
+
+        XCTAssertGreaterThan(keptCount, 0)
+        XCTAssertEqual(removedCount, removedAtRemoval, "the removed observer got no further updates")
+    }
+
+    /// The lock-screen-title preference controls the published Now Playing title: `.noteTitle`
+    /// publishes the note's own title, `.generic` publishes the fixed generic label so a sensitive
+    /// first line does not appear on the lock screen / Control Center / CarPlay.
+    func testLockScreenTitlePublishesNoteTitleByDefault() async {
+        let nowPlaying = SpyNowPlaying()
+        let controller = makeController(nowPlaying: nowPlaying, lockScreenTitle: { .noteTitle })
+        controller.play(note: recordedNote(title: "Sensitive line"))
+        await settle()
+        XCTAssertEqual(nowPlaying.last??.title, "Sensitive line")
+    }
+
+    func testGenericLockScreenTitlePublishesFixedLabel() async {
+        let nowPlaying = SpyNowPlaying()
+        let controller = makeController(nowPlaying: nowPlaying, lockScreenTitle: { .generic })
+        controller.play(note: recordedNote(title: "Sensitive line"))
+        await settle()
+        XCTAssertEqual(nowPlaying.last??.title, LockScreenTitle.genericTitle)
+        XCTAssertNotEqual(nowPlaying.last??.title, "Sensitive line", "the note title is not exposed")
+    }
+
     func testPlayingASecondNoteReplacesTheFirst() async {
         let player = SpyPlayer()
         let controller = makeController(player: player)
@@ -165,9 +279,9 @@ final class NotePlaybackControllerTests: XCTestCase {
         let second = recordedNote(title: "second")
 
         controller.play(note: first)
-        await settle()
+        await eventually { player.plays.count == 1 }
         controller.play(note: second)
-        await settle()
+        await eventually { player.plays.count == 2 }
 
         XCTAssertTrue(controller.isLoaded(second))
         XCTAssertFalse(controller.isLoaded(first))
@@ -249,13 +363,41 @@ final class NotePlaybackControllerTests: XCTestCase {
         XCTAssertFalse(remote.isRegistered, "a failed play leaves no stale remote wiring")
     }
 
-    /// Wait out the lazy off-main resolve+play. Yield AND sleep a touch each try so a detached hop
-    /// back to the main actor is not raced under full-suite load (a bare yield-count can be too few).
-    private func settle() async {
-        for _ in 0..<50 {
+    /// The production seek clamp lives in `SystemAudioNotePlayer` (`clampedSeekTime`, called by
+    /// `seek(to:)`). Assert it directly with out-of-range values: a skip-forward past the end pins to
+    /// the duration, a skip-back below 0 pins to 0. This FAILS if the clamp is removed - a raw
+    /// pass-through would return the out-of-range value, not the clamped one. Asserted on the pure
+    /// clamp rather than through a real `AVAudioPlayer` (whose own `currentTime` clamps and would mask
+    /// a removed production clamp) or a non-clamping spy (which would bypass it).
+    func testSystemPlayerSeekClampsToFileBounds() {
+        let duration = 12.0
+        // Past the end -> clamped to the duration, not the raw 999.
+        XCTAssertEqual(SystemAudioNotePlayer.clampedSeekTime(999, duration: duration), duration)
+        // Below zero -> clamped to 0, not the raw -50.
+        XCTAssertEqual(SystemAudioNotePlayer.clampedSeekTime(-50, duration: duration), 0)
+        // In range -> unchanged.
+        XCTAssertEqual(SystemAudioNotePlayer.clampedSeekTime(5, duration: duration), 5)
+        // Exactly at the boundaries -> unchanged (the on/off edge where an off-by-one would live).
+        XCTAssertEqual(SystemAudioNotePlayer.clampedSeekTime(0, duration: duration), 0)
+        XCTAssertEqual(SystemAudioNotePlayer.clampedSeekTime(duration, duration: duration), duration)
+    }
+
+    /// Poll `condition` until it holds (or the tries run out), yielding AND sleeping a touch between
+    /// tries so the lazy off-main resolve+play's detached hop back to the main actor is not raced
+    /// under full-suite load. Condition-based rather than a fixed sleep, so a test waits exactly as
+    /// long as it needs and no longer - the `eventually(_:)` pattern used elsewhere in the suite.
+    private func eventually(_ condition: () -> Bool, tries: Int = 50) async {
+        for _ in 0..<tries {
+            if condition() { return }
             await Task.yield()
             try? await Task.sleep(nanoseconds: 2_000_000)
         }
+    }
+
+    /// Wait for the lazy resolve+play to have run: resolution always happens (even for a no-op or a
+    /// failed play), so `resolveCount` is the universal "the play attempt has settled" signal.
+    private func settle() async {
+        await eventually { self.lastResolver?.resolveCount ?? 0 >= 1 }
     }
 }
 
@@ -263,8 +405,18 @@ final class NotePlaybackControllerTests: XCTestCase {
 
 private final class StubResolver: AudioURLResolving, @unchecked Sendable {
     let url: URL?
+    private let lock = NSLock()
+    private var _resolveCount = 0
+    /// How many times `resolveAudioURL` has been called, so a test can wait on the lazy off-main
+    /// resolve having run (thread-safe: resolution runs on a detached task).
+    var resolveCount: Int { lock.lock(); defer { lock.unlock() }; return _resolveCount }
+
     init(url: URL?) { self.url = url }
-    func resolveAudioURL(for noteID: UUID, audioFileName: String?) -> URL? { url }
+
+    func resolveAudioURL(for noteID: UUID, audioFileName: String?) -> URL? {
+        lock.lock(); _resolveCount += 1; lock.unlock()
+        return url
+    }
 }
 
 @MainActor
@@ -327,6 +479,8 @@ private final class SpyRemote: RemoteCommandRegistering {
         play = nil; pause = nil; toggle = nil; stop = nil; skipForward = nil; skipBackward = nil
     }
 
+    func firePlay() { play?() }
+    func firePause() { pause?() }
     func fireToggle() { toggle?() }
     func fireStop() { stop?() }
     func fireSkipForward() { skipForward?() }

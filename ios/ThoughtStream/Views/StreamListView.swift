@@ -15,6 +15,10 @@ struct StreamListView: View {
     private let settingsStore: SettingsStoring
     /// Where notes are stored (iCloud vs local). Shown read-only in Settings.
     private let noteStoreKind: NoteStoreKind
+    /// The ONE shared playback controller from the composition root, handed to each detail view so
+    /// the phone and CarPlay drive the same media center. Nil in bare/preview call sites, where the
+    /// detail view falls back to a private controller over the store resolver.
+    private let playbackController: NotePlaybackController?
     /// The feed model: owns the notes state, the off-main load, and the iCloud observer wiring.
     @StateObject private var feed: StreamFeed
     /// The shared pending-session route. Observed so a hands-free start (Siri, CarPlay) requested
@@ -42,12 +46,14 @@ struct StreamListView: View {
         settingsStore: SettingsStoring,
         noteStoreKind: NoteStoreKind = .local,
         noteObserver: UbiquitousNoteObserving? = nil,
-        sessionRoute: PendingSessionRoute
+        sessionRoute: PendingSessionRoute,
+        playbackController: NotePlaybackController? = nil
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
         self.settingsStore = settingsStore
         self.noteStoreKind = noteStoreKind
+        self.playbackController = playbackController
         self.sessionRoute = sessionRoute
         _feed = StateObject(wrappedValue: StreamFeed(store: store, observer: noteObserver))
     }
@@ -84,7 +90,11 @@ struct StreamListView: View {
                 // Pass the store as a lazy resolver rather than resolving here: the detail view's
                 // playback model validates the recording off the main actor at play time, so pushing
                 // into a note never blocks on the coordinated presence check (iCloud navigation jank).
-                NoteDetailView(note: note, resolver: StoreAudioURLResolver(store: store))
+                NoteDetailView(
+                    note: note,
+                    resolver: StoreAudioURLResolver(store: store),
+                    controller: playbackController
+                )
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {

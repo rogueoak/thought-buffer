@@ -157,6 +157,28 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertFalse(read.contains { $0.from == "f\(cap)" })
     }
 
+    // MARK: - Lock screen title (spec 0008)
+
+    func testLockScreenTitleDefaultsToNoteTitle() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.lockScreenTitle, .noteTitle)
+    }
+
+    func testLockScreenTitlePersistsAcrossInstances() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.lockScreenTitle = .generic
+
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(reopened.lockScreenTitle, .generic)
+    }
+
+    func testUnknownLockScreenTitleTagFallsBackToNoteTitle() {
+        // A value written by a newer build (or a corrupt default) must decode to the safe default.
+        defaults.set("someFutureMode", forKey: "settings.lockScreenTitle")
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.lockScreenTitle, .noteTitle)
+    }
+
     // MARK: - Corrupt / missing persisted data
 
     func testCorruptOverridesJSONFallsBackToEmpty() {

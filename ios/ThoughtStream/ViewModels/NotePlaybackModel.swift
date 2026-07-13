@@ -53,10 +53,24 @@ final class NotePlaybackModel: ObservableObject {
     /// The controller drives more than this note over its lifetime (CarPlay may load others), so the
     /// model mirrors `isPlaying` only while ITS note is the loaded one.
     private var isObserving = false
+    /// This model's registration on the shared controller's transport multicast, dropped on deinit so
+    /// a detail view coming and going does not leave stale observers on the long-lived shared
+    /// controller. Nil until `beginObserving`.
+    private var observerToken: NotePlaybackController.TransportObserverToken?
 
     init(note: Note, controller: NotePlaybackController) {
         self.note = note
         self.controller = controller
+    }
+
+    deinit {
+        // The controller is shared and outlives this model; drop our observer so it does not accrue
+        // dead entries. `nonisolated(unsafe)` is unnecessary - deinit hops are handled by the token
+        // capture; the removal is a plain dictionary delete on the main-actor controller.
+        if let observerToken {
+            let controller = controller
+            Task { @MainActor in controller.removeTransportObserver(observerToken) }
+        }
     }
 
     /// Test-support convenience: build a private controller from just the id + audio reference.
@@ -99,12 +113,17 @@ final class NotePlaybackModel: ObservableObject {
     /// idle), which keeps navigation off the coordinated presence check.
     var canPlay: Bool { note.audioFileName != nil }
 
-    /// Toggle playback: start this note's recording from the top through the shared controller, or
-    /// stop if this note is already playing.
+    /// Toggle playback through the shared controller:
+    /// - playing this note -> stop;
+    /// - this note is loaded but PAUSED (another surface, or the lock screen, paused it) -> resume
+    ///   from the paused position rather than restarting from the top;
+    /// - otherwise -> start this note's recording from the top.
     func toggle() {
         beginObserving()
         if isPlaying {
             controller.stop()
+        } else if controller.isLoaded(note) && controller.isPaused {
+            controller.resume()
         } else {
             controller.play(note: note)
         }
@@ -121,12 +140,13 @@ final class NotePlaybackModel: ObservableObject {
 
     // MARK: - Private
 
-    /// Start mirroring the controller's transport state onto `isPlaying`. Wired lazily so the model
-    /// never overrides a controller that another surface (CarPlay) is driving until this model acts.
+    /// Start mirroring the controller's transport state onto `isPlaying`. Wired lazily and through the
+    /// multi-observer API so this model coexists with any other surface (CarPlay) observing the same
+    /// shared controller rather than clobbering its callback.
     private func beginObserving() {
         guard !isObserving else { return }
         isObserving = true
-        controller.onTransportChange = { [weak self] in self?.syncFromController() }
+        observerToken = controller.addTransportObserver { [weak self] in self?.syncFromController() }
     }
 
     /// Reflect the controller's state, but only while THIS note is the loaded one. When the

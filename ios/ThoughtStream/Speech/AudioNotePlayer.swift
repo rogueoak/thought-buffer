@@ -117,7 +117,18 @@ final class SystemAudioNotePlayer: NSObject, AudioNotePlayer, AVAudioPlayerDeleg
 
     func seek(to time: Double) {
         guard let player else { return }
-        player.currentTime = max(0, min(time, player.duration))
+        // Clamp into the file so a relative skip past either end (skip-back below 0, skip-forward past
+        // the duration) lands at a valid position rather than an out-of-range one. `AVAudioPlayer`
+        // clamps its own `currentTime`, but the policy is expressed here (and unit-tested via
+        // `clampedSeekTime`) so it does not silently depend on that undocumented behavior.
+        player.currentTime = Self.clampedSeekTime(time, duration: player.duration)
+    }
+
+    /// The seek target clamped into `[0, duration]`. Pure and static so the clamp is unit-testable
+    /// without a real `AVAudioPlayer`: a removed clamp would let an out-of-range `time` through, which
+    /// the test asserts against directly.
+    static func clampedSeekTime(_ time: Double, duration: Double) -> Double {
+        max(0, min(time, duration))
     }
 
     func stop() {

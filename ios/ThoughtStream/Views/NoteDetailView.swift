@@ -6,17 +6,23 @@ struct NoteDetailView: View {
     let note: Note
     @StateObject private var playback: NotePlaybackModel
 
-    /// Build the detail view. The playback model resolves the note's recording lazily (off the main
-    /// actor, at play time) through the `resolver`, so navigation never blocks on the coordinated
-    /// presence check. When the note claims no audio, no play affordance shows.
-    init(note: Note, resolver: AudioURLResolving, player: AudioNotePlayer? = nil) {
+    /// Build the detail view. Prefers the ONE shared `NotePlaybackController` (so the phone and
+    /// CarPlay drive the same media center and never race); when none is supplied - a preview, a
+    /// screenshot build, or a bare call site - it falls back to a private controller over the given
+    /// `resolver`, which resolves the recording lazily (off the main actor, at play time) so
+    /// navigation never blocks on the coordinated presence check. When the note claims no audio, no
+    /// play affordance shows.
+    init(
+        note: Note,
+        resolver: AudioURLResolving,
+        player: AudioNotePlayer? = nil,
+        controller: NotePlaybackController? = nil
+    ) {
         self.note = note
         // The full note is passed through so the shared playback controller titles the system Now
         // Playing item (lock screen / Control Center) and reads the recording duration.
-        _playback = StateObject(wrappedValue: NotePlaybackModel(
-            note: note,
-            controller: NotePlaybackController(resolver: resolver, player: player)
-        ))
+        let controller = controller ?? NotePlaybackController(resolver: resolver, player: player)
+        _playback = StateObject(wrappedValue: NotePlaybackModel(note: note, controller: controller))
     }
 
     var body: some View {

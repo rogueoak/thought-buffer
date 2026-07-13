@@ -24,6 +24,8 @@ struct SettingsView: View {
     /// mode is not auto-delete, so toggling back restores the last window instead of resetting).
     @State private var retentionMode: RetentionMode
     @State private var autoDeleteDays: Int
+    /// The chosen lock-screen title mode (note title vs a fixed generic label).
+    @State private var lockScreenTitle: LockScreenTitle
 
     init(settings: SettingsStoring, storeKind: NoteStoreKind = .local) {
         self.settings = settings
@@ -33,6 +35,7 @@ struct SettingsView: View {
         let retention = settings.audioRetention
         _retentionMode = State(initialValue: RetentionMode(retention))
         _autoDeleteDays = State(initialValue: retention.autoDeleteDays ?? SettingsView.defaultAutoDeleteDays)
+        _lockScreenTitle = State(initialValue: settings.lockScreenTitle)
     }
 
     var body: some View {
@@ -44,6 +47,7 @@ struct SettingsView: View {
                     assistantSection
                     overridesSection
                     recordingSection
+                    lockScreenSection
                     storageSection
                 }
                 .scrollContentBackground(.hidden)
@@ -198,6 +202,38 @@ struct SettingsView: View {
             settings.audioRetention = .transcriptOnly
         case .autoDelete:
             settings.audioRetention = .autoDeleteDays(autoDeleteDays)
+        }
+    }
+
+    // MARK: - Lock screen title (spec 0008)
+
+    /// A pickable label for each lock-screen title mode.
+    private func lockScreenLabel(_ mode: LockScreenTitle) -> String {
+        switch mode {
+        case .noteTitle: return "Note title"
+        case .generic: return "Generic label"
+        }
+    }
+
+    private var lockScreenSection: some View {
+        Section {
+            Picker("Lock screen title", selection: $lockScreenTitle) {
+                ForEach(LockScreenTitle.allCases) { mode in
+                    Text(lockScreenLabel(mode)).tag(mode)
+                }
+            }
+            .onChange(of: lockScreenTitle) { _, newValue in
+                settings.lockScreenTitle = newValue
+            }
+        } header: {
+            Text("Lock screen")
+                .foregroundStyle(CanopyColor.textMuted)
+        } footer: {
+            Text("Show the note's title while it plays on the lock screen, Control Center, and "
+                + "CarPlay, or hide it behind \"\(LockScreenTitle.genericTitle)\" so a sensitive "
+                + "first line stays private.")
+                .font(.system(size: CanopyFont.sizeXs))
+                .foregroundStyle(CanopyColor.textSubtle)
         }
     }
 
