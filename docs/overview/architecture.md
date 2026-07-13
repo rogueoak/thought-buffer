@@ -90,9 +90,15 @@ How the system is built and why.
     stays green.
 - `Speech/` - `SpeechDictationService` owns the `AVAudioEngine`, `SFSpeechRecognizer`, and the
   current `SFSpeechRecognitionTask`. On-device only. Emits events (partial, finalized, level,
-  failure). Auto-restarts a finished task on the same audio to keep dictation continuous. Also
-  holds the Mira control-word pieces: `MiraCommandParser` (pure segment -> `MiraCommand?`),
-  `MiraTextProcessor` (the `TextProcessor` that consumes commands), `SentenceTokenizer`
+  failure). Auto-restarts a finished task on the same audio to keep dictation continuous. On device a
+  task ACCUMULATES the whole passage into one growing transcription and finalizes only on end (a
+  clean final OR an error, which can carry a NIL result); the service tracks the current task's latest
+  partial (`lastPartialText`) and on ANY end commits the best available text - the result when
+  non-empty, else the tracked partial - via the pure, unit-tested `resolveEnd(resultText:lastPartial:)`
+  (feedback 0006), so a nil-result pause end never loses the in-progress words and a clean final does
+  not double-commit. Also holds the Mira control-word pieces: `MiraCommandParser` (pure segment ->
+  `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST control word found anywhere),
+  `MiraTextProcessor` (the `TextProcessor` that splits at commands), `SentenceTokenizer`
   (`NLTokenizer`-backed, for "remove the last sentence"), and `Speaker`/`SystemSpeaker`
   (`AVSpeechSynthesizer` text to speech for "read that back").
   - **Dual capture (spec 0007).** The single input tap tees each buffer to THREE sinks: the
@@ -126,14 +132,16 @@ How the system is built and why.
     `UIBackgroundModes` (Info.plist) makes background playback + lock-screen Now Playing work; it needs
     no entitlement.
 - `TextProcessor` seam - a finalized segment runs through `process`, which returns a
-  `ProcessedSegment`: `.text` to commit, `.command` to execute and suppress, or `.drop`
-  (reserved). `PassthroughTextProcessor` always returns `.text`; `MiraTextProcessor` returns
-  `.command` when the parser matches (built with the configured control word);
-  `SpellingOverrideProcessor` is text -> text, applying the user's whole-word, case-insensitive
-  overrides via an `NSRegularExpression` word walk (so a substring is never corrupted).
-  `CompositeTextProcessor` composes them in the required order: detect a command on the RAW
-  segment FIRST (a control phrase must never be spelling-mangled), and only if it is not a command
-  run the spelling processor and return `.text`. The composition root
+  `ProcessedSegment`: `.text` to commit, `.split(preText:command:)` (feedback 0006: the dictation
+  before the control word plus a command outcome - `.command` to execute or `.unrecognizedCommand` to
+  drop with a chip), or `.drop` (reserved). `PassthroughTextProcessor` always returns `.text`;
+  `MiraTextProcessor` returns `.split` when the parser finds the control word anywhere (built with the
+  configured control word); `SpellingOverrideProcessor` is text -> text, applying the user's
+  whole-word, case-insensitive overrides via an `NSRegularExpression` word walk (so a substring is
+  never corrupted). `CompositeTextProcessor` composes them in the required order: split at the control
+  word on the RAW segment FIRST (the command portion must never be spelling-mangled or transcribed),
+  and apply spelling overrides ONLY to the pre-keyword dictation (or the whole segment when no control
+  word is present). The composition root
   (`AppDependencies.makeTextProcessor`) builds one per session, reading the current control phrase
   and overrides off `SettingsStoring` at build time - so edits in Settings apply to the next
   session started, not one in flight.

@@ -25,7 +25,7 @@ final class AppDependenciesFactoryTests: XCTestCase {
         // The new word fires the command...
         XCTAssertEqual(
             processor.process("Nova remove the last sentence"),
-            .command(.removeLastSentence)
+            .split(preText: "", command: .command(.removeLastSentence))
         )
         // ...and the old word does not (it commits as plain text).
         XCTAssertEqual(

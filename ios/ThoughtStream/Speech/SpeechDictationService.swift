@@ -34,6 +34,14 @@ final class SpeechDictationService: SpeechCaptureService {
     /// task ending after we deliberately stopped does not spin up a new one.
     private var isCapturing = false
 
+    /// The latest partial (in-progress transcription) text for the CURRENT task. On a real device a
+    /// task can END with an ERROR and a NIL result - no final transcription at all - while text is
+    /// still held only as this in-progress partial. Without tracking it, that text would be lost when
+    /// the fresh task's replacing partials overwrite the view model's `partial` (feedback 0006).
+    /// Reset to empty when a new task starts (`startEngineAndTask`) and after committing at a task
+    /// end, so it never double-commits or leaks across the seam.
+    private var lastPartialText = ""
+
     /// Whether to tee the audio to a file for this session (spec 0007). Set via
     /// `setRecordingEnabled` before `start()`. Off by default so a caller that never opts in behaves
     /// exactly as before.
@@ -186,6 +194,11 @@ final class SpeechDictationService: SpeechCaptureService {
         let request = makeRequest()
         self.request = request
 
+        // A fresh task tracks its own in-progress partial from scratch: any text held by a prior
+        // task was already committed at its end (see `makeTask`), so start empty to avoid double
+        // commits.
+        lastPartialText = ""
+
         // This request starts at the current recording position, so segment timestamps (which are
         // relative to the request) map to absolute recording time. A resumed session already has
         // frames written; `elapsedSeconds` reflects that, so the offset stays continuous.
@@ -258,33 +271,67 @@ final class SpeechDictationService: SpeechCaptureService {
             let ended = isFinal || error != nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    // COMMIT-ON-END invariant (fixes the "pause clears the transcript" bug): the
-                    // recognition task ends not only on a clean `isFinal` result but also on an
-                    // ERROR - a natural pause / no-speech timeout / duration limit. In the error
-                    // case the last result is a PARTIAL, and the task is about to be replaced by a
-                    // fresh one whose new partials would OVERWRITE this text before it was ever
-                    // committed - the words spoken right before the pause would vanish. So a task
-                    // that is ENDING with any transcription text commits it as a finalized segment
-                    // (a paragraph), not a partial. Only a still-running task's mid-phrase update
-                    // stays a partial.
-                    if ended {
-                        // Anchor the request-relative range to the recording. Nil when nothing was
-                        // recorded or the recognizer reported no timings (a text-only note path).
-                        let range = self.absoluteRange(from: relativeRange)
-                        self.emit(.finalizedSegment(text, range: range))
-                    } else {
-                        self.emit(.partial(text))
-                    }
-                }
-                // A task ends on final result or error. If we are still capturing, this is a
-                // duration limit or transient hiccup: restart a fresh task on the same audio so
-                // dictation stays continuous.
                 if ended {
-                    self.restartTaskIfCapturing()
+                    // Anchor the request-relative range to the recording, but only when the RESULT
+                    // itself carried text (a nil-result end has no range to derive - `resolveEnd`
+                    // decides which text is committed).
+                    let range = self.absoluteRange(from: relativeRange)
+                    self.handleTaskEnd(resultText: text, resultRange: range)
+                } else {
+                    self.handlePartial(text)
                 }
             }
         }
+    }
+
+    /// A still-running task reported a mid-phrase update. Track it as the latest partial (so a later
+    /// error+nil end can still commit it) and show it live. Empty/whitespace text is ignored.
+    private func handlePartial(_ resultText: String?) {
+        guard let resultText,
+              !resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        lastPartialText = resultText
+        emit(.partial(resultText))
+    }
+
+    /// A task ENDED (clean final OR error). Commit the best available text as a finalized segment,
+    /// reset the tracked partial, and restart if still capturing. Split out (and the text decision
+    /// delegated to the pure `resolveEnd`) so the accumulating-segment + nil-result-end behavior is
+    /// unit-testable without a live mic.
+    private func handleTaskEnd(resultText: String?, resultRange: ParagraphTiming?) {
+        if let commit = Self.resolveEnd(resultText: resultText, lastPartial: lastPartialText) {
+            // A range only applies when the RESULT carried the committed text; a partial committed
+            // from a nil-result end has no result timings, so it emits a nil range.
+            let usedResult = !(resultText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+            emit(.finalizedSegment(commit, range: usedResult ? resultRange : nil))
+        }
+        // Committed (or nothing to commit): clear the tracked partial so a restart never re-commits it.
+        lastPartialText = ""
+        // If still capturing, this is a duration limit or transient hiccup: restart a fresh task on
+        // the same audio so dictation stays continuous.
+        restartTaskIfCapturing()
+    }
+
+    /// COMMIT-ON-END invariant (feedback 0005 + 0006). Given the ending task's `resultText` (nil when
+    /// the task ended with an error and NO final transcription) and the `lastPartial` it had been
+    /// accumulating, return the text to commit as a paragraph, or nil when there is nothing usable.
+    ///
+    /// On a real device a task ACCUMULATES the whole passage into one growing transcription and
+    /// finalizes only when it ends. An error end can arrive with a nil result, leaving the words held
+    /// ONLY as the in-progress partial - which the fresh task's partials would overwrite if it were
+    /// not committed here. So commit the result's transcription when it is non-empty, otherwise the
+    /// last partial. A clean final already CONTAINS the partial, so this uses it ONCE (never also the
+    /// partial) - no double commit - and never returns empty/whitespace text.
+    ///
+    /// Pure and static (nonisolated: no service state touched), so it is fully unit-testable off the
+    /// main actor.
+    nonisolated static func resolveEnd(resultText: String?, lastPartial: String) -> String? {
+        let trimmedResult = resultText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedResult.isEmpty {
+            // A clean/non-empty result supersedes the partial (it already contains it).
+            return resultText
+        }
+        let trimmedPartial = lastPartial.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedPartial.isEmpty ? nil : lastPartial
     }
 
     /// Tear down the finished task and start a new one, keeping the engine and its tap running.

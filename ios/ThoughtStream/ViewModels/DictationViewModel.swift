@@ -380,32 +380,50 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Route a finalized segment through the processor: commit text (with its recording range), or
-    /// run a command. A command carries no paragraph, so its range is dropped.
+    /// SPLIT it into a leading dictation paragraph plus a command (feedback 0006). On device a whole
+    /// passage accumulates into one segment, so a spoken command lands mid/end of it, not at its
+    /// start; the split commits the pre-keyword words and then runs (or drops) the command.
     private func handleFinalized(_ text: String, range: ParagraphTiming?) {
         switch processor.process(text) {
         case .text(let value):
             commitParagraph(value, range: range)
             partial = ""
-        case .command(let command):
-            // A command is consumed: the command phrase itself never lands in the note (it arrived
-            // as its own finalized segment). Do NOT blanket-clear the live partial here: it is a
-            // separate in-progress phrase of real user content. Commands that need it (new note,
-            // read that back) fold it in via `foldPartialIntoParagraphs`; the rest leave it intact.
-            execute(command)
-        case .unrecognizedCommand:
-            // Led with the control word but not a known command (feedback 0005): command mode, so it
-            // is NOT transcribed. Drop it and show a brief chip so the user knows it was treated as a
-            // command rather than silently lost. Leave the live partial (separate user content).
-            showUnrecognizedCommandBanner()
+        case .split(let preText, let outcome):
+            // The dictation before the control word is a real paragraph; commit it (guarded empty).
+            // The segment's recording range spans the whole utterance including the command tail, so
+            // it no longer maps cleanly to just the pre-text; drop the range (nil) rather than
+            // over-claim it, so playback falls back to text-to-speech for this paragraph.
+            commitParagraph(preText, range: nil)
+            // The command portion never lands in the note. Do NOT blanket-clear the live partial:
+            // it is a separate in-progress phrase of real user content. Commands that need it (new
+            // note, read that back) fold it in via `foldPartialIntoParagraphs`; the rest leave it.
+            switch outcome {
+            case .command(let command):
+                execute(command)
+            case .unrecognizedCommand:
+                // Led with the control word but not a known command (feedback 0005): command mode,
+                // so it is NOT transcribed. Show a brief chip so the user knows it was treated as a
+                // command rather than silently lost. Leave the live partial (separate user content).
+                showUnrecognizedCommandBanner()
+            }
         case .drop:
             partial = ""
         }
     }
 
-    /// The text a partial should display: only `.text` shows; a command mid-partial waits.
+    /// The text a partial should display. A partial with no control word shows in full; once a
+    /// control-word token is present the segment is splitting into command mode, so only the
+    /// pre-keyword dictation is shown - the forming command must not be displayed (and must not
+    /// fire, which it cannot: commands execute only on finalization, never on a live partial).
     private func partialText(from segment: ProcessedSegment) -> String {
-        if case .text(let value) = segment { return value }
-        return partial
+        switch segment {
+        case .text(let value):
+            return value
+        case .split(let preText, _):
+            return preText
+        case .drop:
+            return partial
+        }
     }
 
     private func commitParagraph(_ text: String, range: ParagraphTiming? = nil) {

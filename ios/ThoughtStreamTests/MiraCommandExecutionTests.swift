@@ -215,22 +215,80 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(model.commandBanner, "Mira - read that back")
     }
 
+    // MARK: - Device accumulating-segment: command lands mid/end of one segment (feedback 0006)
+
+    /// (a) "here is my note Mira new note" -> commits "here is my note" AND fires newNote.
+    func testAccumulatingSegmentCommitsPreTextAndFiresNewNote() {
+        let model = makeModel()
+        model.injectFinalized("here is my note Mira new note")
+        // newNote saved the pre-text note and reset, so the current note is empty again.
+        XCTAssertEqual(store.saved.count, 1)
+        XCTAssertEqual(store.saved.first?.paragraphs, ["here is my note"])
+        XCTAssertEqual(model.paragraphs, [])
+        XCTAssertEqual(model.commandBanner, "Mira - new note")
+    }
+
+    /// (b) "remember the milk Mira read that back to me" -> commits "remember the milk" AND fires
+    /// readThatBack (speaks the just-committed pre-text).
+    func testAccumulatingSegmentCommitsPreTextAndFiresReadThatBack() {
+        let speaker = StubSpeaker()
+        let model = makeModel(speaker: speaker)
+        model.injectFinalized("remember the milk Mira read that back to me")
+        XCTAssertEqual(model.paragraphs, ["remember the milk"])
+        XCTAssertEqual(speaker.spoken, ["remember the milk"])
+        XCTAssertEqual(model.commandBanner, "Mira - read that back")
+    }
+
+    /// (c) "here is my note Mira flibber" (keyword + gibberish) -> commits the pre-text, drops the
+    /// command tail, shows the chip.
+    func testAccumulatingSegmentKeywordGibberishCommitsPreTextAndChips() {
+        let model = makeModel()
+        model.injectFinalized("here is my note Mira flibber")
+        XCTAssertEqual(model.paragraphs, ["here is my note"], "pre-text is kept")
+        XCTAssertEqual(model.commandBanner, "Sorry, I didn't catch that command")
+    }
+
+    /// (e) A custom control word is honored end-to-end through the view model: "Mira" is now ordinary
+    /// text, and the configured word ("Nova") splits and fires.
+    func testCustomControlWordHonoredThroughViewModel() {
+        let model = DictationViewModel(
+            service: StubCaptureService(),
+            store: store,
+            processor: MiraTextProcessor(controlWord: "Nova"),
+            speaker: StubSpeaker(),
+            controlWord: "Nova"
+        )
+        // "Mira" is no longer a control word: it is ordinary dictation.
+        model.injectFinalized("Mira is a nice name")
+        XCTAssertEqual(model.paragraphs, ["Mira is a nice name"])
+        // "Nova" splits: commit the pre-text and remove it as the last paragraph.
+        model.injectFinalized("keep this Nova remove the last paragraph")
+        XCTAssertEqual(model.paragraphs, ["Mira is a nice name"],
+                       "the Nova pre-text 'keep this' was committed then removed as the last paragraph")
+        XCTAssertEqual(model.commandBanner, "Nova - removed last paragraph")
+    }
+
     // MARK: - Keyword-led unrecognized command: dropped + chip (feedback 0005)
 
     func testKeywordLedUnrecognizedCommandIsDroppedAndChipped() {
         let model = makeModel()
         model.injectFinalized("Keep this one.")
-        // Leads with the control word but is not a known command: dropped, not transcribed.
+        // Leads with the control word (no pre-text) but is not a known command: dropped, not
+        // transcribed.
         model.injectFinalized("Mira do a barrel roll")
         XCTAssertEqual(model.paragraphs, ["Keep this one."], "keyword-led gibberish must not transcribe")
         XCTAssertEqual(model.commandBanner, "Sorry, I didn't catch that command")
     }
 
-    func testMidSentenceKeywordMentionStillTranscribes() {
+    /// The intentional tradeoff (feedback 0006): the control word switches the REST of the utterance
+    /// to command mode, so a mid-sentence mention of the assistant's name commits the words before it
+    /// and treats what follows as a command. Here "about the plan" is not a command, so the pre-text
+    /// is kept and the tail is dropped with a chip.
+    func testMidSentenceKeywordMentionSplitsAtKeyword() {
         let model = makeModel()
-        model.injectFinalized("I told Mira about the plan.")
-        XCTAssertEqual(model.paragraphs, ["I told Mira about the plan."])
-        XCTAssertNil(model.commandBanner)
+        model.injectFinalized("I told Mira about the plan")
+        XCTAssertEqual(model.paragraphs, ["I told"], "the words before the control word are kept")
+        XCTAssertEqual(model.commandBanner, "Sorry, I didn't catch that command")
     }
 
     // MARK: - No banner for a no-op command (no actual effect)

@@ -218,3 +218,19 @@ testable `normalizedLevel(fromRMS:)` (perceptual `sqrt` curve, tuned gain) lets 
 flattens the bars fail in CI even though the live mic can only be confirmed on hardware. Generalizes:
 when a feature is device-only end to end, carve out the pure numeric core and unit-test it so at
 least the tunable part is guarded.
+
+## Model the real stream, not the simulator's simplified one (feedback 0006)
+
+The feedback 0005 fix reasoned about `SFSpeechRecognitionTask` as one short phrase per pause, so it
+committed text only when the ending result carried text and fired a command only when the segment
+STARTED with the control word. On device the task ACCUMULATES the whole passage into one growing
+transcription and finalizes only on end - sometimes an error end with a NIL result - so the fix
+looked correct in the simulator and still shipped two CRITICAL bugs (a pause that lost the words, a
+command that never fired). Two rules fall out. First: when the real behavior is device-only, extract
+the decision into a pure function and TEST it against the REAL shape (nil result, accumulating
+partial, mid-segment keyword), not the shape the simulator emits - `resolveEnd(resultText:lastPartial:)`
+and the split parser are both pure and unit-tested against the device shape. Second: "at the start"
+is the wrong anchor for a marker in an accumulating stream; a control token arrives mid/end, so match
+it ANYWHERE and split around it, and keep the words before it. Anchoring to position zero silently
+disables the feature for the exact continuous input it was built for. Generalizes to any restart-to-
+continue loop over a growing stream where a subtask can end empty and a marker can land anywhere.

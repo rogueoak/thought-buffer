@@ -109,6 +109,47 @@ final class DeviceFeedbackFixesTests: XCTestCase {
     }
 }
 
+// MARK: - Feedback 0006 Fix A: last-partial commit on a nil-result task end (device-only)
+
+/// The commit-on-end decision (`SpeechDictationService.resolveEnd`) is pure and testable, so the
+/// accumulating-segment + nil-result-end behavior can be proven WITHOUT a live mic. On a real device
+/// a task accumulates the whole passage and can end with an ERROR and a NIL result, holding the words
+/// only as the in-progress partial - which must still be committed.
+final class LastPartialCommitTests: XCTestCase {
+
+    /// (1) Partials "he" -> "hello" -> "hello world" arrive, THEN the task ends with error+nil result:
+    /// the last partial "hello world" is what must be committed (not lost).
+    func testNilResultEndCommitsLastPartial() {
+        // The service tracks the growing partial; the resolver commits it when the result is nil.
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "hello world"),
+                       "hello world")
+    }
+
+    /// (3) A clean final does NOT double-commit: a non-empty result already CONTAINS the partial, so
+    /// the resolver returns the result (used once), never the result plus the partial.
+    func testCleanFinalUsesResultNotPartial() {
+        // Result is the full accumulated phrase; the partial was an earlier prefix. The resolver
+        // returns the result exactly once.
+        XCTAssertEqual(
+            SpeechDictationService.resolveEnd(resultText: "hello world", lastPartial: "hello"),
+            "hello world"
+        )
+    }
+
+    /// An end with neither a usable result NOR a partial commits nothing (no empty paragraph).
+    func testEmptyResultAndEmptyPartialCommitsNothing() {
+        XCTAssertNil(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: ""))
+        XCTAssertNil(SpeechDictationService.resolveEnd(resultText: "   ", lastPartial: "  \n\t "))
+        XCTAssertNil(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "   "))
+    }
+
+    /// An empty/whitespace result falls back to the partial (the device's nil-ish end).
+    func testEmptyResultFallsBackToPartial() {
+        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: "  ", lastPartial: "kept text"),
+                       "kept text")
+    }
+}
+
 // MARK: - #2 Pause / restart never loses text (event-boundary regression)
 
 /// Proves the view model's finalize/restart/partial handling at the service->view-model event seam:
@@ -128,6 +169,43 @@ final class PauseRestartPreservationTests: XCTestCase {
 
     private func makeModel() -> DictationViewModel {
         DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
+    }
+
+    /// Feedback 0006 Fix A end-to-end at the event seam: prior paragraphs survive a long-pause
+    /// restart AND the dangling partial (the device's nil-result end committed it as a finalized
+    /// segment) is preserved, not lost. Mirrors the service emitting the tracked partial on end.
+    func testPriorParagraphsAndDanglingPartialSurviveLongPause() {
+        let model = makeModel()
+        // Two paragraphs already committed.
+        service.emit(.finalizedSegment("P1", range: nil))
+        service.emit(.finalizedSegment("P2", range: nil))
+        // The current task accumulates a growing partial, then ends with error+nil result: the
+        // service commits the tracked partial "hello world" as a finalized segment.
+        service.emit(.partial("he"))
+        service.emit(.partial("hello"))
+        service.emit(.partial("hello world"))
+        service.emit(.finalizedSegment("hello world", range: nil))
+        XCTAssertEqual(model.paragraphs, ["P1", "P2", "hello world"],
+                       "prior paragraphs and the dangling partial all survive the long-pause restart")
+    }
+
+    /// Feedback 0006 Fix B live-partial rule: once a control-word token is present in the live
+    /// partial, only the PRE-keyword text is shown - the forming command must not be displayed (and
+    /// cannot fire, since commands execute only on finalization).
+    func testLivePartialShowsOnlyPreKeywordText() {
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor()
+        )
+        // A partial with no control word shows in full.
+        model.simulatePartial("here is my note")
+        XCTAssertEqual(model.partial, "here is my note")
+        // Once the control word appears, only the pre-keyword dictation shows; the forming command
+        // ("new note") is not displayed.
+        model.simulatePartial("here is my note Mira new")
+        XCTAssertEqual(model.partial, "here is my note")
+        // A keyword-led partial with no pre-text shows nothing.
+        model.simulatePartial("Mira new note")
+        XCTAssertEqual(model.partial, "")
     }
 
     /// The core invariant: words spoken before a natural pause are COMMITTED when the task ends
