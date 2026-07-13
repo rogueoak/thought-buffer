@@ -6,7 +6,7 @@ import Foundation
 /// missing frontmatter or partially written. The store is deliberately thin: no in-memory
 /// cache, so the on-disk files are the single source of truth and later sync features can watch
 /// the directory without fighting a cache.
-struct NoteStore {
+struct NoteStore: NoteStoring {
     /// The directory that holds the note files. Defaults to the app's Documents directory,
     /// but tests can point it at a temporary directory.
     let directory: URL
@@ -22,10 +22,14 @@ struct NoteStore {
         self.directory = directory
     }
 
-    /// Ensure the notes directory exists, creating it if needed.
+    /// Ensure the notes directory exists, creating it if needed. The directory is protected with
+    /// `completeUnlessOpen` so note contents stay encrypted at rest when the device is locked,
+    /// while a file already open across a lock (a long dictation session) keeps working.
     func ensureDirectory() throws {
         try FileManager.default.createDirectory(
-            at: directory, withIntermediateDirectories: true
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
         )
     }
 
@@ -40,6 +44,12 @@ struct NoteStore {
         try ensureDirectory()
         let url = fileURL(for: note.id)
         try note.markdown.write(to: url, atomically: true, encoding: .utf8)
+        // Protect the note at rest: encrypted when the device is locked, but readable while the
+        // file is already open (so a session that spans a lock is not cut off).
+        try FileManager.default.setAttributes(
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
+            ofItemAtPath: url.path
+        )
         return url
     }
 
