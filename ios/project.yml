@@ -33,5 +33,31 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Thought Stream uses the microphone to hear you and turn your words into notes. Audio stays on your device."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Thought Stream turns your speech into notes on device. Nothing you say leaves your phone."
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGNING_ALLOWED: "NO"
+
+  ThoughtStreamTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ThoughtStreamTests
+    dependencies:
+      - target: ThoughtStream
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rogueoak.thoughtstream.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+
+schemes:
+  ThoughtStream:
+    build:
+      targets:
+        ThoughtStream: all
+        ThoughtStreamTests: [test]
+    test:
+      targets:
+        - ThoughtStreamTests
+    run:
+      config: Debug

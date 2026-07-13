@@ -1,25 +1,30 @@
 import SwiftUI
 
-/// Mock live-capture screen. No Speech framework, no audio, no permissions: this fakes
-/// "live" dictation with a timer-driven streaming string, a blinking caret, an animated
-/// waveform, a command chip, and a bottom dock. Purely visual for the themed shell.
+/// Live-capture screen. Requests permission, streams on-device speech into a note through
+/// `DictationViewModel`, shows finalized paragraphs plus the in-progress partial with a
+/// blinking caret, and drives the waveform from the real microphone level. Stopping saves the
+/// note and hands it back to the caller.
 struct DictationView: View {
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var model: DictationViewModel
 
-    // The full sample text; we reveal it a few words at a time to fake live capture.
-    private static let sampleWords = (
-        "Remember to call the supplier about the Shea butter order before noon. "
-            + "Then draft the launch email and keep it to three short paragraphs."
-    ).split(separator: " ").map(String.init)
+    /// Called with the saved note (or nil when nothing was captured) as the screen dismisses.
+    private let onFinish: (Note?) -> Void
 
-    @State private var revealedWordCount = 4
+    /// Sample text injected in preview / screenshot mode so the design renders without a mic.
+    private let previewInjection: String?
+
     @State private var caretVisible = true
-
-    private let streamTimer = Timer.publish(every: 0.45, on: .main, in: .common).autoconnect()
     private let caretTimer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
-    private var streamedText: String {
-        Self.sampleWords.prefix(revealedWordCount).joined(separator: " ")
+    init(
+        model: DictationViewModel? = nil,
+        previewInjection: String? = nil,
+        onFinish: @escaping (Note?) -> Void = { _ in }
+    ) {
+        _model = StateObject(wrappedValue: model ?? DictationViewModel())
+        self.previewInjection = previewInjection
+        self.onFinish = onFinish
     }
 
     var body: some View {
@@ -29,34 +34,47 @@ struct DictationView: View {
             VStack(spacing: CanopySpacing.x5) {
                 header
 
-                liveCard
+                switch model.phase {
+                case .denied(let error):
+                    Spacer(minLength: 0)
+                    deniedCard(error)
+                    Spacer(minLength: 0)
+                default:
+                    liveCard
 
-                Waveform()
-                    .frame(height: 44)
-                    .padding(.horizontal, CanopySpacing.x4)
+                    Waveform(level: model.isRecording ? CGFloat(model.level) : 0)
+                        .frame(height: 44)
+                        .padding(.horizontal, CanopySpacing.x4)
 
-                commandChip
+                    statusChip
 
-                Spacer(minLength: 0)
+                    Spacer(minLength: 0)
 
-                Dock(onNew: resetStream)
+                    Dock(
+                        isPaused: model.phase == .paused,
+                        onPause: { model.togglePause() },
+                        onStop: finish
+                    )
+                }
             }
             .padding(.top, CanopySpacing.x4)
             .padding(.bottom, CanopySpacing.x6)
         }
-        .onReceive(streamTimer) { _ in
-            if revealedWordCount < Self.sampleWords.count {
-                revealedWordCount += 1
+        .onReceive(caretTimer) { _ in caretVisible.toggle() }
+        .task {
+            if let injection = previewInjection {
+                model.injectFinalized(injection)
+            } else {
+                await model.begin()
             }
-        }
-        .onReceive(caretTimer) { _ in
-            caretVisible.toggle()
         }
     }
 
     private var header: some View {
         HStack {
             Button {
+                model.cancel()
+                onFinish(nil)
                 dismiss()
             } label: {
                 Image(systemName: "chevron.down")
@@ -75,29 +93,24 @@ struct DictationView: View {
     }
 
     private var liveCard: some View {
-        VStack(alignment: .leading, spacing: CanopySpacing.x2) {
+        VStack(alignment: .leading, spacing: CanopySpacing.x3) {
             HStack(spacing: CanopySpacing.x2) {
                 Circle()
-                    .fill(CanopyColor.danger)
+                    .fill(model.phase == .paused ? CanopyColor.textSubtle : CanopyColor.danger)
                     .frame(width: 8, height: 8)
-                Text("Recording")
+                Text(model.phase == .paused ? "Paused" : "Recording")
                     .font(.system(size: CanopyFont.sizeXs, weight: .semibold))
                     .foregroundStyle(CanopyColor.textSubtle)
             }
 
-            // Streaming text with a blinking caret appended inline.
-            (
-                Text(streamedText + " ")
-                    .foregroundColor(CanopyColor.text)
-                    + Text("|")
-                    .foregroundColor(caretVisible ? CanopyColor.primary : .clear)
-            )
-            .font(.system(size: CanopyFont.sizeLg))
-            .lineSpacing(4)
+            ScrollView {
+                transcript
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CanopySpacing.x5)
-        .frame(maxWidth: .infinity, minHeight: 160, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 200, maxHeight: 320, alignment: .topLeading)
         .background(CanopyColor.surfaceRaised)
         .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.xl, style: .continuous))
         .overlay(
@@ -107,10 +120,44 @@ struct DictationView: View {
         .padding(.horizontal, CanopySpacing.x4)
     }
 
-    private var commandChip: some View {
+    @ViewBuilder
+    private var transcript: some View {
+        if model.isEmpty {
+            Text("Listening... start talking and your words appear here.")
+                .font(.system(size: CanopyFont.sizeLg))
+                .foregroundStyle(CanopyColor.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: CanopySpacing.x3) {
+                let paragraphs = model.displayParagraphs
+                ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                    if index == paragraphs.count - 1 {
+                        // The last paragraph carries the live caret.
+                        (
+                            Text(paragraph + " ")
+                                .foregroundColor(CanopyColor.text)
+                                + Text("|")
+                                .foregroundColor(caretVisible ? CanopyColor.primary : .clear)
+                        )
+                        .font(.system(size: CanopyFont.sizeLg))
+                        .lineSpacing(4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text(paragraph)
+                            .font(.system(size: CanopyFont.sizeLg))
+                            .foregroundColor(CanopyColor.text)
+                            .lineSpacing(4)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+    }
+
+    private var statusChip: some View {
         HStack(spacing: CanopySpacing.x2) {
-            Image(systemName: "arrow.uturn.backward")
-            Text("Mira - removed last sentence")
+            Image(systemName: model.phase == .paused ? "pause.circle" : "waveform")
+            Text(model.phase == .paused ? "Paused - tap play to keep going" : "On-device - nothing leaves your phone")
         }
         .font(.system(size: CanopyFont.sizeSm))
         .foregroundStyle(CanopyColor.mutedForeground)
@@ -120,14 +167,50 @@ struct DictationView: View {
         .clipShape(Capsule())
     }
 
-    private func resetStream() {
-        revealedWordCount = 1
+    private func deniedCard(_ error: SpeechDictationService.DictationError) -> some View {
+        VStack(spacing: CanopySpacing.x3) {
+            Image(systemName: "mic.slash")
+                .font(.system(size: CanopyFont.sizeX3xl, weight: .semibold))
+                .foregroundStyle(CanopyColor.danger)
+            Text(error.headline)
+                .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
+                .foregroundStyle(CanopyColor.text)
+                .multilineTextAlignment(.center)
+            Text(error.detail)
+                .font(.system(size: CanopyFont.sizeSm))
+                .foregroundStyle(CanopyColor.textMuted)
+                .multilineTextAlignment(.center)
+            Button {
+                onFinish(nil)
+                dismiss()
+            } label: {
+                Text("Close")
+                    .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
+                    .foregroundStyle(CanopyColor.primaryForeground)
+                    .padding(.horizontal, CanopySpacing.x6)
+                    .padding(.vertical, CanopySpacing.x3)
+                    .background(CanopyColor.primary)
+                    .clipShape(Capsule())
+            }
+            .padding(.top, CanopySpacing.x2)
+        }
+        .padding(CanopySpacing.x6)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, CanopySpacing.x4)
+    }
+
+    private func finish() {
+        let note = model.finish()
+        onFinish(note)
+        dismiss()
     }
 }
 
-/// A simple animated waveform row: vertical bars that breathe using the primary color.
+/// An audio-reactive waveform row: vertical bars whose height rides the live mic `level`,
+/// with a per-bar shape so the row still reads as a waveform when the level is steady.
 private struct Waveform: View {
-    @State private var animate = false
+    /// Current mic level, 0...1. Zero when paused or idle.
+    let level: CGFloat
     private let bars = 28
 
     var body: some View {
@@ -140,50 +223,54 @@ private struct Waveform: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .animation(
-                .easeInOut(duration: 0.6).repeatForever(autoreverses: true),
-                value: animate
-            )
+            .animation(.easeOut(duration: 0.12), value: level)
         }
-        .onAppear { animate = true }
     }
 
-    // A stable pseudo-wave so bars vary in height; scaled when animating.
     private func barHeight(index: Int, maxHeight: CGFloat) -> CGFloat {
-        let base = (sin(Double(index) * 0.7) + 1) / 2 // 0...1
-        let factor = animate ? (0.35 + base * 0.65) : (0.2 + base * 0.3)
-        return max(4, maxHeight * CGFloat(factor))
+        // A stable pseudo-wave shape (0...1) scaled by the live level.
+        let shape = (sin(Double(index) * 0.7) + 1) / 2
+        let floor = 0.12
+        let factor = floor + (shape * 0.35 + 0.65) * Double(level) * (1 - floor)
+        return max(4, maxHeight * CGFloat(min(1, factor)))
     }
 }
 
-/// The bottom dock: Pause | big circular Mira record button | New.
+/// The bottom dock: Pause/Resume | big circular Stop button | (label). Stop saves and closes.
 private struct Dock: View {
-    let onNew: () -> Void
+    let isPaused: Bool
+    let onPause: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         HStack {
-            dockButton(title: "Pause", system: "pause.fill") {}
+            dockButton(
+                title: isPaused ? "Resume" : "Pause",
+                system: isPaused ? "play.fill" : "pause.fill",
+                action: onPause
+            )
             Spacer()
-            recordButton
+            stopButton
             Spacer()
-            dockButton(title: "New", system: "plus", action: onNew)
+            // Balance the leading control so the stop button stays centered.
+            dockButton(title: "", system: "", action: {}).opacity(0).disabled(true)
         }
         .padding(.horizontal, CanopySpacing.x8)
     }
 
-    private var recordButton: some View {
-        Button {} label: {
+    private var stopButton: some View {
+        Button(action: onStop) {
             ZStack {
                 Circle()
                     .fill(CanopyColor.primary)
                     .frame(width: 76, height: 76)
                     .shadow(color: CanopyColor.overlay.opacity(0.3), radius: 14, y: 6)
-                Image(systemName: "waveform")
+                Image(systemName: "stop.fill")
                     .font(.system(size: CanopyFont.sizeX2xl, weight: .semibold))
                     .foregroundStyle(CanopyColor.primaryForeground)
             }
         }
-        .accessibilityLabel("Mira record")
+        .accessibilityLabel("Stop and save")
     }
 
     private func dockButton(
@@ -193,7 +280,7 @@ private struct Dock: View {
     ) -> some View {
         Button(action: action) {
             VStack(spacing: CanopySpacing.x1) {
-                Image(systemName: system)
+                Image(systemName: system.isEmpty ? "circle" : system)
                     .font(.system(size: CanopyFont.sizeXl))
                 Text(title)
                     .font(.system(size: CanopyFont.sizeXs))
@@ -205,5 +292,8 @@ private struct Dock: View {
 }
 
 #Preview {
-    DictationView()
+    DictationView(previewInjection:
+        "Remember to call the supplier about the Shea butter order before noon. "
+            + "Then draft the launch email and keep it to three short paragraphs."
+    )
 }
