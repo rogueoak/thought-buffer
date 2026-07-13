@@ -24,18 +24,6 @@
 	<string>Thought Stream uses the microphone to hear you and turn your words into notes. Audio stays on your device.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Thought Stream turns your speech into notes on device. Nothing you say leaves your phone.</string>
-	<key>NSUbiquitousContainers</key>
-	<dict>
-		<key>iCloud.com.rogueoak.thoughtstream</key>
-		<dict>
-			<key>NSUbiquitousContainerIsDocumentScopePublic</key>
-			<true/>
-			<key>NSUbiquitousContainerName</key>
-			<string>Thought Stream</string>
-			<key>NSUbiquitousContainerSupportedFolderLevels</key>
-			<string>One</string>
-		</dict>
-	</dict>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

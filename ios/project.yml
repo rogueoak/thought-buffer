@@ -22,19 +22,12 @@ targets:
     platform: iOS
     sources:
       - path: ThoughtStream
-    # iCloud Documents capability. The entitlement names the ubiquity container; on a device with
-    # a development team set, the capability auto-provisions it. For the Simulator, code signing is
-    # disabled below, so the embedded entitlement is not validated and the unsigned build stays
-    # green with no team.
-    entitlements:
-      path: ThoughtStream/ThoughtStream.entitlements
-      properties:
-        com.apple.developer.icloud-container-identifiers:
-          - iCloud.com.rogueoak.thoughtstream
-        com.apple.developer.icloud-services:
-          - CloudDocuments
-        com.apple.developer.ubiquity-container-identifiers:
-          - iCloud.com.rogueoak.thoughtstream
+    # iCloud Documents capability is currently DISABLED so the app provisions on a free/personal
+    # Apple Developer team (personal teams cannot use the iCloud capability). The storage layer
+    # falls back to local storage automatically when no iCloud container resolves, so the app is
+    # fully functional without it - notes are stored on device. To re-enable iCloud sync on a PAID
+    # Apple Developer account, restore the `entitlements:` block and the `NSUbiquitousContainers`
+    # Info.plist entry below - the exact blocks are in docs/icloud-capability.md.
     # An explicit Info.plist (not the generated one) because NSUbiquitousContainers is a nested
     # dictionary that the flat INFOPLIST_KEY_* build settings cannot express. XcodeGen writes this
     # plist from the properties below and sets GENERATE_INFOPLIST_FILE=NO for this target.
@@ -65,12 +58,9 @@ targets:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: "Thought Stream uses the microphone to hear you and turn your words into notes. Audio stays on your device."
         NSSpeechRecognitionUsageDescription: "Thought Stream turns your speech into notes on device. Nothing you say leaves your phone."
-        # Make the container's Documents folder user-visible in the Files app as "Thought Stream".
-        NSUbiquitousContainers:
-          iCloud.com.rogueoak.thoughtstream:
-            NSUbiquitousContainerIsDocumentScopePublic: true
-            NSUbiquitousContainerName: Thought Stream
-            NSUbiquitousContainerSupportedFolderLevels: One
+        # NSUbiquitousContainers (Files-app visibility for the iCloud folder) is omitted while the
+        # iCloud capability is disabled for personal-team builds. Restore it when re-enabling iCloud
+        # on a paid account - see docs/icloud-capability.md.
     # Device builds sign with your team from ios/Signing.local.xcconfig (git-ignored; see
     # ios/Signing.xcconfig for how to set it). Signing is disabled for the SIMULATOR SDK only,
     # so unsigned Simulator builds and tests stay green with no Apple Developer team.
