@@ -10,6 +10,7 @@ final class DictationViewModel: ObservableObject {
         case idle          // not yet started (requesting permission)
         case recording
         case paused
+        case readingBack   // capture is paused while Mira speaks a paragraph aloud
         case denied(DeniedReason)
         case saved
     }
@@ -89,8 +90,8 @@ final class DictationViewModel: ObservableObject {
             }
         }
 
-        /// The chip label, e.g. "removed last sentence". The control word prefix is added by the
-        /// view so the whole chip reads "Mira - removed last sentence".
+        /// The effect portion of the chip label, e.g. "removed last sentence". `showBanner`
+        /// prepends the control word so the whole chip reads "Mira - removed last sentence".
         var label: String {
             switch self {
             case .removedLastSentence: return "removed last sentence"
@@ -108,13 +109,28 @@ final class DictationViewModel: ObservableObject {
     @Published private(set) var partial: String = ""
     /// Smoothed microphone level, 0...1, for the waveform.
     @Published private(set) var level: Float = 0
-    /// The most recent command chip, or nil. Set when a command fires, cleared after a moment.
-    @Published private(set) var commandBanner: CommandBanner?
+    /// The most recent command chip label, or nil. Set when a command has an actual effect,
+    /// cleared after a moment. Assembled here (where the active control word is known) so the view
+    /// renders a plain string and stays correct when Settings makes the control word configurable.
+    @Published private(set) var commandBanner: String?
+    /// Set when a voice command (currently "Mira new note") fails to save, so the view surfaces an
+    /// error rather than the success chip. The current content is preserved on screen.
+    @Published private(set) var commandError: CommandError?
+
+    /// A voice command that could not complete, surfaced to the view instead of a success chip.
+    enum CommandError: Equatable {
+        /// "Mira new note" could not save the current note; its content is preserved on screen.
+        case newNoteSaveFailed
+    }
 
     private let service: SpeechCaptureService
     private let store: NoteStoring
     private let processor: TextProcessor
     private let speaker: Speaker
+    /// The active control word, used to assemble the command chip label (e.g. "Mira - new note").
+    /// Injected so it stays in sync with the processor's control word once Settings makes it
+    /// configurable, keeping the chip prefix out of the view.
+    private let controlWord: String
     private var createdAt = Date()
     private var noteID = UUID()
 
@@ -122,15 +138,20 @@ final class DictationViewModel: ObservableObject {
     private let bannerDuration: Duration = .seconds(2)
     private var bannerTask: Task<Void, Never>?
 
-    /// True while Mira reads a paragraph aloud and capture is paused for it, so `didFinish`
-    /// resumes capture only when read-back was the thing that paused it.
+    /// True while Mira reads a paragraph aloud and capture is paused for it, so `readBackDidFinish`
+    /// restores capture only when read-back was the thing that paused it (never keyed off `phase`,
+    /// which the user can change by tapping Pause mid-playback).
     private var isReadingBack = false
+    /// Whether capture was recording when read-back began, so it resumes to the right state (back
+    /// to recording, or staying paused if the user tapped Pause during playback).
+    private var wasRecordingBeforeReadBack = false
 
     init(
         service: SpeechCaptureService? = nil,
         store: NoteStoring,
         processor: TextProcessor = PassthroughTextProcessor(),
-        speaker: Speaker? = nil
+        speaker: Speaker? = nil,
+        controlWord: String = MiraTextProcessor.defaultControlWord
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
         // service's main-actor-isolated initializer is not called from a nonisolated default.
@@ -138,6 +159,7 @@ final class DictationViewModel: ObservableObject {
         self.store = store
         self.processor = processor
         self.speaker = speaker ?? SystemSpeaker()
+        self.controlWord = controlWord
         self.service.onEvent = { [weak self] event in
             self?.handle(event)
         }
@@ -190,6 +212,12 @@ final class DictationViewModel: ObservableObject {
         case .paused:
             phase = .recording
             service.resume()
+        case .readingBack:
+            // The user tapped Pause while Mira was reading a paragraph aloud. Capture is already
+            // torn down for playback, so just record the intent: when read-back finishes it stays
+            // paused instead of resuming. This keeps the session honest and never stuck.
+            wasRecordingBeforeReadBack = false
+            phase = .paused
         default:
             break
         }
@@ -264,9 +292,10 @@ final class DictationViewModel: ObservableObject {
             commitParagraph(value)
             partial = ""
         case .command(let command):
-            // A command is consumed: it never lands in the note. Clear the partial so the
-            // spoken phrase does not linger under the caret.
-            partial = ""
+            // A command is consumed: the command phrase itself never lands in the note (it arrived
+            // as its own finalized segment). Do NOT blanket-clear the live partial here: it is a
+            // separate in-progress phrase of real user content. Commands that need it (new note,
+            // read that back) fold it in via `foldPartialIntoParagraphs`; the rest leave it intact.
             execute(command)
         case .drop:
             partial = ""
@@ -287,78 +316,123 @@ final class DictationViewModel: ObservableObject {
 
     // MARK: - Command execution
 
-    /// Run a recognized Mira command against the in-progress note and surface a chip.
+    /// Run a recognized Mira command against the in-progress note. Surfaces the success chip only
+    /// when the command had an actual effect (a no-op on an empty note shows nothing), and surfaces
+    /// an error indication instead of the chip when "new note" fails to save.
     private func execute(_ command: MiraCommand) {
         switch command {
         case .removeLastSentence:
-            removeLastSentence()
+            if removeLastSentence() { showBanner(CommandBanner(command)) }
         case .removeLastParagraph:
-            removeLastParagraph()
+            if removeLastParagraph() { showBanner(CommandBanner(command)) }
         case .newNote:
-            startNewNote()
+            switch startNewNote() {
+            case .saved:
+                showBanner(CommandBanner(command))
+            case .emptyReset:
+                // No content to save: a fresh empty note is not a user-visible effect, so no chip.
+                break
+            case .saveFailed:
+                commandError = .newNoteSaveFailed
+            }
         case .readThatBack:
-            readThatBack()
+            if readThatBack() { showBanner(CommandBanner(command)) }
         }
-        showBanner(CommandBanner(command))
     }
 
-    /// Drop the last sentence of the last paragraph; drop the paragraph if it empties.
-    private func removeLastSentence() {
-        guard let last = paragraphs.last else { return }
+    /// Drop the last sentence of the last paragraph; drop the paragraph if it empties. Returns
+    /// true when it removed something (an actual effect), false on an empty note.
+    @discardableResult
+    private func removeLastSentence() -> Bool {
+        guard let last = paragraphs.last else { return false }
         if let remaining = SentenceTokenizer.removingLastSentence(from: last) {
             paragraphs[paragraphs.count - 1] = remaining
         } else {
             paragraphs.removeLast()
         }
+        return true
     }
 
-    /// Drop the last committed paragraph.
-    private func removeLastParagraph() {
-        guard !paragraphs.isEmpty else { return }
+    /// Drop the last committed paragraph. Returns true when it removed one, false on an empty note.
+    @discardableResult
+    private func removeLastParagraph() -> Bool {
+        guard !paragraphs.isEmpty else { return false }
         paragraphs.removeLast()
+        return true
+    }
+
+    /// The outcome of a "new note" command, so `execute` can pick the right feedback.
+    private enum NewNoteOutcome {
+        case saved       // saved the current note and reset to a fresh one
+        case emptyReset  // nothing to save, reset a fresh empty note (no user-visible effect)
+        case saveFailed  // store threw: content is PRESERVED, surface an error
     }
 
     /// Save the current note (if any) and reset to a fresh one, keeping the session running.
-    private func startNewNote() {
+    ///
+    /// On a save FAILURE the current content is PRESERVED (paragraphs/partial/noteID untouched) so
+    /// it is not lost or bled into the next note, and the caller surfaces an error instead of the
+    /// success chip. On SUCCESS the note resets and the caller shows the success chip.
+    private func startNewNote() -> NewNoteOutcome {
         foldPartialIntoParagraphs()
-        if !paragraphs.isEmpty {
+        let hadContent = !paragraphs.isEmpty
+        if hadContent {
             let title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
             let note = Note(id: noteID, title: title, paragraphs: paragraphs, createdAt: createdAt)
-            // A save failure here is non-fatal: keep the session going rather than interrupt
-            // hands-free capture. The note stays on screen if it could not be written.
             do {
                 try store.save(note)
             } catch {
-                return
+                // Preserve content: do NOT reset. Surfacing the failure lets the user retry (or
+                // Stop) without silently double-saving or bleeding this note into the next.
+                return .saveFailed
             }
         }
         paragraphs = []
         partial = ""
         noteID = UUID()
         createdAt = Date()
+        return hadContent ? .saved : .emptyReset
     }
 
     /// Speak the last paragraph aloud, pausing capture so the audio does not feed back in.
-    private func readThatBack() {
+    /// Returns true if there was something to read (an actual effect), false on a no-op empty note.
+    @discardableResult
+    private func readThatBack() -> Bool {
         foldPartialIntoParagraphs()
-        guard let last = paragraphs.last else { return }
-        // Pause capture (tears down engine/task, deactivates the record session) so the mic is
-        // not hearing the synthesizer. `readBackDidFinish` resumes it.
-        if phase == .recording {
+        guard let last = paragraphs.last else { return false }
+        // Capture `wasRecording` up front. This is the source of truth for whether to resume: the
+        // phase is set to `.readingBack` below and the user may tap Pause mid-playback, so
+        // `readBackDidFinish` must NOT key off `phase == .recording` (that caused the stuck state).
+        let wasRecording = (phase == .recording)
+        if wasRecording {
+            // Pause capture (tears down engine/task, deactivates the record session) so the mic is
+            // not hearing the synthesizer. `readBackDidFinish` restores it.
             service.pause()
             level = 0
         }
+        wasRecordingBeforeReadBack = wasRecording
         isReadingBack = true
+        // Reflect the true state in the UI while Mira speaks, so the screen is honest.
+        if wasRecording { phase = .readingBack }
         speaker.speak(last)
+        return true
     }
 
-    /// Restore capture once read-back finishes, if it was recording when read-back began.
+    /// Restore capture once read-back finishes. Guarded by `isReadingBack` (not `phase`), so a
+    /// Pause tapped mid-playback cannot leave capture permanently torn down.
     private func readBackDidFinish() {
         guard isReadingBack else { return }
         isReadingBack = false
-        if phase == .recording {
+        // Only resume if capture was recording when read-back began AND the user did not pause
+        // during playback (`togglePause` clears `wasRecordingBeforeReadBack` in that case).
+        if wasRecordingBeforeReadBack {
+            phase = .recording
             service.resume()
+        } else if phase == .readingBack {
+            // Read-back began while not recording; land back in a paused, non-stuck state.
+            phase = .paused
         }
+        wasRecordingBeforeReadBack = false
     }
 
     /// Fold any live partial into the committed paragraphs (used before save/read-back).
@@ -370,9 +444,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    /// Show the command chip and auto-dismiss it after a moment.
+    /// Show the command chip and auto-dismiss it after a moment. The full label (control word plus
+    /// the effect, e.g. "Mira - new note") is assembled here so the view renders a plain string.
     private func showBanner(_ banner: CommandBanner) {
-        commandBanner = banner
+        commandError = nil
+        commandBanner = "\(controlWord) - \(banner.label)"
         bannerTask?.cancel()
         bannerTask = Task { [weak self, bannerDuration] in
             try? await Task.sleep(for: bannerDuration)

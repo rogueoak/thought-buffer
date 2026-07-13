@@ -97,6 +97,22 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertNotEqual(store.saved[0].id, store.saved[1].id)
     }
 
+    func testNewNoteFoldsLivePartialIntoSavedNote() {
+        let model = makeModel()
+        model.injectFinalized("First finalized paragraph.")
+        // A partial phrase is live (never finalized) when "Mira new note" fires; it must fold into
+        // the saved note rather than being dropped.
+        model.simulatePartial("A trailing partial thought")
+        model.injectFinalized("Mira new note")
+
+        XCTAssertEqual(store.saved.count, 1)
+        XCTAssertEqual(store.saved.first?.paragraphs, [
+            "First finalized paragraph.",
+            "A trailing partial thought"
+        ])
+        XCTAssertEqual(model.paragraphs, [])
+    }
+
     func testNewNoteWithEmptyNoteSavesNothing() {
         let model = makeModel()
         model.injectFinalized("Mira new note")
@@ -137,13 +153,125 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertTrue(speaker.spoken.isEmpty)
     }
 
-    // MARK: - Banner
+    /// Regression for the stuck-state race: a Pause tapped WHILE Mira is reading back must leave
+    /// the session in a consistent, non-stuck state, and capture must not be permanently torn down.
+    func testPauseDuringReadBackEndsPausedThenResumesCleanly() async {
+        let speaker = StubSpeaker()
+        let service = StubCaptureService()
+        let model = makeModel(service: service, speaker: speaker)
 
-    func testCommandFiresBanner() {
+        await model.begin()
+        model.injectFinalized("The paragraph to read back.")
+        model.injectFinalized("Mira read that back")
+
+        // Read-back paused capture; the UI reflects the read-back state, not a stuck "recording".
+        XCTAssertEqual(service.pauseCount, 1)
+        XCTAssertEqual(model.phase, .readingBack)
+
+        // The user taps Pause mid-playback. The session becomes paused; capture is not re-torn-down.
+        model.togglePause()
+        XCTAssertEqual(model.phase, .paused)
+        XCTAssertEqual(service.pauseCount, 1)
+
+        // When the utterance finishes it must NOT resume (the user paused) and must stay paused --
+        // no permanent stuck state, no double resume.
+        speaker.finish()
+        XCTAssertEqual(model.phase, .paused)
+        XCTAssertEqual(service.resumeCount, 0)
+
+        // And the session is still live: a normal resume works afterward.
+        model.togglePause()
+        XCTAssertEqual(model.phase, .recording)
+        XCTAssertEqual(service.resumeCount, 1)
+    }
+
+    // MARK: - Banner: fires for every command that has an effect, not just remove-last-paragraph
+
+    func testRemoveLastSentenceFiresBanner() {
+        let model = makeModel()
+        model.injectFinalized("Call the supplier. Draft the email.")
+        model.injectFinalized("Mira remove the last sentence")
+        XCTAssertEqual(model.commandBanner, "Mira - removed last sentence")
+    }
+
+    func testRemoveLastParagraphFiresBanner() {
         let model = makeModel()
         model.injectFinalized("First.")
         model.injectFinalized("Mira remove the last paragraph")
-        XCTAssertEqual(model.commandBanner, .removedLastParagraph)
+        XCTAssertEqual(model.commandBanner, "Mira - removed last paragraph")
+    }
+
+    func testNewNoteFiresBanner() {
+        let model = makeModel()
+        model.injectFinalized("A note worth keeping.")
+        model.injectFinalized("Mira new note")
+        XCTAssertEqual(model.commandBanner, "Mira - new note")
+    }
+
+    func testReadThatBackFiresBanner() {
+        let model = makeModel()
+        model.injectFinalized("The paragraph to read back.")
+        model.injectFinalized("Mira read that back")
+        XCTAssertEqual(model.commandBanner, "Mira - read that back")
+    }
+
+    // MARK: - No banner for a no-op command (no actual effect)
+
+    func testNoOpRemoveOnEmptyNoteShowsNoBanner() {
+        let model = makeModel()
+        model.injectFinalized("Mira remove the last paragraph")
+        XCTAssertNil(model.commandBanner)
+        model.injectFinalized("Mira remove the last sentence")
+        XCTAssertNil(model.commandBanner)
+    }
+
+    func testNoOpReadBackOnEmptyNoteShowsNoBanner() {
+        let model = makeModel()
+        model.injectFinalized("Mira read that back")
+        XCTAssertNil(model.commandBanner)
+    }
+
+    func testNewNoteOnEmptyNoteShowsNoBanner() {
+        let model = makeModel()
+        model.injectFinalized("Mira new note")
+        XCTAssertNil(model.commandBanner)
+    }
+
+    // MARK: - New note save failure: preserve content, surface error, no success banner
+
+    func testNewNoteSaveFailurePreservesContentAndSurfacesError() {
+        let failing = ThrowingNoteStore()
+        let model = DictationViewModel(
+            service: StubCaptureService(),
+            store: failing,
+            processor: MiraTextProcessor(),
+            speaker: StubSpeaker()
+        )
+        model.injectFinalized("A note that cannot be saved.")
+        model.injectFinalized("Mira new note")
+
+        // Content is preserved (not bled into a fresh note), the error is surfaced, and NO success
+        // banner is shown.
+        XCTAssertEqual(model.paragraphs, ["A note that cannot be saved."])
+        XCTAssertEqual(model.commandError, .newNoteSaveFailed)
+        XCTAssertNil(model.commandBanner)
+
+        // A follow-up sentence appends to the SAME preserved note, not a bled-together one.
+        model.injectFinalized("Still the same note.")
+        XCTAssertEqual(model.paragraphs, [
+            "A note that cannot be saved.",
+            "Still the same note."
+        ])
+    }
+
+    func testNewNoteSaveSuccessResetsAndClearsError() {
+        let model = makeModel()
+        model.injectFinalized("A note worth keeping.")
+        model.injectFinalized("Mira new note")
+        XCTAssertEqual(store.saved.count, 1)
+        XCTAssertEqual(model.paragraphs, [])
+        XCTAssertNil(model.commandError)
+        XCTAssertEqual(model.commandBanner, "Mira - new note")
     }
 }
 
@@ -163,6 +291,15 @@ private final class RecordingNoteStore: NoteStoring {
     func delete(id: UUID) throws {
         saved.removeAll { $0.id == id }
     }
+}
+
+/// A `NoteStoring` stub whose `save` always throws, to exercise the "new note" save-failure path.
+private final class ThrowingNoteStore: NoteStoring {
+    struct SaveError: Error {}
+
+    func save(_ note: Note) throws -> URL { throw SaveError() }
+    func loadAll() -> [Note] { [] }
+    func delete(id: UUID) throws {}
 }
 
 /// A `Speaker` stub that records what was spoken and lets the test drive the finish callback.

@@ -58,7 +58,10 @@ struct DictationView: View {
                         .frame(height: 44)
                         .padding(.horizontal, CanopySpacing.x4)
 
-                    if let banner = model.commandBanner {
+                    if let error = model.commandError {
+                        commandErrorChip(error)
+                            .transition(.opacity)
+                    } else if let banner = model.commandBanner {
                         commandChip(banner)
                             .transition(.opacity)
                     } else {
@@ -78,6 +81,7 @@ struct DictationView: View {
             .padding(.bottom, CanopySpacing.x6)
         }
         .animation(.easeInOut(duration: 0.2), value: model.commandBanner)
+        .animation(.easeInOut(duration: 0.2), value: model.commandError)
         .onReceive(caretTimer) { _ in caretVisible.toggle() }
         .alert("Could not save your note", isPresented: $showSaveError) {
             Button("OK", role: .cancel) { }
@@ -194,12 +198,13 @@ struct DictationView: View {
         .clipShape(Capsule())
     }
 
-    /// The transient control chip shown when a Mira command fires, in the muted token style,
-    /// reading e.g. "Mira - removed last sentence".
-    private func commandChip(_ banner: DictationViewModel.CommandBanner) -> some View {
+    /// The transient control chip shown when a Mira command fires, in the muted token style. The
+    /// full label (e.g. "Mira - removed last sentence") is assembled in the view model, where the
+    /// active control word is known, so it stays correct once the control word is configurable.
+    private func commandChip(_ label: String) -> some View {
         HStack(spacing: CanopySpacing.x2) {
             Image(systemName: "wand.and.stars")
-            Text("Mira - " + banner.label)
+            Text(label)
                 .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
         }
         .font(.system(size: CanopyFont.sizeSm))
@@ -208,6 +213,29 @@ struct DictationView: View {
         .padding(.vertical, CanopySpacing.x2)
         .background(CanopyColor.muted)
         .clipShape(Capsule())
+    }
+
+    /// The chip shown when a voice command could not complete (e.g. "new note" failed to save), so
+    /// the user sees the failure instead of a false success. Uses the danger accent.
+    private func commandErrorChip(_ error: DictationViewModel.CommandError) -> some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Image(systemName: "exclamationmark.triangle")
+            Text(commandErrorLabel(error))
+                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+        }
+        .font(.system(size: CanopyFont.sizeSm))
+        .foregroundStyle(CanopyColor.danger)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.muted)
+        .clipShape(Capsule())
+    }
+
+    private func commandErrorLabel(_ error: DictationViewModel.CommandError) -> String {
+        switch error {
+        case .newNoteSaveFailed:
+            return "Could not save - note kept"
+        }
     }
 
     private func deniedCard(_ error: DictationViewModel.DeniedReason) -> some View {

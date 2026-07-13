@@ -17,7 +17,7 @@ struct StreamListView: View {
 
     init(
         store: NoteStoring,
-        makeTextProcessor: @escaping () -> TextProcessor = { MiraTextProcessor() }
+        makeTextProcessor: @escaping () -> TextProcessor
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
@@ -138,5 +138,5 @@ private struct RecordButton: View {
 }
 
 #Preview {
-    StreamListView(store: NoteStore())
+    StreamListView(store: NoteStore(), makeTextProcessor: { MiraTextProcessor() })
 }

@@ -73,6 +73,11 @@ final class SystemSpeaker: NSObject, Speaker, AVSpeechSynthesizerDelegate {
     }
 
     private func finish() {
+        // Deactivate the playback session before handing back, so a read-back fired while paused
+        // does not leave other apps ducked. Notify others so they can resume. The view model's
+        // resume path reactivates the record session when capture was recording.
+        let session = AVAudioSession.sharedInstance()
+        try? session.setActive(false, options: [.notifyOthersOnDeactivation])
         onFinish?()
     }
 }

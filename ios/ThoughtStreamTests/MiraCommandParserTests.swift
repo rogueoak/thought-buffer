@@ -67,6 +67,24 @@ final class MiraCommandParserTests: XCTestCase {
         XCTAssertNil(parser.parse("Mira is a lovely name"))
     }
 
+    // MARK: - False positives: control word leads, but the rest is NOT a command (must be text)
+
+    /// These sentences START with the control word yet are ordinary speech. The old loose
+    /// subsequence matcher misfired on them (DATA LOSS). They must parse to nil so the text is
+    /// committed to the note, not silently consumed as a command.
+    func testDoesNotMisfireWhenControlWordLeadsOrdinarySpeech() {
+        // "new" and "note" appear in order but the sentence is not the "new note" command.
+        XCTAssertNil(parser.parse("Mira, there's a new note from Karen"))
+        // "read", "that", "back" appear in order but there is a trailing clause: not "read that back".
+        XCTAssertNil(parser.parse("Mira read that note back to the team"))
+        // Extra words interspersed / trailing must not slip through.
+        XCTAssertNil(parser.parse("Mira remove the last sentence from the report about sales"))
+        XCTAssertNil(parser.parse("Mira new note about the new note taking app"))
+        XCTAssertNil(parser.parse("Mira read the last paragraph back to me twice"))
+        XCTAssertNil(parser.parse("Mira start writing a new memo note"))
+        XCTAssertNil(parser.parse("Mira delete the very last long sentence"))
+    }
+
     // MARK: - Injected control word
 
     func testCustomControlWord() {
