@@ -79,3 +79,17 @@ instead of committing it), change its return type to a small result enum (`.text
 `.drop`) rather than bolting a side channel onto the caller. The caller routes on the case, the
 default implementation keeps its old behavior in one case, and future processors compose without
 touching the view model or capture service.
+
+## An OS-triggered entry point needs a resolution-independent latch (spec 0005)
+
+When an OS-instantiated entry point (an App Intent with `openAppWhenRun`, a scene delegate) reaches
+app state through a process-wide accessor, that accessor must be valid at the EARLIEST moment the
+entry point can fire - which for a hands-free intent is a COLD launch, before async startup
+resolution finishes and before any UI exists. A "buffer for requests made while off-screen" only
+works if the buffer exists independent of the UI/startup that populates it; otherwise the very first
+request (the one that launched the app) is the one it silently drops. So: back the seam with a
+resolution-independent latch that the composition root adopts when it comes up, and never let the
+request path return a nil/no-op starter. Make presentation a pure function of the pending state
+(`PendingSessionRoute.shouldPresent`) so it is unit-testable and has no lost-edge cases (a start requested
+while backgrounded opens on appear; a re-request after a session ends re-opens). Generalizes to any
+future OS-triggered entry point that starts an in-app flow.

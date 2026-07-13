@@ -80,3 +80,28 @@ working offline-first when iCloud is not available.
 Real cross-device sync needs a physical device with an Apple Developer team and an iCloud account
 (the capability auto-provisions the container). A Settings toggle/status UI and automatic import
 of pre-existing local notes into iCloud are still out.
+
+## CarPlay and Siri hands-free start (spec 0005)
+
+Start a dictation session without touching the phone - the reason the product exists for people
+whose hands are busy driving.
+
+- **Siri (shippable).** "Hey Siri, start a stream in Thought Stream" (and friendly variants -
+  "start dictating", "new thought", "new note in Thought Stream") launches the app straight into a
+  fresh dictation session with capture starting. Siri works through the phone and through CarPlay's
+  Siri button, so this is the real hands-free-in-car path today. Backed by `StartThoughtStreamIntent`
+  / `NewNoteIntent` (`AppIntent`, `openAppWhenRun`) and an `AppShortcutsProvider` that registers the
+  phrases on install.
+- **One shared session start.** The Record button, the Siri intent, and CarPlay all request a start
+  through one seam (`SessionStarter` / `PendingSessionRoute` on the composition root), so every entry
+  point opens the same fresh `DictationView` and begins capture identically.
+- **CarPlay (scaffolded, gated).** A `CPTemplateApplicationSceneDelegate` presents a list template
+  with a "Start a thought stream" row that calls the same starter. It is wired via the CarPlay scene
+  role in the scene manifest but is DORMANT: Apple grants the CarPlay entitlement only for specific
+  app categories (audio, navigation, communication, EV, parking, ...), and a dictation / notes app is
+  not one of them, so no CarPlay entitlement is declared. Without it the system never creates the
+  scene, so the default unsigned build and the App Store build are unaffected. Activating CarPlay
+  needs Apple's entitlement plus a CarPlay head unit or the CarPlay simulator - pending approval.
+
+Parameterized intents ("start a stream about X"), a fully in-CarPlay live-capture UI, and Shortcuts
+actions beyond start / new note are still out.
