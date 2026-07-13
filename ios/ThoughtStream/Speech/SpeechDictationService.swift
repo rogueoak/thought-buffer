@@ -307,18 +307,22 @@ final class SpeechDictationService: SpeechCaptureService {
     }
 
     /// True when `current` is a NEW utterance rather than a continuation/revision of `previous` - i.e.
-    /// the on-device recognizer reset its transcription within a task. Continuation means `current`
-    /// reproduces all-but-the-last word of `previous` at its start (the last word may still be revised,
-    /// and `current` may extend it). Pure and nonisolated, so it is unit-testable off the main actor.
+    /// the on-device recognizer reset its transcription within a task.
+    ///
+    /// The recognizer REVISES earlier words as it gains context ("it" -> "it's", "there is" ->
+    /// "there's"), so a word-exact prefix comparison spuriously fires on every revision and re-commits
+    /// growing prefixes of the SAME sentence (the duplicate-paragraph bug). Instead compare how much of
+    /// the PREVIOUS text `current` still reproduces at its start: a continuation keeps most of it (even
+    /// with revisions and extensions), while a genuinely new sentence shares little or none of it. Uses
+    /// the character-level common prefix so small word edits do not count as a reset. Pure and
+    /// nonisolated, so it is unit-testable off the main actor.
     nonisolated static func isReset(previous: String, current: String) -> Bool {
-        let prev = previous.lowercased().split(separator: " ").map(String.init)
-        let curr = current.lowercased().split(separator: " ").map(String.init)
+        let prev = previous.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let curr = current.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !prev.isEmpty else { return false }
-        let stable = Array(prev.dropLast())
-        if stable.isEmpty { return curr.first != prev.first }
-        if curr.count < stable.count { return true }
-        for (a, b) in zip(stable, curr) where a != b { return true }
-        return false
+        let common = zip(prev, curr).prefix { $0.0 == $0.1 }.count
+        // A reset keeps less than ~60% of the previous text at the new text's start.
+        return Double(common) < Double(prev.count) * 0.6
     }
 
     /// A task ENDED (clean final OR error). Commit the best available text as a finalized segment,

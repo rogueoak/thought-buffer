@@ -532,4 +532,23 @@ final class UtteranceResetTests: XCTestCase {
         XCTAssertFalse(SpeechDictationService.isReset(previous: "Hey", current: "Hey there"))
         XCTAssertTrue(SpeechDictationService.isReset(previous: "Hey", current: "Yeah"))
     }
+
+    // Revisions the recognizer makes as it gains context must NOT count as a reset - they caused the
+    // duplicate-paragraph bug (feedback 0007) by re-committing growing prefixes of one sentence.
+    func testFirstWordRevisionIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(
+            previous: "It", current: "It's almost like I wonder in that particular case"))
+    }
+
+    func testMidSentenceRevisionIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(
+            previous: "So you're getting a request the same week that it just",
+            current: "So you're getting a request the same week that it's just like figure it out"))
+    }
+
+    func testContractionRevisionMidTextIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(
+            previous: "the product team is built a thing and there is",
+            current: "the product team is built a thing and there's making a bunch"))
+    }
 }
