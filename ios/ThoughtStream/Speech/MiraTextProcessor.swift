@@ -22,9 +22,15 @@ struct MiraTextProcessor: TextProcessor {
     }
 
     func process(_ text: String) -> ProcessedSegment {
-        if let command = parser.parse(text) {
+        switch parser.parse(text) {
+        case .command(let command):
             return .command(command)
+        case .unrecognizedCommand:
+            // Led with the control word but not a known command: command mode, so do NOT transcribe
+            // - surface it as an unrecognized command (the view model shows a brief chip).
+            return .unrecognizedCommand
+        case .text:
+            return .text(text)
         }
-        return .text(text)
     }
 }

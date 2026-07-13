@@ -19,6 +19,10 @@ final class NoteStoreDriver {
     private(set) var notes: [Note] = []
     /// True once an initial load has finished, so a consumer can tell "empty" from "not loaded yet".
     private(set) var didLoad = false
+    /// Set when a delete failed (the coordinated removal threw), so a projection can surface a
+    /// brief, non-blocking message. Cleared on the next successful delete or when the consumer
+    /// dismisses it. The note stays visible (the reload re-reflects the true on-disk state).
+    private(set) var deleteFailed = false
 
     /// Called after any state change (a completed reload) so a projection can republish. Set by the
     /// owner; fires on the main actor.
@@ -52,6 +56,33 @@ final class NoteStoreDriver {
         started = false
         observer?.onChange = nil
         observer?.stop()
+    }
+
+    /// Delete a note through the store (which also removes its sibling audio recording), then reload
+    /// the feed so the list reflects the removal. The delete runs on a detached task like the load,
+    /// because the iCloud store coordinates the file removal. A failed delete is SURFACED (not
+    /// swallowed): `deleteFailed` is set so the projection can show a brief, non-blocking message,
+    /// and the reload re-reflects the true on-disk state (the note stays visible).
+    func delete(id: UUID) async {
+        let result: Result<Void, Error> = await Task.detached(priority: .userInitiated) { [store] in
+            do {
+                try store.delete(id: id)
+                return .success(())
+            } catch {
+                return .failure(error)
+            }
+        }.value
+        if case .failure = result {
+            deleteFailed = true
+        } else {
+            deleteFailed = false
+        }
+        await reload()
+    }
+
+    /// Clear a surfaced delete-failure message once the consumer has shown it.
+    func clearDeleteFailure() {
+        deleteFailed = false
     }
 
     /// Reload the list. `loadAll()` runs on a detached task (it can block on iCloud coordination);

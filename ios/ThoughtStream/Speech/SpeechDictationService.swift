@@ -8,8 +8,10 @@ import Speech
 /// Continuous feed: `SFSpeechRecognitionTask` ends on its own (final result, timeout, or error)
 /// even while the user keeps talking. When that happens while the engine is still running, the
 /// service tears the task down and starts a fresh one against the same live audio, so dictation
-/// stays continuous. Each finalized segment is emitted as `.finalizedSegment` before the seam,
-/// so no committed text is lost. This restart is invisible to the caller.
+/// stays continuous. Whatever text the ending task holds - a clean `isFinal` result OR the last
+/// partial when it ends on a no-speech/pause error - is emitted as `.finalizedSegment` BEFORE the
+/// seam, so the words captured right before a natural pause are committed as a paragraph and never
+/// lost to the fresh task's replacing partials. This restart is invisible to the caller.
 ///
 /// Threading: the service's mutable state (`isCapturing`, `task`, `request`) is isolated to the
 /// main actor. The audio-tap closure runs on the audio thread but only calls the thread-safe
@@ -256,8 +258,17 @@ final class SpeechDictationService: SpeechCaptureService {
             let ended = isFinal || error != nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if let text {
-                    if isFinal {
+                if let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    // COMMIT-ON-END invariant (fixes the "pause clears the transcript" bug): the
+                    // recognition task ends not only on a clean `isFinal` result but also on an
+                    // ERROR - a natural pause / no-speech timeout / duration limit. In the error
+                    // case the last result is a PARTIAL, and the task is about to be replaced by a
+                    // fresh one whose new partials would OVERWRITE this text before it was ever
+                    // committed - the words spoken right before the pause would vanish. So a task
+                    // that is ENDING with any transcription text commits it as a finalized segment
+                    // (a paragraph), not a partial. Only a still-running task's mid-phrase update
+                    // stays a partial.
+                    if ended {
                         // Anchor the request-relative range to the recording. Nil when nothing was
                         // recorded or the recognizer reported no timings (a text-only note path).
                         let range = self.absoluteRange(from: relativeRange)
@@ -366,10 +377,24 @@ final class SpeechDictationService: SpeechCaptureService {
             sum += sample * sample
         }
         let rms = sqrt(sum / Float(frames))
-        guard rms.isFinite else { return 0 }
+        // The finite/non-negative guard lives in `normalizedLevel(fromRMS:)` (single source of
+        // truth), so a NaN/inf RMS maps to 0 there without a duplicate guard here.
+        return normalizedLevel(fromRMS: rms)
+    }
 
-        // Map RMS to 0...1 with a gentle curve so quiet speech still moves the bars.
-        let normalized = min(1, max(0, rms * 12))
-        return normalized
+    /// Map a raw RMS amplitude (0...1 float PCM) to a 0...1 waveform level. Split out from
+    /// `rmsLevel` so the mapping is unit-testable without an audio buffer.
+    ///
+    /// Feedback 0005: the old `rms * 12` left the bars pinned at the floor for normal speaking - a
+    /// float-PCM RMS for conversational speech is roughly 0.02...0.08, so `* 12` capped at ~0.24...1
+    /// but hovered near the low end, and the view model's smoothing pulled it down further. A square
+    /// root (perceptual) curve with a higher gain lifts normal speech well clear of the floor while
+    /// still saturating loud input, so the bars visibly ride the voice.
+    nonisolated static func normalizedLevel(fromRMS rms: Float) -> Float {
+        guard rms.isFinite, rms > 0 else { return 0 }
+        // sqrt gives a perceptual response (quiet speech is not crushed); the gain sets where normal
+        // speaking lands. Tuned so ordinary speech (~0.03...0.06 RMS) maps to ~0.4...0.7.
+        let shaped = sqrt(rms) * 2.6
+        return min(1, max(0, shaped))
     }
 }

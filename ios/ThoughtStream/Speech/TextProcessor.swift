@@ -11,7 +11,13 @@ enum ProcessedSegment: Equatable {
     case text(String)
     /// The segment was a control-word command: suppress it from the note and execute it.
     case command(MiraCommand)
-    /// Discard the segment entirely. Reserved; not emitted by the shipped processors.
+    /// The segment LED with the control word but matched no known command (feedback 0005). It is
+    /// still command mode - so it is NOT transcribed - but there is nothing to run: the view model
+    /// drops it and shows a brief "didn't catch that" chip so the user knows it was treated as a
+    /// command rather than silently lost.
+    case unrecognizedCommand
+    /// Discard the segment entirely with no user feedback. Reserved; not emitted by the shipped
+    /// processors.
     case drop
 }
 
