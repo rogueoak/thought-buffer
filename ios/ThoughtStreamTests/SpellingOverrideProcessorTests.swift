@@ -71,6 +71,22 @@ final class SpellingOverrideProcessorTests: XCTestCase {
         XCTAssertEqual(processed("nothing changes here", overrides), "nothing changes here")
     }
 
+    func testBlankToIsIgnoredAndDoesNotDelete() {
+        // A half-typed override (blank `to`) must NOT delete the spoken word - a blank replacement
+        // would be a silent deletion, the opposite of a spelling fix. The row is inert until both
+        // sides are filled. The Settings "Add override" flow persists exactly this empty state.
+        XCTAssertEqual(processed("call Shay today", [SpellingOverride(from: "Shay", to: "")]), "call Shay today")
+        XCTAssertEqual(processed("call Shay today", [SpellingOverride(from: "Shay", to: "  ")]), "call Shay today")
+    }
+
+    func testMultiWordFromNeverMatches() {
+        // The tokenizer is whole-word (`\w+`), so a `from` containing a space (or other non-word
+        // character) can never match a single token: it is inert rather than partially replacing.
+        // This pins the known limit - multi-word overrides are out of scope for this milestone.
+        let overrides = [SpellingOverride(from: "new york", to: "NYC")]
+        XCTAssertEqual(processed("moved to new york city", overrides), "moved to new york city")
+    }
+
     func testFirstOverrideWinsOnDuplicateFrom() {
         let overrides = [
             SpellingOverride(from: "sea", to: "see"),

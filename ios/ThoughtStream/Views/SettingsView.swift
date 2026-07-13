@@ -77,10 +77,11 @@ struct SettingsView: View {
         }
     }
 
-    /// What the control phrase actually resolves to (empty falls back to the default), so the hint
-    /// stays honest while the field is blank.
+    /// What the control phrase actually resolves to (blank or multi-word collapses via the shared
+    /// `ControlPhrase` seam), so the hint stays honest while the field is edited - without the view
+    /// depending on any concrete store.
     private var effectiveControlPhrase: String {
-        UserDefaultsSettingsStore.validatedControlPhrase(controlPhrase)
+        ControlPhrase.validated(controlPhrase)
     }
 
     // MARK: - Spelling overrides

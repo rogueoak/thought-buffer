@@ -11,7 +11,10 @@ import Foundation
 /// never spelling-mangled.
 struct SpellingOverrideProcessor: TextProcessor {
     /// Lowercased `from` -> replacement `to`. First override in the ordered list wins on a
-    /// duplicate `from`. Blank `from` values are dropped so a half-typed row does nothing.
+    /// duplicate `from`. A row is active only when BOTH sides are non-blank, so a half-typed row
+    /// does nothing. Requiring a non-blank `to` matters: a blank `to` would silently DELETE every
+    /// occurrence of the spoken word (the opposite of a spelling fix), and the Settings "Add
+    /// override" flow persists exactly such an empty row.
     private let map: [String: String]
 
     /// Matches a run of word characters. Only complete matches are considered for replacement, so
@@ -22,8 +25,9 @@ struct SpellingOverrideProcessor: TextProcessor {
         var map: [String: String] = [:]
         for override in overrides {
             let key = override.from.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !key.isEmpty, map[key] == nil else { continue }
-            map[key] = override.to
+            let value = override.to.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty, map[key] == nil else { continue }
+            map[key] = value
         }
         self.map = map
     }

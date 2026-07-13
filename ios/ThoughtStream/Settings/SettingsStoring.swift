@@ -8,9 +8,10 @@ import Foundation
 /// sync or per-note settings (see spec 0006). Changes apply to the NEXT dictation session, since
 /// the processor is built per session from these values.
 protocol SettingsStoring: AnyObject {
-    /// The word that must lead a voice command (default "Mira"). Reads back validated: an empty,
-    /// whitespace-only, or over-long value falls back to `MiraTextProcessor.defaultControlWord`.
-    /// The setter may store any string; validation happens on read so "clear the field" resets.
+    /// The word that must lead a voice command (default "Mira"). Reads back validated through the
+    /// shared `ControlPhrase` seam: trimmed, collapsed to its first alphanumeric token (the parser
+    /// matches a single token), and falling back to "Mira" when empty or over-long. The setter may
+    /// store any string; validation happens on read so "clear the field" resets.
     var controlPhrase: String { get set }
 
     /// The ordered list of spelling fixes applied to dictated text before commit.
@@ -26,10 +27,11 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         static let spellingOverrides = "settings.spellingOverrides"
     }
 
-    /// A sensible upper bound on the control phrase. A name longer than this is almost certainly a
-    /// mistake (or a whole sentence pasted in), so it falls back to the default rather than making
-    /// every command start with a paragraph.
-    static let maxControlPhraseLength = 32
+    /// Bounds on the persisted overrides so a stuck field or a paste cannot grow `UserDefaults`
+    /// without limit or make the per-segment rescan expensive. Rows past the cap and characters
+    /// past the field length are dropped on write.
+    static let maxOverrideCount = 200
+    static let maxOverrideFieldLength = 128
 
     private let defaults: UserDefaults
 
@@ -38,10 +40,10 @@ final class UserDefaultsSettingsStore: SettingsStoring {
     }
 
     var controlPhrase: String {
-        get {
-            let raw = defaults.string(forKey: Key.controlPhrase) ?? ""
-            return Self.validatedControlPhrase(raw)
-        }
+        // Validation is a shared seam (`ControlPhrase`) so the store and the Settings UI agree, and
+        // so a multi-word or punctuated phrase reduces to the single token the parser matches. The
+        // setter stores raw (so "clear the field" resets); the getter validates.
+        get { ControlPhrase.validated(defaults.string(forKey: Key.controlPhrase) ?? "") }
         set { defaults.set(newValue, forKey: Key.controlPhrase) }
     }
 
@@ -53,18 +55,21 @@ final class UserDefaultsSettingsStore: SettingsStoring {
             return decoded
         }
         set {
-            let data = try? JSONEncoder().encode(newValue)
+            let bounded = Self.bounded(newValue)
+            let data = try? JSONEncoder().encode(bounded)
             defaults.set(data, forKey: Key.spellingOverrides)
         }
     }
 
-    /// Trim, then fall back to the default control word if the result is empty or too long. Pure so
-    /// tests can exercise validation directly.
-    static func validatedControlPhrase(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= maxControlPhraseLength else {
-            return MiraTextProcessor.defaultControlWord
+    /// Cap the row count and per-field length so persistence and the per-segment rescan stay
+    /// bounded regardless of input. Preserves order and identity.
+    static func bounded(_ overrides: [SpellingOverride]) -> [SpellingOverride] {
+        overrides.prefix(maxOverrideCount).map { override in
+            SpellingOverride(
+                id: override.id,
+                from: String(override.from.prefix(maxOverrideFieldLength)),
+                to: String(override.to.prefix(maxOverrideFieldLength))
+            )
         }
-        return trimmed
     }
 }
