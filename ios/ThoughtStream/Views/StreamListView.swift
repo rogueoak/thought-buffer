@@ -29,6 +29,10 @@ struct StreamListView: View {
     /// Navigation stack path. Pushing a `Note` opens its detail page; used to land the user on the
     /// note they just recorded when a session ends (feedback 0007).
     @State private var path: [Note] = []
+    /// Set when the user taps Resume on a note (feedback 0008): presents a dictation session seeded
+    /// with that note so capture continues where it left off. Separate from the new-session route so
+    /// the hands-free start path stays a fresh-session-only concern.
+    @State private var resumeNote: Note?
 
     /// Presentation of the dictation screen is a pure function of the pending route: it is shown
     /// exactly while a start is pending (`PendingSessionRoute.shouldPresent`). Setting it false - the
@@ -140,7 +144,17 @@ struct StreamListView: View {
                 NoteDetailView(
                     note: note,
                     resolver: StoreAudioURLResolver(store: store),
-                    controller: playbackController
+                    controller: playbackController,
+                    onResume: { current in resumeNote = current },
+                    onCommitEdit: { edited in
+                        // Persist the keyboard edit and refresh the feed so the list reflects it. A
+                        // failed write leaves the on-screen text as edited; the next reload re-reflects
+                        // disk (feedback 0008 keeps editing best-effort, mirroring delete's handling).
+                        Task {
+                            _ = try? store.save(edited)
+                            await feed.reload()
+                        }
+                    }
                 )
             }
             .toolbar {
@@ -178,6 +192,25 @@ struct StreamListView: View {
                         Task { await feed.reload() }
                         path = [savedNote]
                     }
+                }
+            }
+            .fullScreenCover(item: $resumeNote) { note in
+                DictationView(
+                    model: DictationViewModel(
+                        store: store,
+                        processor: makeTextProcessor(),
+                        // A resumed session preserves the note's original recording and does not
+                        // record new audio, so appended text is text-only on playback (feedback 0008).
+                        recordsAudio: false,
+                        resuming: note
+                    )
+                ) { savedNote in
+                    // The continued note saved (same id): refresh and land on its updated page.
+                    if let savedNote {
+                        Task { await feed.reload() }
+                        path = [savedNote]
+                    }
+                    resumeNote = nil
                 }
             }
             .sheet(isPresented: $showSettings) {

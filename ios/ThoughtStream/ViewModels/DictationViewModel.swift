@@ -137,6 +137,11 @@ final class DictationViewModel: ObservableObject {
     private var createdAt = Date()
     private var noteID = UUID()
 
+    /// The recording filename carried over when RESUMING an existing note (feedback 0008): a resumed
+    /// session does not record new audio, so the note keeps its original recording. Nil for a fresh
+    /// session, where any recording comes from the live capture instead.
+    private var existingAudioFileName: String?
+
     /// One timing per committed paragraph, in lockstep with `paragraphs` (spec 0007). A finalized
     /// segment appends its range here as its text is committed; a paragraph committed without a range
     /// (a command-folded partial, or recording off) appends a nil placeholder so the arrays stay
@@ -161,7 +166,8 @@ final class DictationViewModel: ObservableObject {
         processor: TextProcessor = PassthroughTextProcessor(),
         speaker: Speaker? = nil,
         recordsAudio: Bool = false,
-        controlWord: String = MiraTextProcessor.defaultControlWord
+        controlWord: String = MiraTextProcessor.defaultControlWord,
+        resuming: Note? = nil
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
         // service's main-actor-isolated initializer is not called from a nonisolated default.
@@ -171,6 +177,18 @@ final class DictationViewModel: ObservableObject {
         self.speaker = speaker ?? SystemSpeaker()
         self.recordsAudio = recordsAudio
         self.controlWord = controlWord
+        // Resuming an existing note (feedback 0008): keep its id, creation time, and text so the
+        // session continues that note (saving overwrites the same file) rather than starting a new
+        // one. New spoken content is appended as text; the original recording and its per-paragraph
+        // timings are preserved for the existing paragraphs (a resumed session records no new audio,
+        // so the caller passes recordsAudio: false), and anything appended is text-only on playback.
+        if let resuming {
+            noteID = resuming.id
+            createdAt = resuming.createdAt
+            paragraphs = resuming.paragraphs
+            paragraphTimings = Self.seedTimings(for: resuming)
+            existingAudioFileName = resuming.audioFileName
+        }
         // Tell the capture service whether to tee audio to a file for this session, before it starts.
         self.service.setRecordingEnabled(recordsAudio)
         self.service.onEvent = { [weak self] event in
@@ -179,6 +197,13 @@ final class DictationViewModel: ObservableObject {
         self.speaker.onFinish = { [weak self] in
             self?.readBackDidFinish()
         }
+    }
+
+    /// The per-paragraph timing slots to seed when resuming a note, aligned 1:1 with its paragraphs:
+    /// each paragraph keeps its recorded range (or nil when the note had no timing for it), so the
+    /// preserved recording still maps to the original paragraphs after resume.
+    private static func seedTimings(for note: Note) -> [ParagraphTiming?] {
+        note.paragraphs.indices.map { note.timing(forParagraphAt: $0) }
     }
 
     /// The full transcript so far, including the live partial, for display.
@@ -287,6 +312,12 @@ final class DictationViewModel: ObservableObject {
            let attached = try? attachRecording(recordingURL) {
             audioFileName = attached.fileName
             timings = attached.timings
+        } else if let existingAudioFileName {
+            // Resumed note (feedback 0008): keep the original recording and its per-paragraph timings.
+            // Appended paragraphs have no recorded range, so `resolvedTimings` pads them and they play
+            // back via text-to-speech; the original paragraphs still map to the preserved audio.
+            audioFileName = existingAudioFileName
+            timings = resolvedTimings()
         }
 
         let note = Note(
@@ -330,6 +361,26 @@ final class DictationViewModel: ObservableObject {
     /// orphan recording on disk. Safe to call when there is nothing to discard.
     private func discardPendingRecording() {
         service.discardRecording()
+    }
+
+    /// Replace the captured transcript with hand-edited text (feedback 0008 keyboard editing), used
+    /// when the user edits the paused transcript on the record screen. The text is re-split into
+    /// paragraphs and the live partial is cleared (its content is now part of the edited text).
+    /// Hand-edited text no longer lines up with the recorded ranges, so any timing slots past the new
+    /// paragraph count are dropped; remaining paragraphs whose text changed simply fall back to
+    /// text-to-speech on playback (the note model tolerates a timing that does not match its text).
+    func applyEditedTranscript(_ text: String) {
+        paragraphs = Note.splitParagraphs(text)
+        partial = ""
+        if paragraphTimings.count > paragraphs.count {
+            paragraphTimings = Array(paragraphTimings.prefix(paragraphs.count))
+        }
+    }
+
+    /// The editable transcript text for the record screen: committed paragraphs plus the live
+    /// partial, joined by blank lines so editing preserves paragraph breaks.
+    var editableTranscript: String {
+        displayParagraphs.joined(separator: "\n\n")
     }
 
     /// Discard the session without saving (used when the user backs out empty).

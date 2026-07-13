@@ -1,10 +1,26 @@
 import SwiftUI
 
-/// Read-only detail for a single note: its paragraphs and timestamp, themed. When the note carries
-/// a recording (spec 0007), a simple Play / Stop control plays it back in full.
+/// Detail for a single note: its paragraphs and timestamp, themed. When the note carries a recording
+/// (spec 0007), a simple Play / Stop control plays it back in full. The text is editable with the
+/// keyboard, and a Resume action reopens the note into a recording session to keep dictating
+/// (feedback 0008).
 struct NoteDetailView: View {
     let note: Note
     @StateObject private var playback: NotePlaybackModel
+
+    /// Called with the current note when the user taps Resume, so the composition root can reopen a
+    /// recording session seeded with it. Nil at bare/preview call sites (no Resume affordance shown).
+    private let onResume: ((Note) -> Void)?
+    /// Called with the edited note when the user commits a keyboard edit, so the composition root can
+    /// persist it and refresh the feed. Nil at bare/preview call sites (editing then shows no Save).
+    private let onCommitEdit: ((Note) -> Void)?
+
+    /// The note's paragraphs as shown/edited. Seeded from the note; edits mutate this and, on commit,
+    /// build an updated note handed back through `onCommitEdit`.
+    @State private var paragraphs: [String]
+    @State private var isEditing = false
+    @State private var draft = ""
+    @FocusState private var editorFocused: Bool
 
     /// Build the detail view. Prefers the ONE shared `NotePlaybackController` (so the phone and
     /// CarPlay drive the same media center and never race); when none is supplied - a preview, a
@@ -16,9 +32,14 @@ struct NoteDetailView: View {
         note: Note,
         resolver: AudioURLResolving,
         player: AudioNotePlayer? = nil,
-        controller: NotePlaybackController? = nil
+        controller: NotePlaybackController? = nil,
+        onResume: ((Note) -> Void)? = nil,
+        onCommitEdit: ((Note) -> Void)? = nil
     ) {
         self.note = note
+        self.onResume = onResume
+        self.onCommitEdit = onCommitEdit
+        _paragraphs = State(initialValue: note.paragraphs)
         // The full note is passed through so the shared playback controller titles the system Now
         // Playing item (lock screen / Control Center) and reads the recording duration.
         let controller = controller ?? NotePlaybackController(resolver: resolver, player: player)
@@ -35,7 +56,7 @@ struct NoteDetailView: View {
                         Image(systemName: "clock")
                         Text(RelativeTime.label(for: note.createdAt))
                         Text("-")
-                        Text(note.wordCountLabel)
+                        Text(currentNote.wordCountLabel)
                     }
                     .font(.system(size: CanopyFont.sizeXs))
                     .foregroundStyle(CanopyColor.textSubtle)
@@ -44,12 +65,26 @@ struct NoteDetailView: View {
                         playButton
                     }
 
-                    ForEach(Array(note.paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                        Text(paragraph)
+                    if !isEditing, onResume != nil || onCommitEdit != nil {
+                        actionRow
+                    }
+
+                    if isEditing {
+                        TextEditor(text: $draft)
+                            .focused($editorFocused)
                             .font(.system(size: CanopyFont.sizeBase))
                             .foregroundStyle(CanopyColor.text)
-                            .lineSpacing(4)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 240)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                            Text(paragraph)
+                                .font(.system(size: CanopyFont.sizeBase))
+                                .foregroundStyle(CanopyColor.text)
+                                .lineSpacing(4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                 }
                 .padding(CanopySpacing.x5)
@@ -63,10 +98,59 @@ struct NoteDetailView: View {
                 .padding(CanopySpacing.x4)
             }
         }
-        .navigationTitle(note.title)
+        .navigationTitle(currentNote.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            // Editing is a keyboard affordance (feedback 0008); only shown when the call site can
+            // persist the result (`onCommitEdit` supplied).
+            if onCommitEdit != nil {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isEditing ? "Done" : "Edit") {
+                        if isEditing { commitEdit() } else { beginEdit() }
+                    }
+                    .tint(CanopyColor.primary)
+                }
+            }
+        }
         // Stop playback if the user navigates away mid-play, so audio never keeps running off-screen.
         .onDisappear { playback.stop() }
+    }
+
+    /// The note as it currently stands (edits applied), with the title re-derived from the first line
+    /// and the original recording/timings preserved. Handed to `onCommitEdit` and `onResume`.
+    private var currentNote: Note {
+        Note(
+            id: note.id,
+            title: Note.deriveTitle(paragraphs: paragraphs, createdAt: note.createdAt),
+            paragraphs: paragraphs,
+            createdAt: note.createdAt,
+            audioFileName: note.audioFileName,
+            timings: note.timings
+        )
+    }
+
+    /// Resume (reopen into a recording session) sits beside the play control. Only shown when a call
+    /// site provided `onResume`.
+    @ViewBuilder
+    private var actionRow: some View {
+        if let onResume {
+            Button {
+                onResume(currentNote)
+            } label: {
+                HStack(spacing: CanopySpacing.x2) {
+                    Image(systemName: "mic.fill")
+                    Text("Resume")
+                        .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+                }
+                .foregroundStyle(CanopyColor.primary)
+                .padding(.horizontal, CanopySpacing.x4)
+                .padding(.vertical, CanopySpacing.x2)
+                .overlay(
+                    Capsule().stroke(CanopyColor.primary, lineWidth: 1)
+                )
+            }
+            .accessibilityLabel("Resume dictating this note")
+        }
     }
 
     /// The simple play / stop control for the note's recording. Play / stop only - no scrubbing or
@@ -87,6 +171,19 @@ struct NoteDetailView: View {
             .clipShape(Capsule())
         }
         .accessibilityLabel(playback.isPlaying ? "Stop recording" : "Play recording")
+    }
+
+    private func beginEdit() {
+        draft = paragraphs.joined(separator: "\n\n")
+        isEditing = true
+        editorFocused = true
+    }
+
+    private func commitEdit() {
+        paragraphs = Note.splitParagraphs(draft)
+        isEditing = false
+        editorFocused = false
+        onCommitEdit?(currentNote)
     }
 }
 

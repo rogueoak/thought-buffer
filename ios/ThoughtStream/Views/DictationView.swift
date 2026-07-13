@@ -28,6 +28,13 @@ struct DictationView: View {
     /// Whether the command cheat-sheet drawer is up (feedback 0008).
     @State private var showCheatSheet = false
 
+    /// Keyboard editing of the paused transcript (feedback 0008): whether the transcript is being
+    /// edited, and the working text while it is. Editing is offered only when capture is paused, so a
+    /// moving cursor never fights the incoming stream.
+    @State private var isEditingTranscript = false
+    @State private var draftTranscript = ""
+    @FocusState private var transcriptEditorFocused: Bool
+
     /// Build the screen from an explicit view model. Callers wire the model (and thus its note
     /// store) from the composition root; see `StreamListView`.
     init(
@@ -75,7 +82,12 @@ struct DictationView: View {
 
                     Dock(
                         isPaused: model.phase == .paused,
-                        onPause: { model.togglePause() },
+                        onPause: {
+                            // Resuming/pausing commits any in-progress edit first, so hand-typed text
+                            // is never lost when the stream starts again.
+                            commitTranscriptEdit()
+                            model.togglePause()
+                        },
                         onStop: finish,
                         onCheatSheet: { showCheatSheet = true }
                     )
@@ -141,13 +153,36 @@ struct DictationView: View {
                 Text(model.phase == .paused ? "Paused" : "Recording")
                     .font(.system(size: CanopyFont.sizeXs, weight: .semibold))
                     .foregroundStyle(CanopyColor.textSubtle)
+                Spacer(minLength: 0)
+                // Keyboard editing is offered only while paused (feedback 0008). Tapping Edit swaps
+                // the transcript for a text editor seeded with the current text; Done commits it.
+                if model.phase == .paused && !model.isEmpty {
+                    Button(isEditingTranscript ? "Done" : "Edit") {
+                        if isEditingTranscript {
+                            commitTranscriptEdit()
+                        } else {
+                            beginTranscriptEdit()
+                        }
+                    }
+                    .font(.system(size: CanopyFont.sizeXs, weight: .semibold))
+                    .foregroundStyle(CanopyColor.primary)
+                }
             }
 
-            ScrollView {
-                transcript
+            if isEditingTranscript {
+                TextEditor(text: $draftTranscript)
+                    .focused($transcriptEditorFocused)
+                    .font(.system(size: CanopyFont.sizeLg))
+                    .foregroundStyle(CanopyColor.text)
+                    .scrollContentBackground(.hidden)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView {
+                    transcript
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CanopySpacing.x5)
         .frame(maxWidth: .infinity, minHeight: 200, maxHeight: 320, alignment: .topLeading)
@@ -279,7 +314,25 @@ struct DictationView: View {
         .padding(.horizontal, CanopySpacing.x4)
     }
 
+    /// Enter transcript edit mode, seeding the editor with the current transcript text.
+    private func beginTranscriptEdit() {
+        draftTranscript = model.editableTranscript
+        isEditingTranscript = true
+        transcriptEditorFocused = true
+    }
+
+    /// Commit an in-progress transcript edit back into the model, then leave edit mode. A no-op when
+    /// not editing, so it is safe to call from Pause/Resume/Stop unconditionally.
+    private func commitTranscriptEdit() {
+        guard isEditingTranscript else { return }
+        model.applyEditedTranscript(draftTranscript)
+        isEditingTranscript = false
+        transcriptEditorFocused = false
+    }
+
     private func finish() {
+        // Fold any hand-typed edit into the model before saving so it is included in the note.
+        commitTranscriptEdit()
         do {
             let note = try model.finish()
             onFinish(note)

@@ -608,3 +608,67 @@ final class CommittedPrefixDedupTests: XCTestCase {
         XCTAssertEqual(result, "Mira read that back")
     }
 }
+
+/// Feedback 0008: resuming a note continues it (same id/created), appended text is added, and the
+/// note's original recording and per-paragraph timings are preserved. Keyboard editing replaces the
+/// transcript text.
+@MainActor
+final class ResumeAndEditTests: XCTestCase {
+    private var store: MemoryNoteStore!
+    private var service: EventDrivingCaptureService!
+
+    override func setUp() {
+        super.setUp()
+        store = MemoryNoteStore()
+        service = EventDrivingCaptureService()
+    }
+
+    func testResumeSeedsExistingNoteAndPreservesRecordingOnSave() throws {
+        let original = Note(
+            id: UUID(),
+            title: "Alpha",
+            paragraphs: ["Alpha", "Beta"],
+            createdAt: Date(timeIntervalSince1970: 1000),
+            audioFileName: "rec.m4a",
+            timings: [ParagraphTiming(start: 0, duration: 1), ParagraphTiming(start: 1, duration: 2)]
+        )
+        let model = DictationViewModel(
+            service: service, store: store, processor: PassthroughTextProcessor(),
+            recordsAudio: false, resuming: original
+        )
+        XCTAssertEqual(model.paragraphs, ["Alpha", "Beta"], "resume seeds the existing paragraphs")
+
+        // Continue dictating one more paragraph, then stop and save.
+        service.emit(.finalizedSegment("Gamma", range: nil))
+        let saved = try XCTUnwrap(try model.finish())
+
+        XCTAssertEqual(saved.id, original.id, "resume continues the same note")
+        XCTAssertEqual(saved.createdAt, original.createdAt, "the original creation time is kept")
+        XCTAssertEqual(saved.paragraphs, ["Alpha", "Beta", "Gamma"], "new text appends")
+        XCTAssertEqual(saved.audioFileName, "rec.m4a", "the original recording is preserved")
+        XCTAssertEqual(saved.timings.count, 3, "one timing per paragraph after resume")
+        XCTAssertEqual(saved.timings[0], ParagraphTiming(start: 0, duration: 1))
+        XCTAssertEqual(saved.timings[1], ParagraphTiming(start: 1, duration: 2))
+        // The appended paragraph has no recorded range, so it plays back via text-to-speech.
+        XCTAssertEqual(saved.timings[2], ParagraphTiming(start: 0, duration: 0))
+    }
+
+    func testApplyEditedTranscriptReplacesParagraphsAndClearsPartial() {
+        let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
+        service.emit(.finalizedSegment("First", range: nil))
+        service.emit(.finalizedSegment("Second", range: nil))
+        service.emit(.partial("in progress"))
+
+        model.applyEditedTranscript("First edited\n\nSecond\n\nThird")
+
+        XCTAssertEqual(model.paragraphs, ["First edited", "Second", "Third"])
+        XCTAssertEqual(model.partial, "", "editing folds and clears the live partial")
+    }
+
+    func testEditableTranscriptJoinsParagraphsAndPartialWithBlankLines() {
+        let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
+        service.emit(.finalizedSegment("Para one", range: nil))
+        service.emit(.partial("still typing"))
+        XCTAssertEqual(model.editableTranscript, "Para one\n\nstill typing")
+    }
+}
