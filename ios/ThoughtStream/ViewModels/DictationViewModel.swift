@@ -123,34 +123,6 @@ final class DictationViewModel: ObservableObject {
         case newNoteSaveFailed
     }
 
-    #if DEBUG
-    /// DEBUG-ONLY on-device diagnostic: the last FINALIZED recognized text and how it was classified,
-    /// shown as an unobtrusive on-screen label so the developer can see, on their own hardware, exactly
-    /// what the recognizer produced and how the processor split it. Compiled OUT of Release entirely.
-    /// It is NEVER logged, persisted, or transmitted - it lives only in this published field and its
-    /// on-screen label. The production code path does not read it, so nothing changes in Release.
-    @Published private(set) var lastDebugTrace: String = "TS-DEBUG ready - speak, then pause"
-
-    /// Recent FINALIZED classifications, so the on-screen log shows whether a pause actually
-    /// committed a segment (a `final:` line appears) or the live partial just reset without one.
-    private var debugHistory: [String] = []
-
-    /// Rebuild the on-screen trace: the recent finalized lines plus the current live partial.
-    private func debugRebuild(partial: String) {
-        var lines = debugHistory
-        let p = partial.trimmingCharacters(in: .whitespacesAndNewlines)
-        lines.append("> " + (p.isEmpty ? "(listening)" : "partial: \"" + String(p.suffix(40)) + "\""))
-        lastDebugTrace = lines.joined(separator: "\n")
-    }
-
-    /// Append a finalized-classification line to the rolling log (keeping the last few).
-    private func debugRecordFinal(_ line: String) {
-        debugHistory.append("final: " + line)
-        if debugHistory.count > 4 { debugHistory.removeFirst() }
-        debugRebuild(partial: "")
-    }
-    #endif
-
     private let service: SpeechCaptureService
     private let store: NoteStoring
     private let processor: TextProcessor
@@ -158,12 +130,17 @@ final class DictationViewModel: ObservableObject {
     /// Whether to record the session's audio (spec 0007). Read from settings at construction so it
     /// applies to this session; `transcriptOnly` never opens the file writer.
     private let recordsAudio: Bool
-    /// The active control word, used to assemble the command chip label (e.g. "Mira - new note").
-    /// Injected so it stays in sync with the processor's control word once Settings makes it
-    /// configurable, keeping the chip prefix out of the view.
-    private let controlWord: String
+    /// The active control word, used to assemble the command chip label (e.g. "Mira - new note") and
+    /// shown on the cheat sheet (feedback 0008). Injected so it stays in sync with the processor's
+    /// control word once Settings makes it configurable, keeping the chip prefix out of the view.
+    let controlWord: String
     private var createdAt = Date()
     private var noteID = UUID()
+
+    /// The recording filename carried over when RESUMING an existing note (feedback 0008): a resumed
+    /// session does not record new audio, so the note keeps its original recording. Nil for a fresh
+    /// session, where any recording comes from the live capture instead.
+    private var existingAudioFileName: String?
 
     /// One timing per committed paragraph, in lockstep with `paragraphs` (spec 0007). A finalized
     /// segment appends its range here as its text is committed; a paragraph committed without a range
@@ -189,7 +166,8 @@ final class DictationViewModel: ObservableObject {
         processor: TextProcessor = PassthroughTextProcessor(),
         speaker: Speaker? = nil,
         recordsAudio: Bool = false,
-        controlWord: String = MiraTextProcessor.defaultControlWord
+        controlWord: String = MiraTextProcessor.defaultControlWord,
+        resuming: Note? = nil
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
         // service's main-actor-isolated initializer is not called from a nonisolated default.
@@ -199,6 +177,18 @@ final class DictationViewModel: ObservableObject {
         self.speaker = speaker ?? SystemSpeaker()
         self.recordsAudio = recordsAudio
         self.controlWord = controlWord
+        // Resuming an existing note (feedback 0008): keep its id, creation time, and text so the
+        // session continues that note (saving overwrites the same file) rather than starting a new
+        // one. New spoken content is appended as text; the original recording and its per-paragraph
+        // timings are preserved for the existing paragraphs (a resumed session records no new audio,
+        // so the caller passes recordsAudio: false), and anything appended is text-only on playback.
+        if let resuming {
+            noteID = resuming.id
+            createdAt = resuming.createdAt
+            paragraphs = resuming.paragraphs
+            paragraphTimings = Self.seedTimings(for: resuming)
+            existingAudioFileName = resuming.audioFileName
+        }
         // Tell the capture service whether to tee audio to a file for this session, before it starts.
         self.service.setRecordingEnabled(recordsAudio)
         self.service.onEvent = { [weak self] event in
@@ -207,6 +197,13 @@ final class DictationViewModel: ObservableObject {
         self.speaker.onFinish = { [weak self] in
             self?.readBackDidFinish()
         }
+    }
+
+    /// The per-paragraph timing slots to seed when resuming a note, aligned 1:1 with its paragraphs:
+    /// each paragraph keeps its recorded range (or nil when the note had no timing for it), so the
+    /// preserved recording still maps to the original paragraphs after resume.
+    private static func seedTimings(for note: Note) -> [ParagraphTiming?] {
+        note.paragraphs.indices.map { note.timing(forParagraphAt: $0) }
     }
 
     /// The full transcript so far, including the live partial, for display.
@@ -315,6 +312,12 @@ final class DictationViewModel: ObservableObject {
            let attached = try? attachRecording(recordingURL) {
             audioFileName = attached.fileName
             timings = attached.timings
+        } else if let existingAudioFileName {
+            // Resumed note (feedback 0008): keep the original recording and its per-paragraph timings.
+            // Appended paragraphs have no recorded range, so `resolvedTimings` pads them and they play
+            // back via text-to-speech; the original paragraphs still map to the preserved audio.
+            audioFileName = existingAudioFileName
+            timings = resolvedTimings()
         }
 
         let note = Note(
@@ -360,6 +363,26 @@ final class DictationViewModel: ObservableObject {
         service.discardRecording()
     }
 
+    /// Replace the captured transcript with hand-edited text (feedback 0008 keyboard editing), used
+    /// when the user edits the paused transcript on the record screen. The text is re-split into
+    /// paragraphs and the live partial is cleared (its content is now part of the edited text).
+    /// Hand-edited text no longer lines up with the recorded ranges, so any timing slots past the new
+    /// paragraph count are dropped; remaining paragraphs whose text changed simply fall back to
+    /// text-to-speech on playback (the note model tolerates a timing that does not match its text).
+    func applyEditedTranscript(_ text: String) {
+        paragraphs = Note.splitParagraphs(text)
+        partial = ""
+        if paragraphTimings.count > paragraphs.count {
+            paragraphTimings = Array(paragraphTimings.prefix(paragraphs.count))
+        }
+    }
+
+    /// The editable transcript text for the record screen: committed paragraphs plus the live
+    /// partial, joined by blank lines so editing preserves paragraph breaks.
+    var editableTranscript: String {
+        displayParagraphs.joined(separator: "\n\n")
+    }
+
     /// Discard the session without saving (used when the user backs out empty).
     func cancel() {
         service.stop()
@@ -396,9 +419,6 @@ final class DictationViewModel: ObservableObject {
         switch event {
         case .partial(let text):
             partial = partialText(from: processor.process(text))
-            #if DEBUG
-            debugRebuild(partial: text)
-            #endif
         case .finalizedSegment(let text, let range):
             handleFinalized(text, range: range)
         case .level(let value):
@@ -416,11 +436,6 @@ final class DictationViewModel: ObservableObject {
     /// start; the split commits the pre-keyword words and then runs (or drops) the command.
     private func handleFinalized(_ text: String, range: ParagraphTiming?) {
         let segment = processor.process(text)
-        #if DEBUG
-        // Record the raw recognized text and its classification for the on-screen diagnostic. This is
-        // the only mutation the diagnostic makes; it does not affect the routing below.
-        debugRecordFinal(Self.debugTrace(for: text, segment: segment, controlWord: controlWord))
-        #endif
         switch segment {
         case .text(let value):
             commitParagraph(value, range: range)
@@ -566,6 +581,10 @@ final class DictationViewModel: ObservableObject {
         partial = ""
         noteID = UUID()
         createdAt = Date()
+        // Clear the resumed note's recording reference too: the just-saved note kept it, but the fresh
+        // note is a NEW recording (or none). Leaving it set would attach the original recording to the
+        // new note on Stop, so two notes would point at the same file (engineer review, feedback 0008).
+        existingAudioFileName = nil
         return hadContent ? .saved : .emptyReset
     }
 
@@ -639,47 +658,6 @@ final class DictationViewModel: ObservableObject {
     private func showUnrecognizedCommandBanner() {
         showBannerLabel("Sorry, I didn't catch that command")
     }
-
-    #if DEBUG
-    /// Build the DEBUG-only diagnostic line for a finalized segment: the recognized text (truncated)
-    /// and how the processor classified it. Pure and static; it does NOT log, persist, or transmit -
-    /// its result is only shown on screen. Compiled out of Release.
-    private static func debugTrace(for text: String, segment: ProcessedSegment, controlWord: String) -> String {
-        let recognized = truncateForTrace(text)
-        let classification: String
-        switch segment {
-        case .text:
-            classification = "text"
-        case .drop:
-            classification = "drop"
-        case .split(let preText, let outcome):
-            let pre = truncateForTrace(preText)
-            switch outcome {
-            case .command(let command):
-                classification = "split(pre=\"\(pre)\", command: \(commandName(command)))"
-            case .unrecognizedCommand:
-                classification = "split(pre=\"\(pre)\", unrecognizedCommand)"
-            }
-        }
-        return "cw=\(controlWord) | \"\(recognized)\" -> \(classification)"
-    }
-
-    /// Truncate a string to ~80 chars for the on-screen diagnostic so a long passage stays readable.
-    private static func truncateForTrace(_ text: String) -> String {
-        let limit = 80
-        return text.count > limit ? String(text.prefix(limit)) + "..." : text
-    }
-
-    /// A short label for a command in the diagnostic (e.g. `newNote`, `readThatBack`).
-    private static func commandName(_ command: MiraCommand) -> String {
-        switch command {
-        case .removeLastSentence: return "removeLastSentence"
-        case .removeLastParagraph: return "removeLastParagraph"
-        case .newNote: return "newNote"
-        case .readThatBack: return "readThatBack"
-        }
-    }
-    #endif
 
     /// Set the transient chip label and schedule its auto-dismiss.
     private func showBannerLabel(_ label: String) {

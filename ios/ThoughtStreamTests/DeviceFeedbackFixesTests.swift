@@ -552,3 +552,284 @@ final class UtteranceResetTests: XCTestCase {
             current: "the product team is built a thing and there's making a bunch"))
     }
 }
+
+/// Feedback 0008: a paragraph doubled when a Mira command followed it. A reset commits the paragraph,
+/// then the same task's final transcription STILL leads with it, and the command split commits it
+/// again. `strippingCommittedPrefix` removes the already-committed lead so it is committed only once.
+final class CommittedPrefixDedupTests: XCTestCase {
+    func testStripsExactCommittedParagraphBeforeCommand() {
+        // The reported case: P2 was committed on the pause, then the command's final transcription
+        // accumulated "P2 Mira read that back". The committed P2 must be stripped so the split does
+        // not re-commit it.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Buy milk and eggs Mira read that back", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Mira read that back")
+    }
+
+    func testKeepsResultWhenRecognizerDroppedTheCommittedLead() {
+        // The other device behavior: the recognizer internally reset, so its final transcription does
+        // NOT lead with the committed paragraph. Nothing is stripped; the new utterance is kept whole.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Mira read that back", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Mira read that back")
+    }
+
+    func testStripsDespiteWordRevisionInTheCommittedLead() {
+        // The recognizer revised "there is" -> "there's" between the committed partial and the final,
+        // so the lead is not a byte-exact prefix. It is still consumed whole, not half-left.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "I think there's Mira new note", committed: "I think there is")
+        XCTAssertEqual(result, "Mira new note")
+    }
+
+    func testResultEqualToCommittedYieldsEmpty() {
+        // The task ended right on the committed paragraph with no trailing words: everything is
+        // already committed, so nothing remains to commit again.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Buy milk and eggs", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "")
+    }
+
+    func testDifferentUtteranceIsNotStripped() {
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Sell the car Mira stop", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Sell the car Mira stop")
+    }
+
+    func testEmptyCommittedReturnsResultUnchanged() {
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Buy milk Mira new note", committed: "")
+        XCTAssertEqual(result, "Buy milk Mira new note")
+    }
+
+    func testCaseInsensitiveLeadIsStripped() {
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "buy MILK and eggs Mira read that back", committed: "Buy milk and eggs")
+        XCTAssertEqual(result, "Mira read that back")
+    }
+
+    func testWhitespacePaddedCommittedStillStrips() {
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "Buy milk Mira new note", committed: "   Buy milk   ")
+        XCTAssertEqual(result, "Mira new note")
+    }
+
+    func testBelowMatchRatioThresholdIsNotStripped() {
+        // Under 60% of the committed text lines up at the start, so it is a different utterance.
+        let result = SpeechDictationService.strippingCommittedPrefix(
+            from: "abcXXXXXXX and then some", committed: "abcdefghij")
+        XCTAssertEqual(result, "abcXXXXXXX and then some")
+    }
+}
+
+/// Feedback 0008: the pure task-end commit decision that wires the dedup (strip already-committed
+/// lead), the text resolution, and the range-drop-when-stripped rule. This exercises the actual fix
+/// path, not just the `strippingCommittedPrefix` helper.
+final class TaskEndCommitTests: XCTestCase {
+    func testStripsCommittedLeadAndDropsRange() {
+        // The reported bug at the decision level: the reset committed "Second thoughts here", the
+        // task-end result still leads with it plus the command. It is stripped, and the range is
+        // dropped because the remaining text no longer matches the reported range.
+        let commit = SpeechDictationService.resolveTaskEndCommit(
+            resultText: "Second thoughts here Mira new note",
+            resultRange: ParagraphTiming(start: 2, duration: 3),
+            lastPartial: "Mira new note",
+            committed: "Second thoughts here")
+        XCTAssertEqual(commit?.text, "Mira new note")
+        XCTAssertNil(commit?.range, "a stripped prefix drops the reported range")
+    }
+
+    func testKeepsRangeWhenNothingStripped() {
+        let range = ParagraphTiming(start: 0, duration: 5)
+        let commit = SpeechDictationService.resolveTaskEndCommit(
+            resultText: "Buy milk and eggs", resultRange: range,
+            lastPartial: "Buy milk and eggs", committed: "")
+        XCTAssertEqual(commit?.text, "Buy milk and eggs")
+        XCTAssertEqual(commit?.range, range, "with nothing stripped the reported range is kept")
+    }
+
+    func testResultFullyStrippedFallsBackToPartial() {
+        // The task ended right on the committed paragraph: the result strips to empty, so the tracked
+        // partial (a fresh utterance) is what commits, always without a range.
+        let commit = SpeechDictationService.resolveTaskEndCommit(
+            resultText: "Buy milk", resultRange: ParagraphTiming(start: 0, duration: 1),
+            lastPartial: "next thought", committed: "Buy milk")
+        XCTAssertEqual(commit?.text, "next thought")
+        XCTAssertNil(commit?.range)
+    }
+
+    func testNilResultCommitsPartialWithoutRange() {
+        let commit = SpeechDictationService.resolveTaskEndCommit(
+            resultText: nil, resultRange: nil, lastPartial: "held partial", committed: "anything")
+        XCTAssertEqual(commit?.text, "held partial")
+        XCTAssertNil(commit?.range)
+    }
+
+    func testNothingUsableCommitsNothing() {
+        let commit = SpeechDictationService.resolveTaskEndCommit(
+            resultText: nil, resultRange: nil, lastPartial: "", committed: "")
+        XCTAssertNil(commit, "no result and no partial commits nothing")
+    }
+
+    func testDroppedCommittedLeadKeepsFullResult() {
+        // The recognizer internally reset, so its final result does NOT lead with the committed text.
+        // Nothing is stripped, so the whole new utterance commits and its range is kept.
+        let range = ParagraphTiming(start: 4, duration: 2)
+        let commit = SpeechDictationService.resolveTaskEndCommit(
+            resultText: "A brand new sentence", resultRange: range,
+            lastPartial: "A brand new sentence", committed: "Older committed paragraph")
+        XCTAssertEqual(commit?.text, "A brand new sentence")
+        XCTAssertEqual(commit?.range, range)
+    }
+}
+
+/// Feedback 0008: every cheat-sheet command phrase actually parses to its command, so the on-screen
+/// list never drifts from the parser grammar (architect review follow-up).
+final class CheatSheetGrammarTests: XCTestCase {
+    func testEachCheatSheetPhraseParsesToItsCommand() {
+        let processor = MiraTextProcessor()
+        let cw = MiraTextProcessor.defaultControlWord
+        for command in MiraCommand.cheatSheet {
+            let segment = processor.process("\(cw) \(command.spokenPhrase)")
+            guard case let .split(_, outcome) = segment, case let .command(parsed) = outcome else {
+                XCTFail("\(command.spokenPhrase) did not parse as a command")
+                continue
+            }
+            XCTAssertEqual(parsed, command, "\(cw) \(command.spokenPhrase) must fire \(command)")
+        }
+    }
+}
+
+/// Feedback 0008: resuming a note continues it (same id/created), appended text is added, and the
+/// note's original recording and per-paragraph timings are preserved. Keyboard editing replaces the
+/// transcript text.
+@MainActor
+final class ResumeAndEditTests: XCTestCase {
+    private var store: MemoryNoteStore!
+    private var service: EventDrivingCaptureService!
+
+    override func setUp() {
+        super.setUp()
+        store = MemoryNoteStore()
+        service = EventDrivingCaptureService()
+    }
+
+    func testResumeSeedsExistingNoteAndPreservesRecordingOnSave() throws {
+        let original = Note(
+            id: UUID(),
+            title: "Alpha",
+            paragraphs: ["Alpha", "Beta"],
+            createdAt: Date(timeIntervalSince1970: 1000),
+            audioFileName: "rec.m4a",
+            timings: [ParagraphTiming(start: 0, duration: 1), ParagraphTiming(start: 1, duration: 2)]
+        )
+        let model = DictationViewModel(
+            service: service, store: store, processor: PassthroughTextProcessor(),
+            recordsAudio: false, resuming: original
+        )
+        XCTAssertEqual(model.paragraphs, ["Alpha", "Beta"], "resume seeds the existing paragraphs")
+
+        // Continue dictating one more paragraph, then stop and save.
+        service.emit(.finalizedSegment("Gamma", range: nil))
+        let saved = try XCTUnwrap(try model.finish())
+
+        XCTAssertEqual(saved.id, original.id, "resume continues the same note")
+        XCTAssertEqual(saved.createdAt, original.createdAt, "the original creation time is kept")
+        XCTAssertEqual(saved.paragraphs, ["Alpha", "Beta", "Gamma"], "new text appends")
+        XCTAssertEqual(saved.audioFileName, "rec.m4a", "the original recording is preserved")
+        XCTAssertEqual(saved.timings.count, 3, "one timing per paragraph after resume")
+        XCTAssertEqual(saved.timings[0], ParagraphTiming(start: 0, duration: 1))
+        XCTAssertEqual(saved.timings[1], ParagraphTiming(start: 1, duration: 2))
+        // The appended paragraph has no recorded range, so it plays back via text-to-speech.
+        XCTAssertEqual(saved.timings[2], ParagraphTiming(start: 0, duration: 0))
+    }
+
+    func testApplyEditedTranscriptReplacesParagraphsAndClearsPartial() {
+        let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
+        service.emit(.finalizedSegment("First", range: nil))
+        service.emit(.finalizedSegment("Second", range: nil))
+        service.emit(.partial("in progress"))
+
+        model.applyEditedTranscript("First edited\n\nSecond\n\nThird")
+
+        XCTAssertEqual(model.paragraphs, ["First edited", "Second", "Third"])
+        XCTAssertEqual(model.partial, "", "editing folds and clears the live partial")
+    }
+
+    func testEditableTranscriptJoinsParagraphsAndPartialWithBlankLines() {
+        let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
+        service.emit(.finalizedSegment("Para one", range: nil))
+        service.emit(.partial("still typing"))
+        XCTAssertEqual(model.editableTranscript, "Para one\n\nstill typing")
+    }
+
+    func testEditableTranscriptWithNoPartialIsJustParagraphs() {
+        let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
+        service.emit(.finalizedSegment("Para one", range: nil))
+        service.emit(.finalizedSegment("Para two", range: nil))
+        XCTAssertEqual(model.editableTranscript, "Para one\n\nPara two")
+    }
+
+    func testResumeTextOnlyNoteDoesNotFabricateAudioOnSave() throws {
+        let original = Note(
+            id: UUID(), title: "Text only", paragraphs: ["Alpha", "Beta"],
+            createdAt: Date(timeIntervalSince1970: 500)
+        )
+        XCTAssertFalse(original.hasAudio)
+        let model = DictationViewModel(
+            service: service, store: store, processor: PassthroughTextProcessor(),
+            recordsAudio: false, resuming: original)
+        service.emit(.finalizedSegment("Gamma", range: nil))
+
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.paragraphs, ["Alpha", "Beta", "Gamma"])
+        XCTAssertNil(saved.audioFileName, "a text-only note must not gain a recording on resume")
+        XCTAssertFalse(saved.hasAudio)
+    }
+
+    func testEditingResumedNoteToFewerParagraphsTruncatesTimings() throws {
+        let original = Note(
+            id: UUID(), title: "Three", paragraphs: ["One", "Two", "Three"],
+            createdAt: Date(timeIntervalSince1970: 500),
+            audioFileName: "rec.m4a",
+            timings: [
+                ParagraphTiming(start: 0, duration: 1),
+                ParagraphTiming(start: 1, duration: 1),
+                ParagraphTiming(start: 2, duration: 1),
+            ])
+        let model = DictationViewModel(
+            service: service, store: store, processor: PassthroughTextProcessor(),
+            recordsAudio: false, resuming: original)
+        // Hand-edit down to a single paragraph, then save.
+        model.applyEditedTranscript("One only")
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.paragraphs, ["One only"])
+        XCTAssertEqual(saved.timings.count, 1, "timings are truncated to the edited paragraph count")
+        XCTAssertEqual(saved.audioFileName, "rec.m4a", "the original recording is still preserved")
+    }
+
+    func testNewNoteAfterResumeDoesNotCarryRecordingToFreshNote() throws {
+        // Engineer review regression: resuming an audio note then "Mira new note" must not attach the
+        // original recording to the fresh note.
+        let original = Note(
+            id: UUID(), title: "Rec", paragraphs: ["First"],
+            createdAt: Date(timeIntervalSince1970: 500),
+            audioFileName: "rec.m4a",
+            timings: [ParagraphTiming(start: 0, duration: 2)])
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor(),
+            recordsAudio: false, resuming: original)
+        // "new note" saves the resumed note (keeping its audio) and starts a fresh one.
+        service.emit(.finalizedSegment("Mira new note", range: nil))
+        // The fresh note now captures new text and stops.
+        service.emit(.finalizedSegment("Totally new", range: nil))
+        let fresh = try XCTUnwrap(try model.finish())
+
+        XCTAssertEqual(fresh.paragraphs, ["Totally new"])
+        XCTAssertNil(fresh.audioFileName, "the fresh note must not inherit the resumed note's recording")
+        XCTAssertFalse(fresh.hasAudio)
+        // The resumed note was saved with its recording preserved.
+        let resumedSaved = try XCTUnwrap(store.notes.first { $0.id == original.id })
+        XCTAssertEqual(resumedSaved.audioFileName, "rec.m4a")
+    }
+}

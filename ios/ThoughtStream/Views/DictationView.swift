@@ -25,6 +25,16 @@ struct DictationView: View {
     /// note as saved and dismissing.
     @State private var showSaveError = false
 
+    /// Whether the command cheat-sheet drawer is up (feedback 0008).
+    @State private var showCheatSheet = false
+
+    /// Keyboard editing of the paused transcript (feedback 0008): whether the transcript is being
+    /// edited, and the working text while it is. Editing is offered only when capture is paused, so a
+    /// moving cursor never fights the incoming stream.
+    @State private var isEditingTranscript = false
+    @State private var draftTranscript = ""
+    @FocusState private var transcriptEditorFocused: Bool
+
     /// Build the screen from an explicit view model. Callers wire the model (and thus its note
     /// store) from the composition root; see `StreamListView`.
     init(
@@ -72,14 +82,16 @@ struct DictationView: View {
 
                     Dock(
                         isPaused: model.phase == .paused,
-                        onPause: { model.togglePause() },
-                        onStop: finish
+                        onPause: {
+                            // Resuming/pausing commits any in-progress edit first, so hand-typed text
+                            // is never lost when the stream starts again.
+                            commitTranscriptEdit()
+                            model.togglePause()
+                        },
+                        onStop: finish,
+                        onCheatSheet: { showCheatSheet = true }
                     )
                 }
-
-                #if DEBUG
-                debugReadout
-                #endif
             }
             .padding(.top, CanopySpacing.x4)
             .padding(.bottom, CanopySpacing.x6)
@@ -92,6 +104,11 @@ struct DictationView: View {
         } message: {
             Text("Something went wrong writing the note to your device. Your words are still on "
                 + "screen. Tap Stop to try saving again.")
+        }
+        .sheet(isPresented: $showCheatSheet) {
+            CommandCheatSheet(controlWord: model.controlWord)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
         .task {
             if let injection = previewInjection {
@@ -136,13 +153,36 @@ struct DictationView: View {
                 Text(model.phase == .paused ? "Paused" : "Recording")
                     .font(.system(size: CanopyFont.sizeXs, weight: .semibold))
                     .foregroundStyle(CanopyColor.textSubtle)
+                Spacer(minLength: 0)
+                // Keyboard editing is offered only while paused (feedback 0008). Tapping Edit swaps
+                // the transcript for a text editor seeded with the current text; Done commits it.
+                if model.phase == .paused && !model.isEmpty {
+                    Button(isEditingTranscript ? "Done" : "Edit") {
+                        if isEditingTranscript {
+                            commitTranscriptEdit()
+                        } else {
+                            beginTranscriptEdit()
+                        }
+                    }
+                    .font(.system(size: CanopyFont.sizeXs, weight: .semibold))
+                    .foregroundStyle(CanopyColor.primary)
+                }
             }
 
-            ScrollView {
-                transcript
+            if isEditingTranscript {
+                TextEditor(text: $draftTranscript)
+                    .focused($transcriptEditorFocused)
+                    .font(.system(size: CanopyFont.sizeLg))
+                    .foregroundStyle(CanopyColor.text)
+                    .scrollContentBackground(.hidden)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ScrollView {
+                    transcript
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(CanopySpacing.x5)
         .frame(maxWidth: .infinity, minHeight: 200, maxHeight: 320, alignment: .topLeading)
@@ -201,27 +241,6 @@ struct DictationView: View {
         .background(CanopyColor.muted)
         .clipShape(Capsule())
     }
-
-    #if DEBUG
-    /// DEBUG-ONLY on-device diagnostic: a small, unobtrusive mono caption at the very bottom showing
-    /// the last finalized recognized text and how the processor classified it (feedback tooling so the
-    /// developer can read, on their own device, exactly what the recognizer produced). Compiled OUT of
-    /// Release. It only reads `model.lastDebugTrace`; it never logs, persists, or transmits anything.
-    private var debugReadout: some View {
-        // Always visible in DEBUG (even before any speech) so it is a reliable "am I on the new
-        // build" indicator, and it updates live on every partial so it visibly moves while talking.
-        Text(model.lastDebugTrace)
-            .font(.system(size: CanopyFont.sizeXs, design: .monospaced))
-            .foregroundStyle(CanopyColor.text)
-            .multilineTextAlignment(.leading)
-            .lineLimit(6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(CanopySpacing.x2)
-            .background(CanopyColor.muted)
-            .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.sm, style: .continuous))
-            .padding(.horizontal, CanopySpacing.x4)
-    }
-    #endif
 
     /// The transient control chip shown when a Mira command fires, in the muted token style. The
     /// full label (e.g. "Mira - removed last sentence") is assembled in the view model, where the
@@ -295,7 +314,25 @@ struct DictationView: View {
         .padding(.horizontal, CanopySpacing.x4)
     }
 
+    /// Enter transcript edit mode, seeding the editor with the current transcript text.
+    private func beginTranscriptEdit() {
+        draftTranscript = model.editableTranscript
+        isEditingTranscript = true
+        transcriptEditorFocused = true
+    }
+
+    /// Commit an in-progress transcript edit back into the model, then leave edit mode. A no-op when
+    /// not editing, so it is safe to call from Pause/Resume/Stop unconditionally.
+    private func commitTranscriptEdit() {
+        guard isEditingTranscript else { return }
+        model.applyEditedTranscript(draftTranscript)
+        isEditingTranscript = false
+        transcriptEditorFocused = false
+    }
+
     private func finish() {
+        // Fold any hand-typed edit into the model before saving so it is included in the note.
+        commitTranscriptEdit()
         do {
             let note = try model.finish()
             onFinish(note)
@@ -343,11 +380,14 @@ private struct Waveform: View {
     }
 }
 
-/// The bottom dock: Pause/Resume | big circular Stop button | (label). Stop saves and closes.
+/// The bottom dock: Pause/Resume | big circular Stop button | Commands. Stop saves and closes; the
+/// Commands button (feedback 0008) opens the cheat-sheet drawer and balances the leading control so
+/// the stop button stays centered.
 private struct Dock: View {
     let isPaused: Bool
     let onPause: () -> Void
     let onStop: () -> Void
+    let onCheatSheet: () -> Void
 
     var body: some View {
         HStack {
@@ -359,8 +399,8 @@ private struct Dock: View {
             Spacer()
             stopButton
             Spacer()
-            // Balance the leading control so the stop button stays centered.
-            dockButton(title: "", system: "", action: {}).opacity(0).disabled(true)
+            dockButton(title: "Commands", system: "questionmark.circle", action: onCheatSheet)
+                .accessibilityLabel("Show voice commands")
         }
         .padding(.horizontal, CanopySpacing.x8)
     }
@@ -395,6 +435,62 @@ private struct Dock: View {
             .foregroundStyle(CanopyColor.textMuted)
             .frame(width: 64)
         }
+    }
+}
+
+/// The command cheat sheet shown in a bottom drawer from the record screen (feedback 0008): the
+/// active control word, each voice command with what it does, and a tip on pausing. Content is
+/// sourced from `MiraCommand.cheatSheet` so it stays in sync with the parser's grammar.
+struct CommandCheatSheet: View {
+    let controlWord: String
+
+    var body: some View {
+        ZStack {
+            CanopyColor.bg.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: CanopySpacing.x4) {
+                    Text("Voice commands")
+                        .font(.system(size: CanopyFont.sizeXl, weight: .bold))
+                        .foregroundStyle(CanopyColor.text)
+                    Text("Say \"\(controlWord)\" then a command. It runs the action instead of being "
+                        + "written into your note.")
+                        .font(.system(size: CanopyFont.sizeSm))
+                        .foregroundStyle(CanopyColor.textMuted)
+
+                    VStack(spacing: CanopySpacing.x2) {
+                        ForEach(Array(MiraCommand.cheatSheet.enumerated()), id: \.offset) { _, command in
+                            commandRow(phrase: "\(controlWord) \(command.spokenPhrase)",
+                                       detail: command.cheatSheetDetail)
+                        }
+                        commandRow(phrase: "Pause to think",
+                                   detail: "Stop talking for a moment to end a paragraph; keep going "
+                                       + "and your words continue in a new one.")
+                    }
+                }
+                .padding(CanopySpacing.x5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func commandRow(phrase: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: CanopySpacing.x1) {
+            Text(phrase)
+                .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
+                .foregroundStyle(CanopyColor.text)
+            Text(detail)
+                .font(.system(size: CanopyFont.sizeSm))
+                .foregroundStyle(CanopyColor.textMuted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(CanopySpacing.x4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(CanopyColor.surface)
+        .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
+                .stroke(CanopyColor.border, lineWidth: 1)
+        )
     }
 }
 

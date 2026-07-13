@@ -42,6 +42,17 @@ final class SpeechDictationService: SpeechCaptureService {
     /// end, so it never double-commits or leaks across the seam.
     private var lastPartialText = ""
 
+    /// The text most recently committed AS ITS OWN PARAGRAPH by an utterance reset within the CURRENT
+    /// task (feedback 0008). A single task accumulates the whole passage, so when the recognizer's
+    /// final transcription still leads with an utterance that `handlePartial` already committed via a
+    /// reset, committing the raw result here would double it - the paragraph-doubled-after-a-command
+    /// bug. Recorded here so `handleTaskEnd` can strip that already-committed prefix before committing
+    /// the remainder. Only the LAST reset's text is kept: the recognizer's accumulation only ever
+    /// extends from its most recent internal reset, so any older reset-committed utterance can no
+    /// longer reappear in the task's final transcription. Reset to empty when a new task starts and
+    /// after each task end, so it never leaks across the seam.
+    private var committedThisTask = ""
+
     /// Whether to tee the audio to a file for this session (spec 0007). Set via
     /// `setRecordingEnabled` before `start()`. Off by default so a caller that never opts in behaves
     /// exactly as before.
@@ -201,8 +212,10 @@ final class SpeechDictationService: SpeechCaptureService {
 
         // A fresh task tracks its own in-progress partial from scratch: any text held by a prior
         // task was already committed at its end (see `makeTask`), so start empty to avoid double
-        // commits.
+        // commits. The per-task reset-commit marker starts empty too: a new task's accumulation
+        // begins from nothing, so it can never lead with a prior task's already-committed paragraph.
         lastPartialText = ""
+        committedThisTask = ""
 
         // This request starts at the current recording position, so segment timestamps (which are
         // relative to the request) map to absolute recording time. A resumed session already has
@@ -301,6 +314,10 @@ final class SpeechDictationService: SpeechCaptureService {
         // the last one, commit the previous partial as its own paragraph BEFORE adopting the new text.
         if Self.isReset(previous: lastPartialText, current: resultText) {
             emit(.finalizedSegment(lastPartialText, range: nil))
+            // Remember what was just committed so a later task end that still leads with this
+            // utterance does not commit it a SECOND time (feedback 0008). Replace (not append): the
+            // recognizer's accumulation restarts here, so only this most recent commit can recur.
+            committedThisTask = lastPartialText
         }
         lastPartialText = resultText
         emit(.partial(resultText))
@@ -325,26 +342,84 @@ final class SpeechDictationService: SpeechCaptureService {
         return Double(common) < Double(prev.count) * 0.6
     }
 
+    /// Remove the `committed` utterance from the FRONT of a task-end transcription so it is not
+    /// committed a second time (feedback 0008). The on-device recognizer accumulates the whole
+    /// passage into one task, and its final transcription can still lead with an utterance that
+    /// `handlePartial` already committed as its own paragraph via a reset; without stripping it, a
+    /// following command's split would re-commit that paragraph, doubling it.
+    ///
+    /// Tolerant of the recognizer's word revisions ("there is" -> "there's"): it matches `committed`
+    /// against the result's start by character-level common prefix and treats it as consumed when
+    /// most of it lines up, then returns the remainder from the next word boundary (so a revised
+    /// final word is dropped whole, not half-left). When the result does NOT lead with `committed`
+    /// (the recognizer dropped it on an internal reset), nothing is stripped and the full result is
+    /// returned. Pure and nonisolated, so it is unit-testable off the main actor.
+    nonisolated static func strippingCommittedPrefix(from result: String, committed: String) -> String {
+        let committedTrim = committed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !committedTrim.isEmpty else { return result }
+        let lowerResult = result.lowercased()
+        let lowerCommitted = committedTrim.lowercased()
+        let common = zip(lowerResult, lowerCommitted).prefix { $0.0 == $0.1 }.count
+        // Require most of the committed text to line up at the result's start; otherwise the result
+        // is a different (post-reset) utterance and must be kept in full.
+        guard Double(common) >= Double(lowerCommitted.count) * 0.6 else { return result }
+        // Consume the matched region, then any trailing partial word and the whitespace after it, so
+        // a revised final word ("there's" for committed "there is") is dropped whole.
+        var idx = result.index(result.startIndex, offsetBy: min(common, result.count))
+        while idx < result.endIndex, !result[idx].isWhitespace { idx = result.index(after: idx) }
+        while idx < result.endIndex, result[idx].isWhitespace { idx = result.index(after: idx) }
+        return String(result[idx...])
+    }
+
     /// A task ENDED (clean final OR error). Commit the best available text as a finalized segment,
     /// reset the tracked partial, and restart if still capturing. Split out (and the text decision
     /// delegated to the pure `resolveEnd`) so the accumulating-segment + nil-result-end behavior is
     /// unit-testable without a live mic.
     private func handleTaskEnd(resultText: String?, resultRange: ParagraphTiming?) {
-        switch Self.resolveEnd(resultText: resultText, lastPartial: lastPartialText) {
-        case .usedResult(let text):
-            // The result carried the committed text, so its timings are valid; keep the range.
-            emit(.finalizedSegment(text, range: resultRange))
-        case .usedPartial(let text):
-            // A partial committed from a nil-result end has no result timings, so emit a nil range.
-            emit(.finalizedSegment(text, range: nil))
-        case .none:
-            break
+        // The whole task-end decision (strip the already-committed lead, resolve the text, decide
+        // whether the range still applies) is a pure function so it is unit-testable off the mic.
+        if let commit = Self.resolveTaskEndCommit(
+            resultText: resultText,
+            resultRange: resultRange,
+            lastPartial: lastPartialText,
+            committed: committedThisTask
+        ) {
+            emit(.finalizedSegment(commit.text, range: commit.range))
         }
-        // Committed (or nothing to commit): clear the tracked partial so a restart never re-commits it.
+        // Committed (or nothing to commit): clear the tracked partial AND the reset-commit marker so a
+        // restart never re-commits either.
         lastPartialText = ""
+        committedThisTask = ""
         // If still capturing, this is a duration limit or transient hiccup: restart a fresh task on
         // the same audio so dictation stays continuous.
         restartTaskIfCapturing()
+    }
+
+    /// The pure task-end commit decision (feedback 0008), nonisolated for unit testing. Strips any
+    /// utterance this task already committed via a reset (`committed`) from the front of the final
+    /// transcription - which on device can still lead with that already-committed paragraph, doubling
+    /// it - then resolves which text to commit and whether the result's range still applies. Returns
+    /// the text to emit and its range, or nil when there is nothing to commit.
+    ///
+    /// The range is kept ONLY when nothing was stripped: a stripped prefix shifts the remaining text
+    /// off the range the recognizer reported, so it falls back to nil (text-to-speech on playback)
+    /// rather than over-claiming it. A partial committed from a nil-result end never has a range.
+    nonisolated static func resolveTaskEndCommit(
+        resultText: String?,
+        resultRange: ParagraphTiming?,
+        lastPartial: String,
+        committed: String
+    ) -> (text: String, range: ParagraphTiming?)? {
+        let deduped = resultText.map { strippingCommittedPrefix(from: $0, committed: committed) }
+        let stripped = deduped != resultText
+        switch resolveEnd(resultText: deduped, lastPartial: lastPartial) {
+        case .usedResult(let text):
+            return (text, stripped ? nil : resultRange)
+        case .usedPartial(let text):
+            return (text, nil)
+        case .none:
+            return nil
+        }
     }
 
     /// COMMIT-ON-END invariant (feedback 0005 + 0006). Given the ending task's `resultText` (nil when
