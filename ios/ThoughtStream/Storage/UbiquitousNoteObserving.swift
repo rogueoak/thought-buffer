@@ -116,7 +116,9 @@ final class MetadataUbiquitousNoteObserver: NSObject, UbiquitousNoteObserving {
             try? fileManager.startDownloadingUbiquitousItem(at: url)
         }
 
-        let notify = onChange
-        DispatchQueue.main.async { notify?() }
+        // NSMetadataQuery delivers its notifications on the thread that started the query, which is
+        // the main thread (the observer is started from the Stream list's main-actor `.task`), so
+        // `onChange` - documented to fire on the main actor - can be called directly with no hop.
+        onChange?()
     }
 }

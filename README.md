@@ -7,8 +7,9 @@ press Start in CarPlay) and just talk. Unlike the built-in Notes app, Thought St
 continuous feed of your thoughts that lets you pause to think and, importantly, edit entirely by
 voice using a control word, so you never have to touch the screen.
 
-All speech-to-text runs on the device. Nothing you say leaves your phone, and no internet
-connection is required.
+All speech-to-text runs on the device. The words you speak are never sent to any server, and
+dictation needs no internet connection. Your notes are stored locally by default; you can
+optionally sync them through your own iCloud account so they follow you across your devices.
 
 ## Why it exists
 
@@ -47,7 +48,8 @@ the spelling "Shea".
 
 ## Features
 
-- **On-device speech-to-text.** Private by default, works offline, no account required.
+- **On-device speech-to-text.** Recognition runs entirely on your phone and works offline; the
+  audio never leaves the device. No Thought Stream account required.
 - **Continuous feed.** Notes are a stream you can pause and resume, not a blank page each time.
 - **Voice editing.** Fix and manage notes hands-free with the control word.
 - **CarPlay support.** Capture safely while driving.
@@ -58,9 +60,16 @@ the spelling "Shea".
 
 ## Privacy
 
-- Speech recognition happens locally on the device.
-- No account, no sign-in, no server. The app is fully local.
-- Your notes are your files, stored where you choose (on device or your own iCloud Drive folder).
+- **Speech is 100% on-device, always.** Recognition runs on your phone and the audio is never
+  sent to any server. This never changes, whichever storage you pick.
+- **No Thought Stream account, ever.** There is no Thought Stream sign-in and no Thought Stream
+  server. "No account" means no account with us - iCloud, if you enable it, uses your existing
+  Apple account, not one we create.
+- **Notes are local by default; iCloud sync is optional and yours.** Your notes are plain files
+  you own. Left local, they stay on the device. If you turn on iCloud sync, note files travel
+  through your own iCloud account (Apple) so they appear in the Files app and follow you across
+  your devices - the same way any iCloud Drive document does. That is the only thing that leaves
+  the device, it is your choice, and it can be kept off.
 
 ## Tech and design
 

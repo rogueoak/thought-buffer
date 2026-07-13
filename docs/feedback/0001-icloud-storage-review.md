@@ -48,4 +48,26 @@ obvious.
 Draw the off-main boundary at the *store read*, not just at container resolution, and put the
 load/observe glue in a testable model rather than inline in the view. Generalized into
 `overview/learnings.md`.
-</content>
+
+## Round 2 (Spectra persona review of the open PR)
+
+A second pass surfaced honesty and concurrency findings, all addressed on the same branch:
+
+- **README privacy copy was misleading** once iCloud is active (it claimed "fully local"). Split
+  the promise honestly: speech is 100% on-device always; note storage is local by default and
+  optionally syncs through the user's own Apple/iCloud account; "no account" means no Thought
+  Stream account.
+- **`NoteStoring: Sendable`** so the `Task.detached` store capture is sound under strict
+  concurrency; the immutable value-type stores conform for free, test doubles use
+  `@unchecked Sendable`.
+- **Teardown via `withTaskCancellationHandler`** in `StreamListView` instead of a 1s sleep-poll,
+  so `stop()` runs immediately on cancellation.
+- **Extracted headless `NoteStoreDriver`** (plain `@MainActor` type, not `ObservableObject`) that
+  owns the load + observer wiring so a future CarPlay/Siri session can drive it; `StreamFeed` is
+  now a thin projection republishing the driver's state. Behavior unchanged.
+- **`queryDidUpdate`** calls `onChange` directly (the `NSMetadataQuery` notification is already on
+  the main thread), dropping the redundant `DispatchQueue.main` hop.
+- **Tests:** `testFallbackStoreRoundTripsLikeLocal` now exercises the returned `selection.store`;
+  added the iCloud->local cross-store compatibility direction and a "change after stop does not
+  reload" assertion.
+

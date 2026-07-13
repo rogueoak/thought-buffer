@@ -93,6 +93,27 @@ final class StreamFeedTests: XCTestCase {
         XCTAssertNil(observer.onChange, "stop should drop the closure so a lifetime observer holds no stale reference")
     }
 
+    /// After stop(), a fired change must not trigger a reload: stop drops the observer's onChange,
+    /// so a late metadata callback from a torn-down observer never reaches a gone feed. Locks in the
+    /// suppression invariant.
+    func testChangeAfterStopDoesNotReload() async {
+        let store = InMemoryStore()
+        let observer = StubObserver()
+        let feed = StreamFeed(store: store, observer: observer)
+        await feed.start()
+        let loadsAfterStart = store.loadCount
+
+        feed.stop()
+        observer.fireChange()
+
+        // Give any (erroneously) scheduled reload a chance to run, then assert none happened.
+        for _ in 0..<10 {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 2_000_000)
+        }
+        XCTAssertEqual(store.loadCount, loadsAfterStart, "a change after stop must not reload")
+    }
+
     func testStartIsIdempotent() async {
         let store = InMemoryStore()
         let observer = StubObserver()

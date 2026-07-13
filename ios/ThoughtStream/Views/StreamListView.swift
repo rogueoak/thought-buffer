@@ -90,14 +90,18 @@ struct StreamListView: View {
         .tint(CanopyColor.primary)
         // A `.task` (not onAppear/onDisappear) so the feed wires its observer once for the lifetime
         // of this view in the stream, and is not stopped/restarted every time we push into a note
-        // detail on the same stack. On cancellation (view left) the feed tears the observer down.
+        // detail on the same stack. `withTaskCancellationHandler` tears the observer down the moment
+        // the task is cancelled (the view left the hierarchy), with no polling delay.
         .task {
-            await feed.start()
-            // Suspend until the task is cancelled (view left the hierarchy), then clean up.
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            await withTaskCancellationHandler {
+                await feed.start()
+                // Park until cancelled; the handler below runs `stop()` immediately on cancel.
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 60 * 1_000_000_000)
+                }
+            } onCancel: {
+                Task { @MainActor in feed.stop() }
             }
-            feed.stop()
         }
     }
 

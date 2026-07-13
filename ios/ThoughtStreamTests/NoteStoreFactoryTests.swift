@@ -66,16 +66,16 @@ final class NoteStoreFactoryTests: XCTestCase {
         )
         let selection = await factory.make()
 
-        // Point at a temp dir to avoid touching the real Documents directory.
-        let tempDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FactoryFallback-\(UUID().uuidString)", isDirectory: true)
-        defer { try? FileManager.default.removeItem(at: tempDir) }
-        XCTAssertTrue(selection.store is NoteStore)
-        let store = NoteStore(directory: tempDir)
-
+        // Exercise the RETURNED store, not a fresh one, so the round-trip proves what the factory
+        // actually hands back. It roots at the real Documents dir, so use a uniquely-identified note
+        // and delete it afterwards to leave no residue.
+        let store = try XCTUnwrap(selection.store as? NoteStore)
         let note = Note(title: "local", paragraphs: ["Still works offline."], createdAt: Date())
         try store.save(note)
-        XCTAssertEqual(store.loadAll().first?.title, "local")
+        defer { try? store.delete(id: note.id) }
+
+        let loaded = try XCTUnwrap(store.load(id: note.id))
+        XCTAssertEqual(loaded.title, "local")
     }
 
     /// AppDependencies.resolve threads the factory's choice through the composition root, so the

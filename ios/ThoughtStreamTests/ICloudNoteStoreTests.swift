@@ -113,6 +113,18 @@ final class ICloudNoteStoreTests: XCTestCase {
         XCTAssertEqual(loaded.paragraphs, note.paragraphs)
     }
 
+    /// The other direction: a file written by the iCloud store must load through the local store,
+    /// so falling back from iCloud to local (or reading iCloud-synced files locally) is lossless.
+    func testFileWrittenByICloudStoreLoadsThroughLocalStore() throws {
+        let note = Note(title: "shared", paragraphs: ["Same file, either store."], createdAt: Date())
+        try store.save(note)
+
+        let local = NoteStore(directory: tempDir)
+        let loaded = try XCTUnwrap(local.load(id: note.id))
+        XCTAssertEqual(loaded.title, "shared")
+        XCTAssertEqual(loaded.paragraphs, note.paragraphs)
+    }
+
     /// The container-rooted initializer nests notes under Documents/ThoughtStream.
     func testContainerDocumentsInitNestsUnderThoughtStream() {
         let documents = tempDir.appendingPathComponent("Documents", isDirectory: true)
