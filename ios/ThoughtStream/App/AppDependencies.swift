@@ -15,9 +15,16 @@ struct AppDependencies {
     /// refreshes. Nil when storage is local (nothing external to watch).
     let noteObserver: UbiquitousNoteObserving?
 
+    /// The user's configurable settings: control phrase and spelling overrides. Held so the
+    /// Settings screen edits the same instance the processor factory reads. Local (`UserDefaults`)
+    /// only; see spec 0006.
+    let settingsStore: SettingsStoring
+
     /// Builds the text processor for a dictation session. Returns a fresh one each time so a
-    /// stateful processor never leaks across sessions. Defaults to the Mira control-word
-    /// processor with the built-in control word.
+    /// stateful processor never leaks across sessions, and reads CURRENT settings at build time so
+    /// edits in Settings apply to the next session started. Defaults to a `CompositeTextProcessor`
+    /// composing the Mira control-word processor (with the configured control phrase) and the
+    /// spelling-override processor.
     let makeTextProcessor: () -> TextProcessor
 
     /// The shared "start a new dictation session" seam. The Record button, the Siri App Intent, and
@@ -33,13 +40,22 @@ struct AppDependencies {
         noteStore: NoteStoring = NoteStore(),
         noteStoreKind: NoteStoreKind = .local,
         noteObserver: UbiquitousNoteObserving? = nil,
-        makeTextProcessor: @escaping () -> TextProcessor = { MiraTextProcessor() },
+        settingsStore: SettingsStoring = UserDefaultsSettingsStore(),
+        makeTextProcessor: (() -> TextProcessor)? = nil,
         sessionRoute: PendingSessionRoute? = nil
     ) {
         self.noteStore = noteStore
         self.noteStoreKind = noteStoreKind
         self.noteObserver = noteObserver
-        self.makeTextProcessor = makeTextProcessor
+        self.settingsStore = settingsStore
+        // Default factory reads current settings each call and builds a fresh composite, so an edit
+        // in Settings applies to the next session. Injectable for tests that want a fixed processor.
+        self.makeTextProcessor = makeTextProcessor ?? {
+            CompositeTextProcessor(
+                controlWord: settingsStore.controlPhrase,
+                overrides: settingsStore.spellingOverrides
+            )
+        }
         // Built here (on the main actor) when none is injected, so the route's main-actor
         // initializer is never called from a nonisolated default-argument context.
         self.sessionRoute = sessionRoute ?? PendingSessionRoute()
@@ -75,14 +91,17 @@ struct AppDependencies {
     @MainActor
     static func resolve(
         factory: NoteStoreFactory = NoteStoreFactory(),
-        makeTextProcessor: @escaping () -> TextProcessor = { MiraTextProcessor() }
+        settingsStore: SettingsStoring = UserDefaultsSettingsStore()
     ) async -> AppDependencies {
         let selection = await factory.make()
+        // No `makeTextProcessor` passed: the init's default factory builds a `CompositeTextProcessor`
+        // from `settingsStore` each session, so control-phrase and override edits take effect next
+        // session.
         let dependencies = AppDependencies(
             noteStore: selection.store,
             noteStoreKind: selection.kind,
             noteObserver: selection.observer,
-            makeTextProcessor: makeTextProcessor
+            settingsStore: settingsStore
         )
         shared = dependencies
         return dependencies

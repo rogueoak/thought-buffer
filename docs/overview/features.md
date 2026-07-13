@@ -105,3 +105,24 @@ whose hands are busy driving.
 
 Parameterized intents ("start a stream about X"), a fully in-CarPlay live-capture UI, and Shortcuts
 actions beyond start / new note are still out.
+
+## Settings (spec 0006)
+
+The Settings stub becomes real: two things a user configures, plus a read-only storage status.
+Reachable from the gear in the Stream toolbar. Changes apply to the next dictation session started
+(the text processor is built per session from current settings), noted in the UI copy.
+
+- **Custom control phrase.** Name the assistant whatever you like (default "Mira"). Type "Nova" and
+  "Nova remove the last sentence" fires the remove command while "Mira ..." no longer does; the
+  command chip reads with the chosen name. Input is trimmed and validated: an empty, whitespace, or
+  over-long value falls back to "Mira", so clearing the field is a valid reset.
+- **Spelling overrides.** Keep an ordered list of from -> to fixes for words the recognizer gets
+  wrong (spoken "Shay" -> written "Shea"). Add, edit, and delete pairs. They apply to dictated text
+  before commit: whole-word and case-insensitive, so "shay"/"Shay" both become "Shea" while "Shayla"
+  is untouched; multiple overrides apply together and never corrupt a substring. A control phrase is
+  never spelling-mangled - commands are detected first, on the raw segment.
+- **Storage status.** A read-only row shows whether notes live on iCloud or on this device, read
+  from the backend the app resolved at launch.
+
+Settings persist in `UserDefaults` across relaunch. Cloud sync of settings, per-note settings, and
+importing / exporting override lists are out; changes take effect next session, not mid-session.

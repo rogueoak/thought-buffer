@@ -93,3 +93,18 @@ request path return a nil/no-op starter. Make presentation a pure function of th
 (`PendingSessionRoute.shouldPresent`) so it is unit-testable and has no lost-edge cases (a start requested
 while backgrounded opens on appear; a re-request after a session ends re-opens). Generalizes to any
 future OS-triggered entry point that starts an in-app flow.
+
+## Validate a config value against its consumer's contract, not just its shape (spec 0006)
+
+A user-editable setting must be validated against what DOWNSTREAM does with it, not merely that it
+looks reasonable. A control phrase that is non-empty and short still breaks every command if the
+parser matches a single token and the phrase is multi-word ("Hey Nova"); a spelling override with a
+filled `from` but a blank `to` maps a real word to "" and silently DELETES it. Both pass a
+shape check (non-empty, within length) and both fail silently - the app keeps running and does the
+wrong thing, with no error to notice. So: when you validate a setting, trace the exact contract of
+the code that reads it (the parser tokenizes -> collapse to one token; a blank replacement is a
+deletion -> require both sides) and encode that. Two supports make this cheap and safe: put the
+rule in a shared seam both the store and the UI call (so the view never reaches into a concrete
+store and the rule can't drift), and bound any user-editable persisted collection (row count,
+field length) so a stuck field cannot grow storage without limit. Generalizes to any configurable
+value that feeds a parser, a transform, or a persisted collection.

@@ -25,6 +25,14 @@ struct ThoughtStreamApp: App {
             // screenshots, since the simulator has no scripted tap. Normal launches
             // start on the Stream list.
             if CommandLine.arguments.contains("-uiScreen"),
+               CommandLine.arguments.contains("settings") {
+                // Screenshot mode: render the real Settings screen seeded with a sample control
+                // phrase and overrides so the live design shows populated rows without any taps.
+                SettingsView(
+                    settings: ScreenshotSettings(),
+                    storeKind: .local
+                )
+            } else if CommandLine.arguments.contains("-uiScreen"),
                CommandLine.arguments.contains("dictation") {
                 // Screenshot mode: inject sample text so the live design renders without a mic
                 // or permission prompt in the simulator. A `mira-command` argument also injects a
@@ -45,6 +53,8 @@ struct ThoughtStreamApp: App {
                 StreamListView(
                     store: dependencies.noteStore,
                     makeTextProcessor: dependencies.makeTextProcessor,
+                    settingsStore: dependencies.settingsStore,
+                    noteStoreKind: dependencies.noteStoreKind,
                     noteObserver: dependencies.noteObserver,
                     sessionRoute: dependencies.sessionRoute
                 )
@@ -55,4 +65,14 @@ struct ThoughtStreamApp: App {
             CanopyColor.bg.ignoresSafeArea()
         }
     }
+}
+
+/// An in-memory `SettingsStoring` seeded with sample data, used only in `-uiScreen settings`
+/// screenshot mode so the Settings design renders populated without touching real defaults.
+private final class ScreenshotSettings: SettingsStoring {
+    var controlPhrase: String = "Nova"
+    var spellingOverrides: [SpellingOverride] = [
+        SpellingOverride(from: "Shay", to: "Shea"),
+        SpellingOverride(from: "kwan", to: "Quan"),
+    ]
 }
