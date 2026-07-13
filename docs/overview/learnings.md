@@ -57,6 +57,21 @@ either backend loads through either - that is what makes switching backends loss
 `NSMetadataQuery` live-update behind a protocol with a pure mapping so the enumeration and
 download-trigger logic is unit-testable with stub items, with no real iCloud.
 
+## Blocking storage reads belong off the main actor, in a testable feed model (spec 0004)
+
+The same off-main discipline applied to iCloud container resolution has to extend to the store
+read: `ICloudNoteStore.loadAll()` is a chain of `NSFileCoordinator` reads that can block on the
+sync daemon and fires on every metadata change, so running it on the main actor stutters the UI.
+Put the load and the live-update observer wiring in a small `@MainActor` model (`StreamFeed`) that
+loads on a detached task and only hops back to main to publish - not inline in the SwiftUI view.
+Two payoffs: the boundary is drawn once at the read, and the glue (initial load, observer
+`start`/`stop`, `onChange` -> reload, the local no-observer path) becomes unit-testable with a
+stub store and stub observer. Bind that model's lifecycle to a single `.task` (cancellation tears
+the observer down and clears its closure), not to `onAppear`/`onDisappear`, so a long-lived
+observer is not restarted on every navigation push/pop and never holds a stale reference into a
+gone view. This generalizes to any future feature that reads a slow or coordinated backend to feed
+a list.
+
 ## Widen a seam by returning a result, not by adding a branch (spec 0003)
 
 When a transform seam needs to do more than transform (here, consume a segment as a command

@@ -11,7 +11,7 @@ final class ICloudNoteStoreTests: XCTestCase {
     override func setUpWithError() throws {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("ICloudNoteStoreTests-\(UUID().uuidString)", isDirectory: true)
-        store = ICloudNoteStore(directory: tempDir)
+        store = ICloudNoteStore.forTesting(directory: tempDir)
     }
 
     override func tearDownWithError() throws {
@@ -39,6 +39,22 @@ final class ICloudNoteStoreTests: XCTestCase {
         XCTAssertEqual(loaded.id, note.id)
         XCTAssertEqual(loaded.title, note.title)
         XCTAssertEqual(loaded.paragraphs, note.paragraphs)
+        // Pin the ISO8601 frontmatter date round-trip directly, not just via sort order.
+        XCTAssertEqual(loaded.createdAt.timeIntervalSince1970, note.createdAt.timeIntervalSince1970, accuracy: 0.001)
+    }
+
+    /// A bare `.md` file with no frontmatter - as a note synced in from another device or edited
+    /// by hand might be - loads with its id derived from the filename and its date from the file's
+    /// modification time (the fallbackID / fallbackDate path in `readNote`).
+    func testLoadsBareMarkdownUsingFilenameIdAndModifiedDate() throws {
+        try store.ensureDirectory()
+        let id = UUID()
+        let url = tempDir.appendingPathComponent("\(id.uuidString).md", isDirectory: false)
+        try "Just a body, no frontmatter.".write(to: url, atomically: true, encoding: .utf8)
+
+        let loaded = try XCTUnwrap(store.load(id: id))
+        XCTAssertEqual(loaded.id, id, "id should come from the filename")
+        XCTAssertEqual(loaded.paragraphs, ["Just a body, no frontmatter."])
     }
 
     func testLoadAllSortsNewestFirst() throws {

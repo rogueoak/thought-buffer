@@ -27,9 +27,18 @@ struct ICloudNoteStore: NoteStoring {
         self.directory = containerDocumentsURL.appendingPathComponent("ThoughtStream", isDirectory: true)
     }
 
-    /// Build a store rooted at an explicit directory (used by tests against a temp dir).
-    init(directory: URL) {
+    /// Build a store rooted at an explicit notes directory. Private so callers cannot confuse it
+    /// with `init(containerDocumentsURL:)` - both take a `URL` but mean different things (this one
+    /// is the exact notes dir, that one is the container Documents that gets `ThoughtStream/`
+    /// appended). Reach it through `forTesting(directory:)`.
+    private init(directory: URL) {
         self.directory = directory
+    }
+
+    /// Build a store rooted at an explicit directory, for tests against a temp dir. The label
+    /// makes the test-only, no-appending semantics unmistakable at the call site.
+    static func forTesting(directory: URL) -> ICloudNoteStore {
+        ICloudNoteStore(directory: directory)
     }
 
     /// The file URL for a given note id.

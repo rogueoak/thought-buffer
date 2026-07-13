@@ -58,9 +58,14 @@ How the system is built and why.
   `TextProcessor`, executes `MiraCommand`s (note mutations, new note save+reset, read-back), and
   saves through the store. For read-back it pauses capture, hands the last paragraph to the
   `Speaker`, and resumes when the speaker reports the utterance finished, so the spoken audio
-  never feeds back into recognition.
-- `Views/` - SwiftUI screens. `StreamListView` loads from `NoteStore`; `DictationView` binds to
-  `DictationViewModel`; `NoteCard`, `NoteDetailView`, `SettingsView` stay presentational.
+  never feeds back into recognition. `StreamFeed` (`@MainActor ObservableObject`) owns the Stream
+  list's notes: it loads through the store on a detached task (the iCloud store's `loadAll()` can
+  block on coordinated IO, so it must not run on the main actor) and, on iCloud, wires the
+  `UbiquitousNoteObserving` observer once (`start`/`stop`, `onChange` -> reload) so the list
+  refreshes on synced-in / external edits without restarting the query on navigation.
+- `Views/` - SwiftUI screens. `StreamListView` drives a `StreamFeed` from a single `.task` and
+  stays presentational; `DictationView` binds to `DictationViewModel`; `NoteCard`,
+  `NoteDetailView`, `SettingsView` stay presentational.
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.
 
@@ -68,9 +73,11 @@ Tests live in `ios/ThoughtStreamTests/` (a `bundle.unit-test` target): `NoteStor
 Markdown, `DictationViewModel` save/reload, the `MiraCommandParser` grammar, `SentenceTokenizer`,
 Mira command execution (note mutations, new note, read-back via a `Speaker` stub, and
 `TextProcessor` result routing via stub capture/speaker doubles), the `ICloudNoteStore` coordinated
-round-trip against a temp dir (plus cross-store file compatibility), `NoteStoreFactory` selection
-and lossless fallback via a stub `UbiquityContainerProviding`, and the `UbiquitousNoteMapping`
-metadata-to-notes logic via stub items. The generated scheme runs them.
+round-trip against a temp dir (plus cross-store file compatibility and the bare-markdown fallback
+path), `NoteStoreFactory` selection and lossless fallback via a stub `UbiquityContainerProviding`,
+the `UbiquitousNoteMapping` metadata-to-notes logic via stub items, and `StreamFeed` load +
+observer wiring (start/stop, onChange -> reload, local no-observer path) via stub store/observer.
+The generated scheme runs them.
 
 ## Design tokens
 

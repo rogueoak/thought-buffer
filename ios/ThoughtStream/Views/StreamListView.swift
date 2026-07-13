@@ -5,16 +5,13 @@ import SwiftUI
 /// the `NoteStore` and refresh after a dictation session saves.
 struct StreamListView: View {
     /// The note store, injected from the composition root (`AppDependencies`) rather than
-    /// allocated inline, so one place wires the concrete store.
+    /// allocated inline, so one place wires the concrete store. Kept for the dictation session.
     private let store: NoteStoring
     /// Builds the text processor for a dictation session (Mira control words by default). Injected
     /// from the composition root so one place decides the processor.
     private let makeTextProcessor: () -> TextProcessor
-    /// Watches iCloud for external edits / synced-in notes so the list refreshes without a manual
-    /// reload. Nil when storage is local (nothing external to observe).
-    private let noteObserver: UbiquitousNoteObserving?
-    @State private var notes: [Note] = []
-    @State private var didLoad = false
+    /// The feed model: owns the notes state, the off-main load, and the iCloud observer wiring.
+    @StateObject private var feed: StreamFeed
     @State private var showDictation = false
     @State private var showSettings = false
 
@@ -25,7 +22,7 @@ struct StreamListView: View {
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
-        self.noteObserver = noteObserver
+        _feed = StateObject(wrappedValue: StreamFeed(store: store, observer: noteObserver))
     }
 
     var body: some View {
@@ -33,12 +30,12 @@ struct StreamListView: View {
             ZStack(alignment: .bottom) {
                 CanopyColor.bg.ignoresSafeArea()
 
-                if notes.isEmpty && didLoad {
+                if feed.notes.isEmpty && feed.didLoad {
                     emptyState
                 } else {
                     ScrollView {
                         LazyVStack(spacing: CanopySpacing.x3) {
-                            ForEach(notes) { note in
+                            ForEach(feed.notes) { note in
                                 NavigationLink(value: note) {
                                     NoteCard(note: note)
                                 }
@@ -82,7 +79,7 @@ struct StreamListView: View {
                     model: DictationViewModel(store: store, processor: makeTextProcessor())
                 ) { savedNote in
                     if savedNote != nil {
-                        reload()
+                        Task { await feed.reload() }
                     }
                 }
             }
@@ -91,17 +88,17 @@ struct StreamListView: View {
             }
         }
         .tint(CanopyColor.primary)
-        .onAppear(perform: startObservingIfNeeded)
-        .onDisappear { noteObserver?.stop() }
-    }
-
-    /// Load once, then begin observing iCloud so synced-in or externally edited notes refresh the
-    /// list. On local storage there is no observer, so this just loads.
-    private func startObservingIfNeeded() {
-        loadIfNeeded()
-        guard let noteObserver else { return }
-        noteObserver.onChange = { reload() }
-        noteObserver.start()
+        // A `.task` (not onAppear/onDisappear) so the feed wires its observer once for the lifetime
+        // of this view in the stream, and is not stopped/restarted every time we push into a note
+        // detail on the same stack. On cancellation (view left) the feed tears the observer down.
+        .task {
+            await feed.start()
+            // Suspend until the task is cancelled (view left the hierarchy), then clean up.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            feed.stop()
+        }
     }
 
     private var emptyState: some View {
@@ -118,16 +115,6 @@ struct StreamListView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, CanopySpacing.x8)
         }
-    }
-
-    private func loadIfNeeded() {
-        guard !didLoad else { return }
-        reload()
-    }
-
-    private func reload() {
-        notes = store.loadAll()
-        didLoad = true
     }
 }
 
