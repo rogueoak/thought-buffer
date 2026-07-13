@@ -500,3 +500,36 @@ private final class ThrowingDeleteStore: NoteStoring, @unchecked Sendable {
 
     func delete(id: UUID) throws { throw DeleteError() }
 }
+
+/// The on-device utterance-RESET detection (`SpeechDictationService.isReset`) is pure and testable.
+/// It is what commits the pre-pause words when the recognizer starts a new utterance within a task
+/// without ending it (feedback 0007), so the "Hey how's it going" -> "Yeah things..." reset from the
+/// device recording no longer loses the first utterance.
+final class UtteranceResetTests: XCTestCase {
+    func testNewUtteranceWithDifferentStartIsReset() {
+        // The exact case from the device screen recording.
+        XCTAssertTrue(SpeechDictationService.isReset(
+            previous: "Hey how's it going", current: "Yeah things are going pretty good"))
+    }
+
+    func testMonotonicGrowthIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hey how's", current: "Hey how's it going"))
+    }
+
+    func testLastWordRevisionIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hey how's it going", current: "Hey how's it goin"))
+    }
+
+    func testSameFirstWordDifferentSecondIsReset() {
+        XCTAssertTrue(SpeechDictationService.isReset(previous: "The cat sat", current: "The dog ran"))
+    }
+
+    func testEmptyPreviousIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(previous: "", current: "anything at all"))
+    }
+
+    func testSingleWordGrowthIsNotResetButNewWordIs() {
+        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hey", current: "Hey there"))
+        XCTAssertTrue(SpeechDictationService.isReset(previous: "Hey", current: "Yeah"))
+    }
+}

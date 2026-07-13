@@ -294,8 +294,31 @@ final class SpeechDictationService: SpeechCaptureService {
     private func handlePartial(_ resultText: String?) {
         guard let resultText,
               !resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        // On-device utterance RESET (feedback 0007): after a pause the recognizer sometimes begins a
+        // NEW utterance's transcription within the SAME task instead of extending the previous one, and
+        // never fires a task end - so the words before the pause live only in `lastPartialText` and the
+        // new partial would overwrite them, losing them. When the new partial is NOT a continuation of
+        // the last one, commit the previous partial as its own paragraph BEFORE adopting the new text.
+        if Self.isReset(previous: lastPartialText, current: resultText) {
+            emit(.finalizedSegment(lastPartialText, range: nil))
+        }
         lastPartialText = resultText
         emit(.partial(resultText))
+    }
+
+    /// True when `current` is a NEW utterance rather than a continuation/revision of `previous` - i.e.
+    /// the on-device recognizer reset its transcription within a task. Continuation means `current`
+    /// reproduces all-but-the-last word of `previous` at its start (the last word may still be revised,
+    /// and `current` may extend it). Pure and nonisolated, so it is unit-testable off the main actor.
+    nonisolated static func isReset(previous: String, current: String) -> Bool {
+        let prev = previous.lowercased().split(separator: " ").map(String.init)
+        let curr = current.lowercased().split(separator: " ").map(String.init)
+        guard !prev.isEmpty else { return false }
+        let stable = Array(prev.dropLast())
+        if stable.isEmpty { return curr.first != prev.first }
+        if curr.count < stable.count { return true }
+        for (a, b) in zip(stable, curr) where a != b { return true }
+        return false
     }
 
     /// A task ENDED (clean final OR error). Commit the best available text as a finalized segment,

@@ -26,6 +26,9 @@ struct StreamListView: View {
     /// Record button starts a session through the same seam every other entry point uses.
     @ObservedObject private var sessionRoute: PendingSessionRoute
     @State private var showSettings = false
+    /// Navigation stack path. Pushing a `Note` opens its detail page; used to land the user on the
+    /// note they just recorded when a session ends (feedback 0007).
+    @State private var path: [Note] = []
 
     /// Presentation of the dictation screen is a pure function of the pending route: it is shown
     /// exactly while a start is pending (`PendingSessionRoute.shouldPresent`). Setting it false - the
@@ -59,7 +62,7 @@ struct StreamListView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if feed.notes.isEmpty && feed.didLoad {
                     // Center in the frame that REMAINS after the record button's safe-area inset, so
@@ -162,9 +165,11 @@ struct StreamListView: View {
                     )
                 ) { savedNote in
                     // The session is over: consuming the pending route (via the binding's setter on
-                    // dismiss) closes the cover; here just refresh the feed if a note was saved.
-                    if savedNote != nil {
+                    // dismiss) closes the cover. Refresh the feed and open the saved note's page, so the
+                    // user lands on what they just recorded rather than back on the list (feedback 0007).
+                    if let savedNote {
                         Task { await feed.reload() }
+                        path = [savedNote]
                     }
                 }
             }
