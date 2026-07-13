@@ -123,34 +123,6 @@ final class DictationViewModel: ObservableObject {
         case newNoteSaveFailed
     }
 
-    #if DEBUG
-    /// DEBUG-ONLY on-device diagnostic: the last FINALIZED recognized text and how it was classified,
-    /// shown as an unobtrusive on-screen label so the developer can see, on their own hardware, exactly
-    /// what the recognizer produced and how the processor split it. Compiled OUT of Release entirely.
-    /// It is NEVER logged, persisted, or transmitted - it lives only in this published field and its
-    /// on-screen label. The production code path does not read it, so nothing changes in Release.
-    @Published private(set) var lastDebugTrace: String = "TS-DEBUG ready - speak, then pause"
-
-    /// Recent FINALIZED classifications, so the on-screen log shows whether a pause actually
-    /// committed a segment (a `final:` line appears) or the live partial just reset without one.
-    private var debugHistory: [String] = []
-
-    /// Rebuild the on-screen trace: the recent finalized lines plus the current live partial.
-    private func debugRebuild(partial: String) {
-        var lines = debugHistory
-        let p = partial.trimmingCharacters(in: .whitespacesAndNewlines)
-        lines.append("> " + (p.isEmpty ? "(listening)" : "partial: \"" + String(p.suffix(40)) + "\""))
-        lastDebugTrace = lines.joined(separator: "\n")
-    }
-
-    /// Append a finalized-classification line to the rolling log (keeping the last few).
-    private func debugRecordFinal(_ line: String) {
-        debugHistory.append("final: " + line)
-        if debugHistory.count > 4 { debugHistory.removeFirst() }
-        debugRebuild(partial: "")
-    }
-    #endif
-
     private let service: SpeechCaptureService
     private let store: NoteStoring
     private let processor: TextProcessor
@@ -396,9 +368,6 @@ final class DictationViewModel: ObservableObject {
         switch event {
         case .partial(let text):
             partial = partialText(from: processor.process(text))
-            #if DEBUG
-            debugRebuild(partial: text)
-            #endif
         case .finalizedSegment(let text, let range):
             handleFinalized(text, range: range)
         case .level(let value):
@@ -416,11 +385,6 @@ final class DictationViewModel: ObservableObject {
     /// start; the split commits the pre-keyword words and then runs (or drops) the command.
     private func handleFinalized(_ text: String, range: ParagraphTiming?) {
         let segment = processor.process(text)
-        #if DEBUG
-        // Record the raw recognized text and its classification for the on-screen diagnostic. This is
-        // the only mutation the diagnostic makes; it does not affect the routing below.
-        debugRecordFinal(Self.debugTrace(for: text, segment: segment, controlWord: controlWord))
-        #endif
         switch segment {
         case .text(let value):
             commitParagraph(value, range: range)
@@ -639,47 +603,6 @@ final class DictationViewModel: ObservableObject {
     private func showUnrecognizedCommandBanner() {
         showBannerLabel("Sorry, I didn't catch that command")
     }
-
-    #if DEBUG
-    /// Build the DEBUG-only diagnostic line for a finalized segment: the recognized text (truncated)
-    /// and how the processor classified it. Pure and static; it does NOT log, persist, or transmit -
-    /// its result is only shown on screen. Compiled out of Release.
-    private static func debugTrace(for text: String, segment: ProcessedSegment, controlWord: String) -> String {
-        let recognized = truncateForTrace(text)
-        let classification: String
-        switch segment {
-        case .text:
-            classification = "text"
-        case .drop:
-            classification = "drop"
-        case .split(let preText, let outcome):
-            let pre = truncateForTrace(preText)
-            switch outcome {
-            case .command(let command):
-                classification = "split(pre=\"\(pre)\", command: \(commandName(command)))"
-            case .unrecognizedCommand:
-                classification = "split(pre=\"\(pre)\", unrecognizedCommand)"
-            }
-        }
-        return "cw=\(controlWord) | \"\(recognized)\" -> \(classification)"
-    }
-
-    /// Truncate a string to ~80 chars for the on-screen diagnostic so a long passage stays readable.
-    private static func truncateForTrace(_ text: String) -> String {
-        let limit = 80
-        return text.count > limit ? String(text.prefix(limit)) + "..." : text
-    }
-
-    /// A short label for a command in the diagnostic (e.g. `newNote`, `readThatBack`).
-    private static func commandName(_ command: MiraCommand) -> String {
-        switch command {
-        case .removeLastSentence: return "removeLastSentence"
-        case .removeLastParagraph: return "removeLastParagraph"
-        case .newNote: return "newNote"
-        case .readThatBack: return "readThatBack"
-        }
-    }
-    #endif
 
     /// Set the transient chip label and schedule its auto-dismiss.
     private func showBannerLabel(_ label: String) {

@@ -76,9 +76,16 @@ struct StreamListView: View {
                     // and each row keeps the NoteCard's own surface/border via inset row spacing.
                     List {
                         ForEach(feed.notes) { note in
-                            NavigationLink(value: note) {
+                            // A plain Button (not a NavigationLink) so the row carries NO trailing
+                            // disclosure chevron and the whole card is the tap target (feedback 0008).
+                            // Navigation is driven by appending to the stack path, the same seam the
+                            // record-finished handler uses to land on a saved note.
+                            Button {
+                                path.append(note)
+                            } label: {
                                 NoteCard(note: note)
                             }
+                            .buttonStyle(.plain)
                             .listRowInsets(EdgeInsets(
                                 top: CanopySpacing.x1_5,
                                 leading: CanopySpacing.x4,
@@ -125,7 +132,7 @@ struct StreamListView: View {
                 }
             }
             .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
-            .navigationTitle("Stream")
+            .navigationTitle("Thoughts")
             .navigationDestination(for: Note.self) { note in
                 // Pass the store as a lazy resolver rather than resolving here: the detail view's
                 // playback model validates the recording off the main actor at play time, so pushing
