@@ -158,3 +158,37 @@ Recognition is unchanged and nothing leaves the phone.
 Real mic capture and playback quality need a physical device (the Simulator mic produces no useful
 audio); the pipeline is proven structurally and by tests. A recordings list, a waveform scrubber,
 parameterized playback controls, and the CarPlay Audio surface / entitlement are out.
+
+## CarPlay Audio surface, shared playback, and system Now Playing (spec 0008)
+
+The recordings from spec 0007 become a real Audio-app experience: browse and play your voice notes
+in CarPlay Now Playing and on the phone lock screen. This is the concrete basis for requesting
+Apple's CarPlay **Audio** entitlement.
+
+- **CarPlay recordings browser + Now Playing.** The CarPlay root is a `CPListTemplate` listing notes
+  that HAVE a recording (title, relative date, duration), newest first, driven by the headless
+  `NoteStoreDriver` through a `RecordingsListModel`. A top "Start a thought stream" row still begins
+  a hands-free session through the shared `SessionStarter`. Tapping a recording plays its `.m4a` and
+  pushes `CPNowPlayingTemplate` with working play / pause and skip (+/-15s over the note). The list
+  refreshes live when a session saves or a note syncs in.
+- **System Now Playing + remote commands (phone AND CarPlay).** Playing a note populates
+  `MPNowPlayingInfoCenter` (title, duration, elapsed) and wires `MPRemoteCommandCenter`
+  (play / pause / stop / skip), and the app declares the `audio` background mode, so a note played on
+  the phone shows on the lock screen and in Control Center and keeps playing in the background - a
+  real Audio-app trait that needs no entitlement.
+- **One shared playback path.** A single headless `NotePlaybackController` owns the player, the lazy
+  off-main URL resolution, and the Now Playing / remote-command wiring; both the phone detail view
+  (through `NotePlaybackModel`) and the CarPlay scene drive it, so there is one audio path and one
+  writer of `MPNowPlayingInfoCenter`. `AVAudioSession` `.playback` coexists with the record session
+  used during dictation (dictation deactivates playback before recording, as spec 0007 established).
+- **Entitlement gating.** The CarPlay scene stays dormant without the CarPlay Audio entitlement,
+  exactly like the 0005 scaffold: the unsigned Simulator build and the App Store build stay green
+  with an empty `DEVELOPMENT_TEAM` and no CarPlay entitlement declared.
+  `docs/carplay-audio-entitlement-request.md` records the honest justification (on-device, records
+  and plays the user's voice notes, low-distraction browse + Now Playing) and the exact steps to
+  enable it once Apple grants it.
+
+CarPlay itself needs the Audio entitlement plus a CarPlay head unit / the CarPlay simulator, so it is
+proven structurally and by tests. The lock-screen Now Playing render needs a device; the wiring is
+covered by unit tests. A waveform scrubber, per-paragraph seek, in-CarPlay live capture, and a
+"play my last note" Siri intent are out.

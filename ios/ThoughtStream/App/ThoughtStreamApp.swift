@@ -113,7 +113,11 @@ private enum ScreenshotNotes {
 private final class InertAudioNotePlayer: AudioNotePlayer {
     var onFinish: (() -> Void)?
     func play(url: URL, from start: Double, duration: Double?) -> Bool { false }
+    func pause() {}
+    func resume() -> Bool { false }
     func stop() {}
+    var currentTime: Double { 0 }
+    func seek(to time: Double) {}
 }
 
 /// A resolver that always returns a fixed URL, for screenshot mode: the Play affordance renders

@@ -44,6 +44,13 @@ targets:
       properties:
         CFBundleDisplayName: Thought Stream
         UILaunchScreen: {}
+        # Background audio (spec 0008): a note played on the phone keeps playing when the screen locks
+        # or the app backgrounds, and shows on the lock screen / Control Center via the shared playback
+        # controller's `MPNowPlayingInfoCenter` wiring. This is a real Audio-app trait and needs NO
+        # entitlement, so the unsigned Simulator build and the App Store build stay green. It also
+        # substantiates the CarPlay Audio-category identity (see the entitlement-request doc).
+        UIBackgroundModes:
+          - audio
         # Multiple scenes are enabled so the CarPlay scene can coexist with the phone window. The
         # phone UI is SwiftUI (a `WindowGroup`, no explicit delegate needed); the CarPlay scene names
         # its `CPTemplateApplicationSceneDelegate`. The CarPlay role stays dormant without the CarPlay

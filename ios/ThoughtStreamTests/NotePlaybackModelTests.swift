@@ -153,6 +153,10 @@ private final class StubAudioNotePlayer: AudioNotePlayer {
         return playSucceeds
     }
 
+    func pause() {}
+    func resume() -> Bool { true }
     func stop() { stopCount += 1 }
+    var currentTime: Double { 0 }
+    func seek(to time: Double) {}
     func finish() { onFinish?() }
 }

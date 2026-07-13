@@ -11,11 +11,11 @@ struct NoteDetailView: View {
     /// presence check. When the note claims no audio, no play affordance shows.
     init(note: Note, resolver: AudioURLResolving, player: AudioNotePlayer? = nil) {
         self.note = note
+        // The full note is passed through so the shared playback controller titles the system Now
+        // Playing item (lock screen / Control Center) and reads the recording duration.
         _playback = StateObject(wrappedValue: NotePlaybackModel(
-            noteID: note.id,
-            audioFileName: note.audioFileName,
-            resolver: resolver,
-            player: player
+            note: note,
+            controller: NotePlaybackController(resolver: resolver, player: player)
         ))
     }
 
