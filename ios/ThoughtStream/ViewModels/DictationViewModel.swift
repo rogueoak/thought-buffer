@@ -130,6 +130,25 @@ final class DictationViewModel: ObservableObject {
     /// It is NEVER logged, persisted, or transmitted - it lives only in this published field and its
     /// on-screen label. The production code path does not read it, so nothing changes in Release.
     @Published private(set) var lastDebugTrace: String = "TS-DEBUG ready - speak, then pause"
+
+    /// Recent FINALIZED classifications, so the on-screen log shows whether a pause actually
+    /// committed a segment (a `final:` line appears) or the live partial just reset without one.
+    private var debugHistory: [String] = []
+
+    /// Rebuild the on-screen trace: the recent finalized lines plus the current live partial.
+    private func debugRebuild(partial: String) {
+        var lines = debugHistory
+        let p = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append("> " + (p.isEmpty ? "(listening)" : "partial: \"" + String(p.suffix(40)) + "\""))
+        lastDebugTrace = lines.joined(separator: "\n")
+    }
+
+    /// Append a finalized-classification line to the rolling log (keeping the last few).
+    private func debugRecordFinal(_ line: String) {
+        debugHistory.append("final: " + line)
+        if debugHistory.count > 4 { debugHistory.removeFirst() }
+        debugRebuild(partial: "")
+    }
     #endif
 
     private let service: SpeechCaptureService
@@ -378,7 +397,7 @@ final class DictationViewModel: ObservableObject {
         case .partial(let text):
             partial = partialText(from: processor.process(text))
             #if DEBUG
-            lastDebugTrace = "TS-DEBUG partial: \"" + String(text.suffix(50)) + "\""
+            debugRebuild(partial: text)
             #endif
         case .finalizedSegment(let text, let range):
             handleFinalized(text, range: range)
@@ -400,7 +419,7 @@ final class DictationViewModel: ObservableObject {
         #if DEBUG
         // Record the raw recognized text and its classification for the on-screen diagnostic. This is
         // the only mutation the diagnostic makes; it does not affect the routing below.
-        lastDebugTrace = Self.debugTrace(for: text, segment: segment, controlWord: controlWord)
+        debugRecordFinal(Self.debugTrace(for: text, segment: segment, controlWord: controlWord))
         #endif
         switch segment {
         case .text(let value):

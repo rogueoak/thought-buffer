@@ -214,7 +214,7 @@ struct DictationView: View {
             .font(.system(size: CanopyFont.sizeXs, design: .monospaced))
             .foregroundStyle(CanopyColor.text)
             .multilineTextAlignment(.leading)
-            .lineLimit(3)
+            .lineLimit(6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(CanopySpacing.x2)
             .background(CanopyColor.muted)
