@@ -12,16 +12,22 @@ struct StreamListView: View {
     private let makeTextProcessor: () -> TextProcessor
     /// The feed model: owns the notes state, the off-main load, and the iCloud observer wiring.
     @StateObject private var feed: StreamFeed
+    /// The shared pending-session route. Observed so a hands-free start (Siri, CarPlay) requested
+    /// while the app was backgrounded opens dictation the moment the app comes forward, and so the
+    /// Record button starts a session through the same seam every other entry point uses.
+    @ObservedObject private var sessionRoute: PendingSessionRoute
     @State private var showDictation = false
     @State private var showSettings = false
 
     init(
         store: NoteStoring,
         makeTextProcessor: @escaping () -> TextProcessor,
-        noteObserver: UbiquitousNoteObserving? = nil
+        noteObserver: UbiquitousNoteObserving? = nil,
+        sessionRoute: PendingSessionRoute
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
+        self.sessionRoute = sessionRoute
         _feed = StateObject(wrappedValue: StreamFeed(store: store, observer: noteObserver))
     }
 
@@ -49,7 +55,7 @@ struct StreamListView: View {
                     }
                 }
 
-                RecordButton { showDictation = true }
+                RecordButton { sessionRoute.startNewSession() }
                     .padding(.bottom, CanopySpacing.x6)
             }
             .navigationTitle("Stream")
@@ -59,7 +65,7 @@ struct StreamListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        showDictation = true
+                        sessionRoute.startNewSession()
                     } label: {
                         Image(systemName: "mic.fill")
                     }
@@ -78,6 +84,9 @@ struct StreamListView: View {
                 DictationView(
                     model: DictationViewModel(store: store, processor: makeTextProcessor())
                 ) { savedNote in
+                    // The session is over: clear the pending route so a re-request can open a fresh
+                    // one, and refresh the feed if a note was saved.
+                    sessionRoute.consume()
                     if savedNote != nil {
                         Task { await feed.reload() }
                     }
@@ -88,6 +97,13 @@ struct StreamListView: View {
             }
         }
         .tint(CanopyColor.primary)
+        // Open dictation whenever a session start is pending - the Record button, a Siri intent, or
+        // CarPlay all flip `startRequested`. `onChange` catches a start requested while on screen;
+        // the initial value catches one requested while the app was backgrounded (a hands-free
+        // launch), so the session opens the moment the Stream list appears.
+        .onChange(of: sessionRoute.startRequested, initial: true) { _, requested in
+            if requested { showDictation = true }
+        }
         // A `.task` (not onAppear/onDisappear) so the feed wires its observer once for the lifetime
         // of this view in the stream, and is not stopped/restarted every time we push into a note
         // detail on the same stack. `withTaskCancellationHandler` tears the observer down the moment
@@ -144,5 +160,9 @@ private struct RecordButton: View {
 }
 
 #Preview {
-    StreamListView(store: NoteStore(), makeTextProcessor: { MiraTextProcessor() })
+    StreamListView(
+        store: NoteStore(),
+        makeTextProcessor: { MiraTextProcessor() },
+        sessionRoute: PendingSessionRoute()
+    )
 }

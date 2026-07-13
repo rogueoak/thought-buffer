@@ -157,6 +157,32 @@ remove the last sentence", "Mira remove the last paragraph", "Mira new note" (sa
 fresh), or "Mira read that back" (speaks the last paragraph aloud). The command phrase is not
 written into the note.
 
+### Siri and CarPlay
+
+Starting a stream without touching the phone runs through one shared seam: the Record button, the
+Siri App Intent, and the CarPlay action all request the same fresh dictation session.
+
+**Siri (the shippable hands-free path).** `StartThoughtStreamIntent` and `NewNoteIntent` are
+`AppIntent`s that open the app and begin a new session. An `AppShortcutsProvider` registers the
+phrases on install, so "Hey Siri, start a stream in Thought Stream" (or "start dictating", "new
+thought", "new note in Thought Stream") works, including through CarPlay's Siri button. Real Siri
+invocation needs a device; the intents and the shared starter are covered by unit tests in the
+simulator.
+
+**CarPlay is scaffolded but gated, pending Apple's approval.** Apple grants the CarPlay
+entitlement only for specific app categories (audio, navigation, communication, EV charging,
+parking, and a few more). A dictation / notes app is not one of them, so the CarPlay entitlement
+is generally unavailable for distribution here. The CarPlay scene delegate and its "Start a
+thought stream" template are implemented and wired via the scene manifest, but **no CarPlay
+entitlement is declared**, so:
+
+- The default unsigned Simulator build and the App Store build are unaffected - they build and run
+  with no CarPlay entitlement and no development team.
+- Without the entitlement the system never creates the CarPlay scene, so it stays dormant. It is
+  ready the day Apple grants the entitlement (or the app's category changes).
+- Activating CarPlay needs Apple's entitlement plus a CarPlay head unit or the CarPlay simulator.
+  Until then, Siri is the hands-free-in-car capability that actually ships.
+
 ### Design tokens
 
 The River Mist tokens live in Canopy's `roots` package and are vendored into the app at

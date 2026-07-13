@@ -45,7 +45,8 @@ struct ThoughtStreamApp: App {
                 StreamListView(
                     store: dependencies.noteStore,
                     makeTextProcessor: dependencies.makeTextProcessor,
-                    noteObserver: dependencies.noteObserver
+                    noteObserver: dependencies.noteObserver,
+                    sessionRoute: dependencies.sessionRoute
                 )
             }
         } else {

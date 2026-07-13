@@ -44,8 +44,17 @@ targets:
       properties:
         CFBundleDisplayName: Thought Stream
         UILaunchScreen: {}
+        # Multiple scenes are enabled so the CarPlay scene can coexist with the phone window. The
+        # phone UI is SwiftUI (a `WindowGroup`, no explicit delegate needed); the CarPlay scene names
+        # its `CPTemplateApplicationSceneDelegate`. The CarPlay role stays dormant without the CarPlay
+        # entitlement (not declared on this target - see spec 0005), so the unsigned Simulator build
+        # and the App Store build are unaffected and the phone scene is the only one that activates.
         UIApplicationSceneManifest:
-          UIApplicationSupportsMultipleScenes: false
+          UIApplicationSupportsMultipleScenes: true
+          UISceneConfigurations:
+            CPTemplateApplicationSceneSessionRoleApplication:
+              - UISceneConfigurationName: ThoughtStreamCarPlay
+                UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         NSMicrophoneUsageDescription: "Thought Stream uses the microphone to hear you and turn your words into notes. Audio stays on your device."

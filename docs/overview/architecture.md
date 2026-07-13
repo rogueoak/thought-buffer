@@ -13,7 +13,30 @@ How the system is built and why.
 ## Source layout (`ios/ThoughtStream/`)
 
 - `App/` - `ThoughtStreamApp` entry point. Roots to `StreamListView`; a `-uiScreen dictation`
-  launch argument roots to `DictationView` instead, used only for screenshot tooling.
+  launch argument roots to `DictationView` instead, used only for screenshot tooling. Also the
+  hands-free session-start seam and its entry points:
+  - `SessionStarter` (protocol, one method `startNewSession()`) and `PendingSessionRoute` (its
+    concrete `@MainActor ObservableObject`) are the single "start a new dictation session" seam. The
+    Record button, the Siri App Intent, and CarPlay all request a start through it; the root
+    (`StreamListView`) observes `startRequested` and opens `DictationView`, which begins capture in
+    its `.task`. "Start a session" means "route to a fresh DictationView", so every entry point
+    behaves identically and there is no parallel capture path. The route lives on `AppDependencies`;
+    `AppDependencies.shared` / `.sessionStarter` is a narrow, documented process-wide bridge so App
+    Intents and the CarPlay scene - which the system builds outside the SwiftUI tree - can reach the
+    live route. Everything inside the view tree is still injected.
+  - `ThoughtStreamIntents.swift` - `StartThoughtStreamIntent` and `NewNoteIntent` (`AppIntent`,
+    `openAppWhenRun`) call the starter (injected `SessionStarter`, defaulting to the live route), so
+    they are unit-testable with a stub and never touch the UI. `ThoughtStreamShortcuts`
+    (`AppShortcutsProvider`) registers the spoken phrases, each including `\(.applicationName)` per
+    Apple's rule. This is the shippable hands-free-in-car path (Siri works in CarPlay without the
+    CarPlay entitlement).
+  - `CarPlaySceneDelegate.swift` - a `CPTemplateApplicationSceneDelegate` presenting a `CPListTemplate`
+    with a "Start a thought stream" row that calls the shared starter. Wired via the
+    `CPTemplateApplicationSceneSessionRoleApplication` role in the scene manifest
+    (`ios/project.yml`), but GATED: no CarPlay entitlement is declared (Apple grants it only for
+    specific app categories, not dictation / notes), so the system never creates the scene and the
+    unsigned Simulator build and App Store build are unaffected. Ready the day Apple grants the
+    entitlement; activating it needs the entitlement plus a CarPlay head unit / the CarPlay simulator.
 - `Models/` - `Note` (id, title, paragraphs, createdAt, derived snippet + paragraph count) with
   Markdown (de)serialization, plus `MockNotes` (sample data, used only by previews now). The
   value type stays small and tolerant of unknown frontmatter keys so later fields do not break
@@ -81,7 +104,9 @@ round-trip against a temp dir (plus cross-store file compatibility and the bare-
 path), `NoteStoreFactory` selection and lossless fallback via a stub `UbiquityContainerProviding`,
 the `UbiquitousNoteMapping` metadata-to-notes logic via stub items, and the driver's load +
 observer wiring (start/stop, onChange -> reload, local no-observer path, no-reload-after-stop) via
-stub store/observer through the `StreamFeed` projection.
+stub store/observer through the `StreamFeed` projection, and the hands-free session-start seam (the
+`PendingSessionRoute` request/consume lifecycle, both App Intents requesting a start through a stub
+`SessionStarter`, `openAppWhenRun`, and the App Shortcuts being registered).
 The generated scheme runs them.
 
 ## Design tokens
