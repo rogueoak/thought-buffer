@@ -125,7 +125,9 @@ struct NoteDetailView: View {
             paragraphs: paragraphs,
             createdAt: note.createdAt,
             audioFileName: note.audioFileName,
-            timings: note.timings
+            // An edit can shrink the paragraph count; cap timings so the note never carries more
+            // timings than paragraphs (parity with the record-screen edit; engineer review).
+            timings: Array(note.timings.prefix(paragraphs.count))
         )
     }
 

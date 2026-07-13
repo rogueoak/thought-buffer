@@ -581,6 +581,10 @@ final class DictationViewModel: ObservableObject {
         partial = ""
         noteID = UUID()
         createdAt = Date()
+        // Clear the resumed note's recording reference too: the just-saved note kept it, but the fresh
+        // note is a NEW recording (or none). Leaving it set would attach the original recording to the
+        // new note on Stop, so two notes would point at the same file (engineer review, feedback 0008).
+        existingAudioFileName = nil
         return hadContent ? .saved : .emptyReset
     }
 

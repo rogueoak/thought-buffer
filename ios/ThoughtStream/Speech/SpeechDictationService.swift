@@ -376,23 +376,15 @@ final class SpeechDictationService: SpeechCaptureService {
     /// delegated to the pure `resolveEnd`) so the accumulating-segment + nil-result-end behavior is
     /// unit-testable without a live mic.
     private func handleTaskEnd(resultText: String?, resultRange: ParagraphTiming?) {
-        // Strip any utterance this task already committed via a reset (feedback 0008), so the final
-        // transcription - which on device can still lead with that already-committed paragraph - does
-        // not commit it a second time (the paragraph-doubled-after-a-command bug). When nothing leads
-        // with the committed text (the recognizer dropped it on an internal reset), this is a no-op.
-        let deduped = resultText.map { Self.strippingCommittedPrefix(from: $0, committed: committedThisTask) }
-        let stripped = deduped != resultText
-        switch Self.resolveEnd(resultText: deduped, lastPartial: lastPartialText) {
-        case .usedResult(let text):
-            // Keep the result's timings only when nothing was stripped: a stripped prefix shifts the
-            // remaining text off the range the recognizer reported, so drop it (nil) rather than
-            // over-claim it - playback falls back to text-to-speech for this paragraph.
-            emit(.finalizedSegment(text, range: stripped ? nil : resultRange))
-        case .usedPartial(let text):
-            // A partial committed from a nil-result end has no result timings, so emit a nil range.
-            emit(.finalizedSegment(text, range: nil))
-        case .none:
-            break
+        // The whole task-end decision (strip the already-committed lead, resolve the text, decide
+        // whether the range still applies) is a pure function so it is unit-testable off the mic.
+        if let commit = Self.resolveTaskEndCommit(
+            resultText: resultText,
+            resultRange: resultRange,
+            lastPartial: lastPartialText,
+            committed: committedThisTask
+        ) {
+            emit(.finalizedSegment(commit.text, range: commit.range))
         }
         // Committed (or nothing to commit): clear the tracked partial AND the reset-commit marker so a
         // restart never re-commits either.
@@ -401,6 +393,33 @@ final class SpeechDictationService: SpeechCaptureService {
         // If still capturing, this is a duration limit or transient hiccup: restart a fresh task on
         // the same audio so dictation stays continuous.
         restartTaskIfCapturing()
+    }
+
+    /// The pure task-end commit decision (feedback 0008), nonisolated for unit testing. Strips any
+    /// utterance this task already committed via a reset (`committed`) from the front of the final
+    /// transcription - which on device can still lead with that already-committed paragraph, doubling
+    /// it - then resolves which text to commit and whether the result's range still applies. Returns
+    /// the text to emit and its range, or nil when there is nothing to commit.
+    ///
+    /// The range is kept ONLY when nothing was stripped: a stripped prefix shifts the remaining text
+    /// off the range the recognizer reported, so it falls back to nil (text-to-speech on playback)
+    /// rather than over-claiming it. A partial committed from a nil-result end never has a range.
+    nonisolated static func resolveTaskEndCommit(
+        resultText: String?,
+        resultRange: ParagraphTiming?,
+        lastPartial: String,
+        committed: String
+    ) -> (text: String, range: ParagraphTiming?)? {
+        let deduped = resultText.map { strippingCommittedPrefix(from: $0, committed: committed) }
+        let stripped = deduped != resultText
+        switch resolveEnd(resultText: deduped, lastPartial: lastPartial) {
+        case .usedResult(let text):
+            return (text, stripped ? nil : resultRange)
+        case .usedPartial(let text):
+            return (text, nil)
+        case .none:
+            return nil
+        }
     }
 
     /// COMMIT-ON-END invariant (feedback 0005 + 0006). Given the ending task's `resultText` (nil when
