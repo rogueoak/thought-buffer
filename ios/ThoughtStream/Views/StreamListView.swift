@@ -143,10 +143,13 @@ struct StreamListView: View {
         }
     }
 
-    /// The on-disk recording URL for a note, or nil when it has no audio or the file is missing.
+    /// The recording URL for a note, or nil when it has no audio or the file is not present. The
+    /// existence check goes through the store (coordinated on iCloud) rather than a bare
+    /// `fileExists`, so a synced-but-not-yet-downloaded recording is not mis-reported and the view
+    /// does not reach into storage internals.
     private func resolvedAudioURL(for note: Note) -> URL? {
-        guard note.hasAudio, let url = store.audioURL(for: note.id) else { return nil }
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        guard note.hasAudio, store.audioExists(for: note.id) else { return nil }
+        return store.audioURL(for: note.id)
     }
 
     private var emptyState: some View {

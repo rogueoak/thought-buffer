@@ -81,9 +81,12 @@ Out (later milestones):
 - **Player.** `AudioNotePlayer` protocol: `play(url:from:duration:)` (a nil duration plays to the
   end) and `stop`, with an `onFinish`. Production wraps `AVAudioPlayer`, sets the session to
   `.playback`, seeks to `from`, and stops at `from + duration` (a lightweight timer, since
-  `AVAudioPlayer` has no native stop-at). `readThatBack` asks the player when the note has audio
-  and a timing for the last paragraph; otherwise it falls back to the `Speaker`. Both reuse the
-  existing pause-capture-during-playback handshake.
+  `AVAudioPlayer` has no native stop-at). Recorded playback of the actual voice is a SAVED-note
+  feature (a finalized file) via `NotePlaybackModel` in the detail view. IN-SESSION `readThatBack`
+  stays on the `Speaker`: the live `.m4a` is still open for writing (finalized only at `stop()`, not
+  the `pause()` read-back uses), so there is no finalized file to play mid-session. Both reuse the
+  existing pause-capture-during-playback handshake, and the seam documents that the recording URL is
+  finalized only after `stop()` so a future headless consumer stays off the in-flight file.
 - **Retention.** Add `audioRetention` to `SettingsStoring` (`keep` default / `transcriptOnly` /
   `autoDeleteDays(Int)`), persisted in `UserDefaults`. The view model reads it to decide whether
   to record; `transcriptOnly` never opens the writer. Auto-delete is a sweep at launch (and after
@@ -98,10 +101,12 @@ Out (later milestones):
 - [ ] App launches and runs; transcript-only mode works; no crash without a real mic.
 - [ ] Unit tests, all green (existing + new):
   - [ ] tee writes a file when retention is keep, skips it when transcript-only (injected buffers)
-  - [ ] paragraph <-> time mapping is correct across a simulated recognizer restart
-  - [ ] `Note` (de)serialization round-trips with AND without audio / timings (backward compatible)
-  - [ ] `readThatBack` plays the correct range via a stubbed `AudioNotePlayer`, falls back to the
-        `Speaker` when there is no audio
+  - [ ] paragraph <-> time mapping is correct across a simulated recognizer restart (pure
+        `RecordingTiming` offset math)
+  - [ ] `Note` (de)serialization round-trips with AND without audio / timings (backward compatible),
+        including through the store
+  - [ ] saved-note playback plays the correct range via a stubbed `AudioNotePlayer`; in-session
+        read-back speaks via the `Speaker`
   - [ ] deleting a note deletes its audio; storage saves / deletes the sibling audio (coordinated)
 - [ ] Detail view shows a Play affordance; screenshot at `design/screenshots/note-playback.png`.
 - [ ] README / privacy copy updated.

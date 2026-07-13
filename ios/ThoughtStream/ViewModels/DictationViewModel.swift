@@ -127,10 +127,6 @@ final class DictationViewModel: ObservableObject {
     private let store: NoteStoring
     private let processor: TextProcessor
     private let speaker: Speaker
-    /// Plays a paragraph's actual recording for "read that back" (spec 0007), falling back to the
-    /// text-to-speech `speaker` when the note or paragraph has no audio. Injected so tests can assert
-    /// what range played and stub the fallback.
-    private let audioPlayer: AudioNotePlayer
     /// Whether to record the session's audio (spec 0007). Read from settings at construction so it
     /// applies to this session; `transcriptOnly` never opens the file writer.
     private let recordsAudio: Bool
@@ -164,7 +160,6 @@ final class DictationViewModel: ObservableObject {
         store: NoteStoring,
         processor: TextProcessor = PassthroughTextProcessor(),
         speaker: Speaker? = nil,
-        audioPlayer: AudioNotePlayer? = nil,
         recordsAudio: Bool = false,
         controlWord: String = MiraTextProcessor.defaultControlWord
     ) {
@@ -174,7 +169,6 @@ final class DictationViewModel: ObservableObject {
         self.store = store
         self.processor = processor
         self.speaker = speaker ?? SystemSpeaker()
-        self.audioPlayer = audioPlayer ?? SystemAudioNotePlayer()
         self.recordsAudio = recordsAudio
         self.controlWord = controlWord
         // Tell the capture service whether to tee audio to a file for this session, before it starts.
@@ -183,9 +177,6 @@ final class DictationViewModel: ObservableObject {
             self?.handle(event)
         }
         self.speaker.onFinish = { [weak self] in
-            self?.readBackDidFinish()
-        }
-        self.audioPlayer.onFinish = { [weak self] in
             self?.readBackDidFinish()
         }
     }
@@ -252,7 +243,6 @@ final class DictationViewModel: ObservableObject {
     func finish() throws -> Note? {
         service.stop()
         speaker.stop()
-        audioPlayer.stop()
         // Fold any live partial into the committed paragraphs before saving. The partial is
         // already processed (see `handle`/`simulatePartial`), so append it directly rather than
         // running it through the processor a second time.
@@ -335,19 +325,17 @@ final class DictationViewModel: ObservableObject {
         }.map { $0 ?? ParagraphTiming(start: 0, duration: 0) }
     }
 
-    /// Discard the session's recording temp file if the capture service left one. Safe to call when
-    /// there is nothing to discard.
+    /// Discard the session's recording temp file. Goes through the service (not `recordingURL()`) so
+    /// even a zero-frame file - which `recordingURL()` would not report - is removed, leaving no
+    /// orphan recording on disk. Safe to call when there is nothing to discard.
     private func discardPendingRecording() {
-        if let recordingURL = service.recordingURL() {
-            try? FileManager.default.removeItem(at: recordingURL)
-        }
+        service.discardRecording()
     }
 
     /// Discard the session without saving (used when the user backs out empty).
     func cancel() {
         service.stop()
         speaker.stop()
-        audioPlayer.stop()
         // Drop the session's recording so a cancelled session leaves no orphan temp file.
         discardPendingRecording()
         level = 0
@@ -531,24 +519,14 @@ final class DictationViewModel: ObservableObject {
         isReadingBack = true
         // Reflect the true state in the UI while playback runs, so the screen is honest.
         if wasRecording { phase = .readingBack }
-        // Prefer the ACTUAL recording of the last paragraph (spec 0007): play its recorded range if
-        // there is one and a playable file. Otherwise fall back to text-to-speech. Both report
-        // completion through `readBackDidFinish` (the player and speaker share the same callback), so
-        // the resume handshake is identical.
-        if let timing = lastParagraphTiming(),
-           let recordingURL = service.recordingURL(),
-           audioPlayer.play(url: recordingURL, from: timing.start, duration: timing.duration) {
-            return true
-        }
+        // In-session read-back speaks via text-to-speech. The session's recording is a LIVE `.m4a`
+        // still open for writing - the writer is finalized only at `stop()`, never on the `pause()`
+        // this path uses - so it has no finalized container `AVAudioPlayer` could open. Recorded
+        // playback of the ACTUAL voice happens from a SAVED note's detail view (`NotePlaybackModel`),
+        // where the file is finalized. `speaker.onFinish` and `audioPlayer.onFinish` share
+        // `readBackDidFinish`, so the resume handshake is identical whichever plays.
         speaker.speak(last)
         return true
-    }
-
-    /// The recorded range of the last committed paragraph, or nil when it has no real recording
-    /// (recording off, a folded partial, or an edited paragraph whose timing was dropped).
-    private func lastParagraphTiming() -> ParagraphTiming? {
-        guard let timing = paragraphTimings.last ?? nil else { return nil }
-        return timing.duration > 0 ? timing : nil
     }
 
     /// Restore capture once read-back finishes. Guarded by `isReadingBack` (not `phase`), so a

@@ -23,10 +23,17 @@ protocol SpeechCaptureService: AnyObject {
     /// Defaults to off so a caller that never sets it behaves exactly as before.
     func setRecordingEnabled(_ enabled: Bool)
 
-    /// The URL of the recording written for the session, or nil when nothing was recorded (recording
-    /// disabled, or capture never wrote a frame). Valid after `stop()`; the file is a temporary one
-    /// the caller adopts into storage via `NoteStoring.saveAudio(from:for:)`.
+    /// The URL of the recording written for the session, or nil when there is no recording to adopt
+    /// (recording disabled, or capture never wrote a frame). Only guaranteed FINALIZED after `stop()`
+    /// - the writer is closed at `stop()`, not at `pause()` - so a caller must not play or copy this
+    /// file mid-session; it is meant to be adopted into storage via `NoteStoring.saveAudio(from:for:)`
+    /// once `stop()` has run.
     func recordingURL() -> URL?
+
+    /// Delete the session's recording temp file, whether or not it has content. Discards a recording
+    /// that ends up attached to nothing (a cancelled or empty session), including a zero-frame file
+    /// that `recordingURL()` would not report. No-op when there is no recording.
+    func discardRecording()
 
     /// Begin capturing. Assumes authorization has already been granted.
     func start()

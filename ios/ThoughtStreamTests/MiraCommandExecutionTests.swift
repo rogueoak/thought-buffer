@@ -335,6 +335,7 @@ private final class StubCaptureService: SpeechCaptureService {
     func availabilityError() -> SpeechCaptureError? { nil }
     func setRecordingEnabled(_ enabled: Bool) { recordingEnabled = enabled }
     func recordingURL() -> URL? { nil }
+    func discardRecording() {}
     func start() {}
     func pause() { pauseCount += 1 }
     func resume() { resumeCount += 1 }

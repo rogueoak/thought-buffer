@@ -141,10 +141,13 @@ Recognition is unchanged and nothing leaves the phone.
   from the recognizer's segment timestamps and anchored to absolute recording time across restarts.
   The timings persist with the note (frontmatter, tolerant and backward compatible - a note with no
   audio loads exactly as before).
-- **Playback in your own voice.** "Mira read that back" plays the ACTUAL recording of the last
-  paragraph, seeked to its range, and a saved note plays back in full (simple play / stop) from its
-  detail view. When a note or paragraph has no audio, playback falls back to the text-to-speech
-  voice. Playback reuses the pause-capture handshake so it never feeds back into the mic.
+- **Playback in your own voice.** A saved note plays back in full (simple play / stop) from its
+  detail view, in the voice that recorded it. When a note has no recording (transcript-only, older
+  notes, or auto-deleted), the play affordance is simply not shown. In-session "Mira read that back"
+  speaks the last paragraph aloud - the current session's recording is still being written, so it is
+  not finalized to play yet - reusing the pause-capture handshake so it never feeds back into the
+  mic. The recording + timings model is left ready for a future recordings browser to seek per
+  paragraph.
 - **Retention you control.** Settings offers keep recordings (default), transcript-only (never
   record), or auto-delete after N days. Transcript-only skips the file writer entirely; auto-delete
   sweeps expired recordings at launch, keeping the note's text.

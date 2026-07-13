@@ -45,6 +45,50 @@ final class RecordingWriterTests: XCTestCase {
         XCTAssertFalse(writer.hasContent)
     }
 
+    // MARK: - RecordingTiming: relative range + absolute offset math
+
+    func testRelativeRangeSpansFirstStartToLastEnd() {
+        let range = RecordingTiming.relativeRange(firstStart: 0.5, lastStart: 2.0, lastDuration: 1.0)
+        XCTAssertEqual(range?.start, 0.5)
+        XCTAssertEqual(range?.duration, 2.5) // 2.0 + 1.0 - 0.5
+    }
+
+    func testRelativeRangeZeroSpanIsNilForTextOnlyFallback() {
+        // All-zero timings (the recognizer reported no timing) yield nil, so the paragraph is
+        // treated as text-only rather than getting a bogus 0.0 range.
+        XCTAssertNil(RecordingTiming.relativeRange(firstStart: 0, lastStart: 0, lastDuration: 0))
+    }
+
+    func testAbsoluteAddsRequestOffsetToRelativeStart() {
+        // The core restart-offset mapping: a segment timed at 1.5s into its request, on a request
+        // that began 10s into the recording, maps to an absolute 11.5s.
+        let timing = RecordingTiming.absolute(offset: 10.0, relative: (start: 1.5, duration: 2.0))
+        XCTAssertEqual(timing?.start, 11.5)
+        XCTAssertEqual(timing?.duration, 2.0)
+    }
+
+    func testAbsoluteAcrossASimulatedRestartKeepsParagraphsOnTheOneTimeline() {
+        // Request 1 begins at recording offset 0; its paragraph is timed 0.0-2.0.
+        let first = RecordingTiming.absolute(
+            offset: 0,
+            relative: RecordingTiming.relativeRange(firstStart: 0.0, lastStart: 1.5, lastDuration: 0.5)
+        )
+        // The recognizer restarts after ~5s of recording; request 2's clock resets to zero, so its
+        // paragraph timed 0.0-3.0 must anchor to absolute 5.0, NOT 0.0. A dropped offset would put it
+        // back at the start of the recording - exactly the regression this guards.
+        let second = RecordingTiming.absolute(
+            offset: 5.0,
+            relative: RecordingTiming.relativeRange(firstStart: 0.0, lastStart: 2.5, lastDuration: 0.5)
+        )
+        XCTAssertEqual(first?.start, 0.0)
+        XCTAssertEqual(second?.start, 5.0)
+        XCTAssertEqual(second?.duration, 3.0)
+    }
+
+    func testAbsoluteWithNoRelativeRangeIsNil() {
+        XCTAssertNil(RecordingTiming.absolute(offset: 4.0, relative: nil))
+    }
+
     /// Build a buffer of `seconds` of silence at the writer's expected format.
     private func makeBuffer(seconds: Double) throws -> AVAudioPCMBuffer {
         let format = try XCTUnwrap(AVAudioFormat(

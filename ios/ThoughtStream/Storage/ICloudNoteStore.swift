@@ -207,4 +207,17 @@ struct ICloudNoteStore: NoteStoring {
         }
         return note
     }
+
+    /// Whether a recording exists for a note id, coordinated so the check does not race the sync
+    /// daemon. Does not force a download - it reports on the current local state of the container.
+    func audioExists(for id: UUID) -> Bool {
+        guard let url = audioURL(for: id) else { return false }
+        var exists = false
+        var coordinationError: NSError?
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { readURL in
+            exists = fileManager.fileExists(atPath: readURL.path)
+        }
+        return coordinationError == nil && exists
+    }
 }

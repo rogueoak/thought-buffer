@@ -94,17 +94,23 @@ How the system is built and why.
     `setRecordingEnabled(true)` before `start()` - a `RecordingWriter`. The writer is an off-main,
     lock-guarded (`@unchecked Sendable`) helper that appends buffers to a compressed AAC `.m4a`;
     it is created ONCE per session and kept across recognizer-task restarts AND pause/resume, so one
-    continuous file spans the whole note (finalized only at `stop()`). `finalizedSegment` events now
+    continuous file spans the whole note (finalized only at `stop()`). The tap tees to the writer
+    BEFORE the recognizer so a restart's offset is not under-counted. `finalizedSegment` events now
     carry a `ParagraphTiming?`: the service tracks a per-request audio offset (elapsed frames /
     sample rate, read at each restart) and adds it to the segment's request-relative timestamp so a
     paragraph maps to an ABSOLUTE range in the recording even though the request clock resets each
-    restart. `recordingURL()` exposes the temp file after `stop()` for the caller to adopt.
+    restart. The offset math lives in the pure, unit-tested `RecordingTiming` (segments have no
+    public initializer, so the service extracts their numbers and delegates). `recordingURL()`
+    exposes the temp file for adoption and is documented as finalized only after `stop()`;
+    `discardRecording()` removes an orphan (even a zero-frame one).
   - **Playback (spec 0007).** `AudioNotePlayer` (production `SystemAudioNotePlayer`, `AVAudioPlayer`)
     plays a recording seeked to a range (`play(url:from:duration:)`, a nil duration plays to the
-    end; a timer stops a ranged play since `AVAudioPlayer` has no native stop-at). It mirrors
-    `SystemSpeaker`'s session handling and `onFinish` so "read that back" routes through it and
-    falls back to the `Speaker` when a note/paragraph has no audio - one record -> playback -> record
-    handshake for both.
+    end; a timer stops a ranged play since `AVAudioPlayer` has no native stop-at), mirroring
+    `SystemSpeaker`'s session handling and `onFinish`. Recorded playback of the ACTUAL voice is a
+    SAVED-note feature (finalized file) via `NotePlaybackModel` in the detail view. IN-SESSION
+    "read that back" stays on the text-to-speech `Speaker`: the live `.m4a` is still open for writing
+    (finalized only at `stop()`, not the `pause()` read-back uses), so there is no finalized file to
+    play mid-session. Both share the `readBackDidFinish` resume handshake.
 - `TextProcessor` seam - a finalized segment runs through `process`, which returns a
   `ProcessedSegment`: `.text` to commit, `.command` to execute and suppress, or `.drop`
   (reserved). `PassthroughTextProcessor` always returns `.text`; `MiraTextProcessor` returns
@@ -130,11 +136,12 @@ How the system is built and why.
   (spec 0007), so every note mutation (commit, remove-sentence/paragraph, fold-partial) updates
   both, and builds the saved `Note` with its recording (adopted from the service's temp file into
   the store) and timings at `finish()`. Mid-session "new note" saves the transcript only - the one
-  continuous recording is finalized at Stop and belongs to the FINAL note. For read-back it prefers
-  the ACTUAL recording of the last paragraph via `AudioNotePlayer` (its recorded range), falling
-  back to the `Speaker` when there is no audio; either way it pauses capture and resumes on the
-  shared `onFinish`, so the spoken audio never feeds back into recognition. `NotePlaybackModel`
-  drives the detail view's simple play / stop of a saved note's recording. `NoteStoreDriver` (headless, `@MainActor`, no SwiftUI) owns
+  continuous recording is finalized at Stop and belongs to the FINAL note. In-session read-back
+  speaks via the `Speaker` (the live recording is not yet finalized); it pauses capture and resumes
+  on `readBackDidFinish`, so the spoken audio never feeds back into recognition. `NotePlaybackModel`
+  drives the detail view's simple play / stop of a SAVED note's recording via `AudioNotePlayer` -
+  where the file is finalized - and hides the affordance (through `NoteStoring.audioExists`) when a
+  note has no readable recording. `NoteStoreDriver` (headless, `@MainActor`, no SwiftUI) owns
   the notes list: it loads through the store on a detached task (the iCloud store's `loadAll()` can
   block on coordinated IO, so it must not run on the main actor) and, on iCloud, wires the
   `UbiquitousNoteObserving` observer once (`start`/`stop`, `onChange` -> reload) so the list

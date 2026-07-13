@@ -99,11 +99,18 @@ final class SpeechDictationService: SpeechCaptureService {
         recordingEnabled = enabled
     }
 
-    /// The recording written for the session, or nil when nothing was recorded. Valid after
+    /// The recording written for the session, or nil when nothing was recorded. Only finalized after
     /// `stop()`; the caller adopts the temporary file into storage.
     func recordingURL() -> URL? {
         guard let writer = recordingWriter, writer.hasContent else { return nil }
         return writer.url
+    }
+
+    /// Delete the session's recording temp file through the writer (so even a zero-frame file that
+    /// `recordingURL()` would not report is removed) and drop the writer, leaving no orphan.
+    func discardRecording() {
+        recordingWriter?.discard()
+        recordingWriter = nil
     }
 
     // MARK: - Capture lifecycle
@@ -218,10 +225,12 @@ final class SpeechDictationService: SpeechCaptureService {
         writer: RecordingWriter?
     ) {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            // Feed recognition, then tee the same buffer to the recording. Both appends are
-            // thread-safe and touch no isolated service state.
-            request.append(buffer)
+            // Tee to the recording FIRST, then feed recognition. Both appends are thread-safe and
+            // touch no isolated service state. Ordering matters for timing: a restart captures the
+            // request offset from the writer's frame count, so counting the buffer into the writer
+            // before it reaches the recognizer keeps that offset from under-counting at the seam.
             writer?.append(buffer)
+            request.append(buffer)
             guard let level = Self.rmsLevel(buffer) else { return }
             Task { @MainActor [weak self] in
                 self?.emit(.level(level))
@@ -320,28 +329,28 @@ final class SpeechDictationService: SpeechCaptureService {
         onEvent?(event)
     }
 
-    /// The request-relative time range spanned by a transcription's segments, or nil when there are
-    /// none (nothing to time). `timestamp`/`duration` are seconds from the START of this recognition
-    /// request; the range runs from the first segment's start to the last segment's end.
+    /// The request-relative range spanned by a transcription's segments, or nil when there are none.
+    /// Pulls the raw `timestamp`/`duration` off the first/last segments and delegates the math to the
+    /// testable `RecordingTiming` (segments have no public initializer, so the numbers are extracted
+    /// here and the logic lives where it can be unit-tested).
     ///
     /// Nonisolated: called on the Speech framework's queue before hopping to the main actor. It only
     /// reads the passed-in segments and touches no service state.
     nonisolated static func relativeRange(of segments: [SFTranscriptionSegment]) -> (start: Double, duration: Double)? {
         guard let first = segments.first, let last = segments.last else { return nil }
-        let start = first.timestamp
-        let end = last.timestamp + last.duration
-        // Some segments report zero timestamps (no timing available); a zero-length range at zero is
-        // not a real recording position, so treat it as no timing.
-        guard end > start else { return nil }
-        return (start, end - start)
+        return RecordingTiming.relativeRange(
+            firstStart: first.timestamp,
+            lastStart: last.timestamp,
+            lastDuration: last.duration
+        )
     }
 
     /// Anchor a request-relative range to the recording by adding the offset captured when this
     /// request began. Returns nil when there is no recording (recording disabled) or no relative
     /// range, so a text-only session emits a nil range and behaves exactly as before.
     private func absoluteRange(from relative: (start: Double, duration: Double)?) -> ParagraphTiming? {
-        guard recordingWriter != nil, let relative else { return nil }
-        return ParagraphTiming(start: requestAudioOffset + relative.start, duration: relative.duration)
+        guard recordingWriter != nil else { return nil }
+        return RecordingTiming.absolute(offset: requestAudioOffset, relative: relative)
     }
 
     /// Root-mean-square level of a buffer, normalized to a rough 0...1 for the waveform.

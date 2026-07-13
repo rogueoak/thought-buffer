@@ -36,6 +36,11 @@ protocol NoteStoring: Sendable {
     /// Delete a note's sibling audio recording. No-op if it does not exist. `delete(id:)` calls this
     /// too, so deleting a note never leaves an orphaned recording behind.
     func deleteAudio(for id: UUID) throws
+
+    /// Whether a recording exists for a note id. On the iCloud backend this is coordinated so the
+    /// answer is not raced against the sync daemon. Callers use it to decide whether to offer
+    /// playback without reaching into the file system themselves.
+    func audioExists(for id: UUID) -> Bool
 }
 
 extension NoteStoring {
@@ -61,4 +66,8 @@ extension NoteStoring {
 
     /// Default no-op for stores without on-disk audio. The file-backed stores override this.
     func deleteAudio(for id: UUID) throws {}
+
+    /// Default: a store with no on-disk audio never has a recording. The file-backed stores override
+    /// this with a real (coordinated, on iCloud) existence check.
+    func audioExists(for id: UUID) -> Bool { false }
 }

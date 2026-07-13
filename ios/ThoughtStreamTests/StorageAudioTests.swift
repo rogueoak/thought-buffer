@@ -31,6 +31,42 @@ final class StorageAudioTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: saved.path))
     }
 
+    func testNoteWithAudioRoundTripsThroughTheStore() throws {
+        // The frontmatter round-trip and the sibling file are proven separately elsewhere; this
+        // proves the actual persistence path the app uses - save a note carrying audio + timings,
+        // load it back, and get the recording metadata intact (spec 0007 round trip through storage).
+        let store = NoteStore(directory: tempDir)
+        let id = UUID()
+        let timings = [
+            ParagraphTiming(start: 0, duration: 2.0),
+            ParagraphTiming(start: 2.0, duration: 3.5),
+        ]
+        let note = Note(
+            id: id, title: "Recorded", paragraphs: ["One.", "Two."], createdAt: Date(),
+            audioFileName: "\(id.uuidString).m4a", timings: timings
+        )
+        try store.save(note)
+
+        let loaded = try XCTUnwrap(store.load(id: id))
+        XCTAssertTrue(loaded.hasAudio)
+        XCTAssertEqual(loaded.audioFileName, "\(id.uuidString).m4a")
+        XCTAssertEqual(loaded.timings, timings)
+        XCTAssertEqual(loaded.paragraphs, note.paragraphs)
+    }
+
+    func testAudioExistsReflectsSibling() throws {
+        let store = NoteStore(directory: tempDir)
+        let id = UUID()
+        XCTAssertFalse(store.audioExists(for: id))
+        try store.saveAudio(from: makeTempRecording(), for: id)
+        XCTAssertTrue(store.audioExists(for: id))
+
+        // The coordinated iCloud check sees the same on-disk file in this temp dir.
+        let cloud = ICloudNoteStore.forTesting(directory: tempDir)
+        XCTAssertTrue(cloud.audioExists(for: id))
+        XCTAssertFalse(cloud.audioExists(for: UUID()))
+    }
+
     func testLocalDeleteRemovesAudioSibling() throws {
         let store = NoteStore(directory: tempDir)
         let id = UUID()

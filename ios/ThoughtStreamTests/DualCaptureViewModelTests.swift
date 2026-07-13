@@ -59,7 +59,8 @@ final class DualCaptureViewModelTests: XCTestCase {
 
     func testSaveAdoptsRecordingIntoStore() throws {
         let service = RecordingStubCaptureService()
-        service.stubRecordingURL = try makeTempRecordingURL()
+        let tempURL = try makeTempRecordingURL()
+        service.stubRecordingURL = tempURL
         let model = DictationViewModel(service: service, store: store, recordsAudio: true)
         service.emitFinalized("Recorded.", range: ParagraphTiming(start: 0, duration: 1.5))
 
@@ -69,7 +70,7 @@ final class DualCaptureViewModelTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
         XCTAssertEqual(note.audioFileName, audioURL.lastPathComponent)
         // The temp file was consumed (moved), not left behind.
-        XCTAssertFalse(FileManager.default.fileExists(atPath: service.stubRecordingURL!.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tempURL.path))
     }
 
     func testTranscriptOnlySavesNoAudioEvenIfServiceOffersARecording() throws {
@@ -86,50 +87,44 @@ final class DualCaptureViewModelTests: XCTestCase {
         })
     }
 
-    // MARK: - Read that back: recording vs fallback
+    func testRecordingWithNoRealTimingsSavesTextOnlyWithNoOrphanAudio() throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let model = DictationViewModel(service: service, store: store, recordsAudio: true)
+        // Recording armed, but the only paragraph has no real range (a folded partial / edited text):
+        // every resolved timing is zero-duration, so the note must save text-only and adopt no audio.
+        service.emitFinalized("No timing here.", range: nil)
 
-    func testReadThatBackPlaysRecordedRange() async throws {
+        let note = try XCTUnwrap(try model.finish())
+        XCTAssertFalse(note.hasAudio, "a note with no real timing is text-only")
+        // No orphan .m4a: the adopted file was cleaned up and the temp discarded.
+        let audioURL = try XCTUnwrap(store.audioURL(for: note.id))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
+    }
+
+    // MARK: - In-session read that back uses text-to-speech
+
+    /// In-session read-back always speaks via TTS, even when the session is recording: the live
+    /// `.m4a` is still open for writing (finalized only at Stop), so there is no finalized file to
+    /// play. Recorded-range playback of the actual voice is a SAVED-note feature (`NotePlaybackModel`,
+    /// covered in `NotePlaybackModelTests`).
+    func testInSessionReadThatBackSpeaksViaTTSEvenWhenRecording() async throws {
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()
         let speaker = StubSpeaker()
-        let player = StubAudioNotePlayer()
         let model = DictationViewModel(
             service: service, store: store, processor: MiraTextProcessor(),
-            speaker: speaker, audioPlayer: player, recordsAudio: true
+            speaker: speaker, recordsAudio: true
         )
 
         await model.begin()
-        service.emitFinalized("Play me back.", range: ParagraphTiming(start: 4.0, duration: 2.5))
+        service.emitFinalized("Read me back.", range: ParagraphTiming(start: 4.0, duration: 2.5))
         service.emitFinalized("Mira read that back", range: nil)
 
-        // The actual recording of the last paragraph plays at its range; TTS is not used.
-        XCTAssertEqual(player.plays.count, 1)
-        XCTAssertEqual(player.plays.first?.start, 4.0)
-        XCTAssertEqual(player.plays.first?.duration, 2.5)
-        XCTAssertTrue(speaker.spoken.isEmpty)
+        // Spoken via TTS; capture paused for it.
+        XCTAssertEqual(speaker.spoken, ["Read me back."])
 
-        // Finishing playback resumes capture (the shared read-back handshake).
-        player.finish()
-        XCTAssertEqual(service.resumeCount, 1)
-    }
-
-    func testReadThatBackFallsBackToSpeakerWithoutAudio() async throws {
-        let service = RecordingStubCaptureService()
-        // No recording URL: the paragraph has no playable audio, so it falls back to TTS.
-        let speaker = StubSpeaker()
-        let player = StubAudioNotePlayer()
-        let model = DictationViewModel(
-            service: service, store: store, processor: MiraTextProcessor(),
-            speaker: speaker, audioPlayer: player, recordsAudio: false
-        )
-
-        await model.begin()
-        service.emitFinalized("Speak me back.", range: nil)
-        service.emitFinalized("Mira read that back", range: nil)
-
-        XCTAssertTrue(player.plays.isEmpty)
-        XCTAssertEqual(speaker.spoken, ["Speak me back."])
-
+        // Finishing the utterance resumes capture (the read-back handshake).
         speaker.finish()
         XCTAssertEqual(service.resumeCount, 1)
     }
@@ -151,12 +146,19 @@ private final class RecordingStubCaptureService: SpeechCaptureService {
     var onEvent: ((SpeechCaptureEvent) -> Void)?
     private(set) var recordingEnabled = false
     private(set) var resumeCount = 0
+    private(set) var discardCount = 0
     var stubRecordingURL: URL?
 
     func requestAuthorization() async -> SpeechCaptureError? { nil }
     func availabilityError() -> SpeechCaptureError? { nil }
     func setRecordingEnabled(_ enabled: Bool) { recordingEnabled = enabled }
     func recordingURL() -> URL? { stubRecordingURL }
+    func discardRecording() {
+        discardCount += 1
+        // Mirror the real service: discarding removes the temp file and drops it.
+        if let url = stubRecordingURL { try? FileManager.default.removeItem(at: url) }
+        stubRecordingURL = nil
+    }
     func start() {}
     func pause() {}
     func resume() { resumeCount += 1 }
@@ -165,22 +167,6 @@ private final class RecordingStubCaptureService: SpeechCaptureService {
     func emitFinalized(_ text: String, range: ParagraphTiming?) {
         onEvent?(.finalizedSegment(text, range: range))
     }
-}
-
-/// Records what range was played and lets the test drive the finish callback.
-@MainActor
-private final class StubAudioNotePlayer: AudioNotePlayer {
-    var onFinish: (() -> Void)?
-    private(set) var plays: [(url: URL, start: Double, duration: Double?)] = []
-
-    @discardableResult
-    func play(url: URL, from start: Double, duration: Double?) -> Bool {
-        plays.append((url, start, duration))
-        return true
-    }
-
-    func stop() {}
-    func finish() { onFinish?() }
 }
 
 /// A `Speaker` stub that records what was spoken and drives its finish callback.

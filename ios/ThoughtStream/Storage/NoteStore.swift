@@ -129,4 +129,10 @@ struct NoteStore: NoteStoring {
             try FileManager.default.removeItem(at: url)
         }
     }
+
+    /// Whether a recording exists for a note id. A plain existence check for the local store.
+    func audioExists(for id: UUID) -> Bool {
+        guard let url = audioURL(for: id) else { return false }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
 }
