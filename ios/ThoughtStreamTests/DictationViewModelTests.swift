@@ -111,8 +111,10 @@ private final class ThrowingNoteStore: NoteStoring {
     func delete(id: UUID) throws {}
 }
 
-/// A `NoteStoring` stub that records saves in memory and never fails.
-private final class RecordingNoteStore: NoteStoring {
+/// A `NoteStoring` stub that records saves in memory and never fails. `@unchecked Sendable`: it is
+/// only touched from the test's single actor, but `NoteStoring: Sendable` requires the annotation
+/// for its mutable buffer.
+private final class RecordingNoteStore: NoteStoring, @unchecked Sendable {
     private(set) var saved: [Note] = []
 
     @discardableResult

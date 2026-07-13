@@ -7,8 +7,9 @@ press Start in CarPlay) and just talk. Unlike the built-in Notes app, Thought St
 continuous feed of your thoughts that lets you pause to think and, importantly, edit entirely by
 voice using a control word, so you never have to touch the screen.
 
-All speech-to-text runs on the device. Nothing you say leaves your phone, and no internet
-connection is required.
+All speech-to-text runs on the device. The words you speak are never sent to any server, and
+dictation needs no internet connection. Your notes are stored locally by default; you can
+optionally sync them through your own iCloud account so they follow you across your devices.
 
 ## Why it exists
 
@@ -47,7 +48,8 @@ the spelling "Shea".
 
 ## Features
 
-- **On-device speech-to-text.** Private by default, works offline, no account required.
+- **On-device speech-to-text.** Recognition runs entirely on your phone and works offline; the
+  audio never leaves the device. No Thought Stream account required.
 - **Continuous feed.** Notes are a stream you can pause and resume, not a blank page each time.
 - **Voice editing.** Fix and manage notes hands-free with the control word.
 - **CarPlay support.** Capture safely while driving.
@@ -58,9 +60,16 @@ the spelling "Shea".
 
 ## Privacy
 
-- Speech recognition happens locally on the device.
-- No account, no sign-in, no server. The app is fully local.
-- Your notes are your files, stored where you choose (on device or your own iCloud Drive folder).
+- **Speech is 100% on-device, always.** Recognition runs on your phone and the audio is never
+  sent to any server. This never changes, whichever storage you pick.
+- **No Thought Stream account, ever.** There is no Thought Stream sign-in and no Thought Stream
+  server. "No account" means no account with us - iCloud, if you enable it, uses your existing
+  Apple account, not one we create.
+- **Notes are local by default; iCloud sync is optional and yours.** Your notes are plain files
+  you own. Left local, they stay on the device. If you turn on iCloud sync, note files travel
+  through your own iCloud account (Apple) so they appear in the Files app and follow you across
+  your devices - the same way any iCloud Drive document does. That is the only thing that leaves
+  the device, it is your choice, and it can be kept off.
 
 ## Tech and design
 
@@ -105,9 +114,38 @@ On the first Record, the app asks for microphone and speech recognition access. 
 the dictation screen shows a message explaining what it needs and how to turn it on. Speech runs
 on device (`requiresOnDeviceRecognition`); nothing is sent to a server.
 
-Notes are saved as Markdown files under the app's `Documents/ThoughtStream/` directory, one
-`<id>.md` file per note (YAML frontmatter plus the body). The Stream list reads them straight
-from disk, newest first.
+Notes are saved as Markdown files, one `<id>.md` file per note (YAML frontmatter plus the body).
+The Stream list reads them straight from disk, newest first.
+
+Where those files live depends on iCloud. At launch the app resolves its iCloud Drive ubiquity
+container off the main thread:
+
+- **iCloud available** (signed in, container provisioned): notes read and write to the container's
+  `Documents/ThoughtStream/` folder through `NSFileCoordinator` (coordinated IO, to avoid sync
+  conflicts). The folder shows up in the Files app as "Thought Stream" and syncs across your
+  devices. An `NSMetadataQuery` watches the folder, downloads notes synced in from other devices,
+  and refreshes the Stream list on external changes.
+- **iCloud unavailable** (not signed in, no provisioning, or the Simulator with no account): the
+  app falls back to the local `Documents/ThoughtStream/` directory and behaves exactly as before.
+  Nothing is lost; the choice is made once in the composition root.
+
+#### Enabling real iCloud sync on a device
+
+The iCloud Documents capability is declared in `ios/project.yml` (entitlements plus the
+`NSUbiquitousContainers` Info.plist), targeting container `iCloud.com.rogueoak.thoughtstream`.
+The repo builds unsigned for the Simulator with no development team, so at runtime in the
+Simulator the container is nil and storage falls back to local - that is expected.
+
+To use real iCloud sync on a physical device:
+
+1. Open `ios/ThoughtStream.xcodeproj` (after `xcodegen generate`).
+2. In the ThoughtStream target's Signing & Capabilities, set your Apple Developer **Team**. With
+   automatic signing, the iCloud container provisions itself the first time you build to a device.
+3. Sign in to iCloud on the device. Run the app; notes now live in your iCloud Drive under
+   "Thought Stream" and sync across your devices.
+
+Cross-device sync cannot be verified in the Simulator (it needs your Team and an iCloud account
+on a device); the storage, coordination, selection, and fallback logic are covered by unit tests.
 
 Live speech capture in the simulator is unreliable: it may use the Mac microphone or decline
 on-device recognition. Verify real dictation on a physical device. To exercise the design in the
