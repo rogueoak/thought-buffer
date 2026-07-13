@@ -10,8 +10,67 @@ final class DictationViewModel: ObservableObject {
         case idle          // not yet started (requesting permission)
         case recording
         case paused
-        case denied(SpeechDictationService.DictationError)
+        case denied(DeniedReason)
         case saved
+    }
+
+    /// A view-model-owned reason capture was denied or could not start, mapped from the capture
+    /// service's error so the service's error type never leaks into the view layer. Carries the
+    /// user-facing copy directly, so views render text without knowing service internals.
+    enum DeniedReason: Equatable {
+        case speechNotAuthorized
+        case microphoneNotAuthorized
+        case onDeviceUnavailable
+        case recognizerUnavailable
+        case engineFailure
+
+        init(_ error: SpeechCaptureError) {
+            switch error {
+            case .speechNotAuthorized: self = .speechNotAuthorized
+            case .microphoneNotAuthorized: self = .microphoneNotAuthorized
+            case .onDeviceUnavailable: self = .onDeviceUnavailable
+            case .recognizerUnavailable: self = .recognizerUnavailable
+            // The raw error string is intentionally dropped: user-facing copy is static.
+            case .engineFailure: self = .engineFailure
+            }
+        }
+
+        /// Short, user-facing headline for the denied state.
+        var headline: String {
+            switch self {
+            case .speechNotAuthorized:
+                return "Speech access is off"
+            case .microphoneNotAuthorized:
+                return "Microphone access is off"
+            case .onDeviceUnavailable:
+                return "On-device speech is not ready"
+            case .recognizerUnavailable:
+                return "Speech is unavailable"
+            case .engineFailure:
+                return "Could not start recording"
+            }
+        }
+
+        /// A sentence or two telling the user what to do next. Static copy only: no raw error
+        /// text is surfaced, so nothing internal leaks into user-facing strings.
+        var detail: String {
+            switch self {
+            case .speechNotAuthorized:
+                return "Thought Stream needs speech recognition to turn your voice into notes. "
+                    + "Turn it on in Settings, under Thought Stream."
+            case .microphoneNotAuthorized:
+                return "Thought Stream needs the microphone to hear you. Turn it on in Settings, "
+                    + "under Thought Stream."
+            case .onDeviceUnavailable:
+                return "Your device has not finished preparing on-device speech for this language. "
+                    + "Add the language in Settings, then try again."
+            case .recognizerUnavailable:
+                return "Speech recognition is not available on this device right now. Try again "
+                    + "in a moment."
+            case .engineFailure:
+                return "Something went wrong starting the recorder. Please try again."
+            }
+        }
     }
 
     @Published private(set) var phase: Phase = .idle
@@ -22,14 +81,22 @@ final class DictationViewModel: ObservableObject {
     /// Smoothed microphone level, 0...1, for the waveform.
     @Published private(set) var level: Float = 0
 
-    private let service: SpeechDictationService
-    private let store: NoteStore
+    private let service: SpeechCaptureService
+    private let store: NoteStoring
+    private let processor: TextProcessor
     private let createdAt = Date()
     private let noteID = UUID()
 
-    init(service: SpeechDictationService = SpeechDictationService(), store: NoteStore = NoteStore()) {
-        self.service = service
+    init(
+        service: SpeechCaptureService? = nil,
+        store: NoteStoring,
+        processor: TextProcessor = PassthroughTextProcessor()
+    ) {
+        // Build the production service here (on the main actor) when none is injected, so the
+        // service's main-actor-isolated initializer is not called from a nonisolated default.
+        self.service = service ?? SpeechDictationService()
         self.store = store
+        self.processor = processor
         self.service.onEvent = { [weak self] event in
             self?.handle(event)
         }
@@ -58,11 +125,11 @@ final class DictationViewModel: ObservableObject {
     /// Request permission, then begin capturing. Call once when the screen appears.
     func begin() async {
         if let authError = await service.requestAuthorization() {
-            phase = .denied(authError)
+            phase = .denied(DeniedReason(authError))
             return
         }
         if let availError = service.availabilityError() {
-            phase = .denied(availError)
+            phase = .denied(DeniedReason(availError))
             return
         }
         phase = .recording
@@ -85,23 +152,30 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Stop capture and save the note. Returns the saved note, or nil if nothing was captured.
+    /// Throws if the store fails to persist the note, so the caller can surface the failure
+    /// instead of silently reporting success.
     @discardableResult
-    func finish() -> Note? {
+    func finish() throws -> Note? {
         service.stop()
-        // Fold any live partial into the committed paragraphs before saving.
+        // Fold any live partial into the committed paragraphs before saving. The partial is
+        // already processed (see `handle`/`simulatePartial`), so append it directly rather than
+        // running it through the processor a second time.
         let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             paragraphs.append(trimmed)
             partial = ""
         }
-        phase = .saved
         level = 0
 
-        guard !paragraphs.isEmpty else { return nil }
+        guard !paragraphs.isEmpty else {
+            phase = .saved
+            return nil
+        }
 
         let title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
         let note = Note(id: noteID, title: title, paragraphs: paragraphs, createdAt: createdAt)
-        try? store.save(note)
+        try store.save(note)
+        phase = .saved
         return note
     }
 
@@ -111,18 +185,24 @@ final class DictationViewModel: ObservableObject {
         level = 0
     }
 
-    /// Inject text as if it had been dictated. Used by screenshot tooling and by tests to prove
+    /// Inject text as if it had been finalized. Used by screenshot tooling and by tests to prove
     /// the save flow without live audio in the simulator.
     func injectFinalized(_ text: String) {
         commitParagraph(text)
     }
 
+    /// Set the live partial as if speech recognition had reported it. Test hook mirroring
+    /// `injectFinalized`, used to prove a partial present at `finish()` lands in the saved note.
+    func simulatePartial(_ text: String) {
+        partial = processor.process(text)
+    }
+
     // MARK: - Event handling
 
-    private func handle(_ event: SpeechDictationService.Event) {
+    private func handle(_ event: SpeechCaptureEvent) {
         switch event {
         case .partial(let text):
-            partial = text
+            partial = processor.process(text)
         case .finalizedSegment(let text):
             commitParagraph(text)
             partial = ""
@@ -130,54 +210,15 @@ final class DictationViewModel: ObservableObject {
             // Simple smoothing so bars glide rather than jump.
             level = level * 0.6 + value * 0.4
         case .failure(let error):
-            phase = .denied(error)
+            phase = .denied(DeniedReason(error))
             level = 0
         }
     }
 
     private func commitParagraph(_ text: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let processed = processor.process(text)
+        let trimmed = processed.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         paragraphs.append(trimmed)
-    }
-}
-
-// MARK: - Friendly error copy
-
-extension SpeechDictationService.DictationError {
-    /// Short, user-facing headline for the denied state.
-    var headline: String {
-        switch self {
-        case .speechNotAuthorized:
-            return "Speech access is off"
-        case .microphoneNotAuthorized:
-            return "Microphone access is off"
-        case .onDeviceUnavailable:
-            return "On-device speech is not ready"
-        case .recognizerUnavailable:
-            return "Speech is unavailable"
-        case .engineFailure:
-            return "Could not start recording"
-        }
-    }
-
-    /// A sentence or two telling the user what to do next.
-    var detail: String {
-        switch self {
-        case .speechNotAuthorized:
-            return "Thought Stream needs speech recognition to turn your voice into notes. "
-                + "Turn it on in Settings, under Thought Stream."
-        case .microphoneNotAuthorized:
-            return "Thought Stream needs the microphone to hear you. Turn it on in Settings, "
-                + "under Thought Stream."
-        case .onDeviceUnavailable:
-            return "Your device has not finished preparing on-device speech for this language. "
-                + "Add the language in Settings, then try again."
-        case .recognizerUnavailable:
-            return "Speech recognition is not available on this device right now. Try again "
-                + "in a moment."
-        case .engineFailure(let message):
-            return "Something went wrong starting the recorder. " + message
-        }
     }
 }

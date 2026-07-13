@@ -4,11 +4,17 @@ import SwiftUI
 /// toolbar (mic + gear) and a prominent record button that presents dictation. Notes load from
 /// the `NoteStore` and refresh after a dictation session saves.
 struct StreamListView: View {
-    private let store = NoteStore()
+    /// The note store, injected from the composition root (`AppDependencies`) rather than
+    /// allocated inline, so one place wires the concrete store.
+    private let store: NoteStoring
     @State private var notes: [Note] = []
     @State private var didLoad = false
     @State private var showDictation = false
     @State private var showSettings = false
+
+    init(store: NoteStoring) {
+        self.store = store
+    }
 
     var body: some View {
         NavigationStack {
@@ -60,7 +66,7 @@ struct StreamListView: View {
                 }
             }
             .fullScreenCover(isPresented: $showDictation) {
-                DictationView { savedNote in
+                DictationView(model: DictationViewModel(store: store)) { savedNote in
                     if savedNote != nil {
                         reload()
                     }
@@ -123,5 +129,5 @@ private struct RecordButton: View {
 }
 
 #Preview {
-    StreamListView()
+    StreamListView(store: NoteStore())
 }

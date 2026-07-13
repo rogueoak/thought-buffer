@@ -17,12 +17,18 @@ struct DictationView: View {
     @State private var caretVisible = true
     private let caretTimer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
+    /// Set when saving the note fails, so the screen surfaces an alert instead of reporting the
+    /// note as saved and dismissing.
+    @State private var showSaveError = false
+
+    /// Build the screen from an explicit view model. Callers wire the model (and thus its note
+    /// store) from the composition root; see `StreamListView`.
     init(
-        model: DictationViewModel? = nil,
+        model: DictationViewModel,
         previewInjection: String? = nil,
         onFinish: @escaping (Note?) -> Void = { _ in }
     ) {
-        _model = StateObject(wrappedValue: model ?? DictationViewModel())
+        _model = StateObject(wrappedValue: model)
         self.previewInjection = previewInjection
         self.onFinish = onFinish
     }
@@ -61,6 +67,12 @@ struct DictationView: View {
             .padding(.bottom, CanopySpacing.x6)
         }
         .onReceive(caretTimer) { _ in caretVisible.toggle() }
+        .alert("Could not save your note", isPresented: $showSaveError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Something went wrong writing the note to your device. Your words are still on "
+                + "screen. Tap Stop to try saving again.")
+        }
         .task {
             if let injection = previewInjection {
                 model.injectFinalized(injection)
@@ -167,7 +179,7 @@ struct DictationView: View {
         .clipShape(Capsule())
     }
 
-    private func deniedCard(_ error: SpeechDictationService.DictationError) -> some View {
+    private func deniedCard(_ error: DictationViewModel.DeniedReason) -> some View {
         VStack(spacing: CanopySpacing.x3) {
             Image(systemName: "mic.slash")
                 .font(.system(size: CanopyFont.sizeX3xl, weight: .semibold))
@@ -200,9 +212,15 @@ struct DictationView: View {
     }
 
     private func finish() {
-        let note = model.finish()
-        onFinish(note)
-        dismiss()
+        do {
+            let note = try model.finish()
+            onFinish(note)
+            dismiss()
+        } catch {
+            // Saving failed: keep the screen up with the transcript intact and surface an alert
+            // instead of reporting success.
+            showSaveError = true
+        }
     }
 }
 
@@ -292,8 +310,10 @@ private struct Dock: View {
 }
 
 #Preview {
-    DictationView(previewInjection:
-        "Remember to call the supplier about the Shea butter order before noon. "
-            + "Then draft the launch email and keep it to three short paragraphs."
+    DictationView(
+        model: DictationViewModel(store: NoteStore()),
+        previewInjection:
+            "Remember to call the supplier about the Shea butter order before noon. "
+                + "Then draft the launch email and keep it to three short paragraphs."
     )
 }

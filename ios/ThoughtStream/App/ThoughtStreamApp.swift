@@ -2,6 +2,9 @@ import SwiftUI
 
 @main
 struct ThoughtStreamApp: App {
+    /// The single composition root: wires the concrete note store once and passes it down.
+    private let dependencies = AppDependencies()
+
     var body: some Scene {
         WindowGroup {
             // A launch argument lets tooling open the dictation screen directly for
@@ -11,12 +14,14 @@ struct ThoughtStreamApp: App {
                CommandLine.arguments.contains("dictation") {
                 // Screenshot mode: inject sample text so the live design renders without a mic
                 // or permission prompt in the simulator.
-                DictationView(previewInjection:
-                    "Remember to call the supplier about the Shea butter order before noon. "
-                        + "Then draft the launch email and keep it to three short paragraphs."
+                DictationView(
+                    model: DictationViewModel(store: dependencies.noteStore),
+                    previewInjection:
+                        "Remember to call the supplier about the Shea butter order before noon. "
+                            + "Then draft the launch email and keep it to three short paragraphs."
                 )
             } else {
-                StreamListView()
+                StreamListView(store: dependencies.noteStore)
             }
         }
     }
