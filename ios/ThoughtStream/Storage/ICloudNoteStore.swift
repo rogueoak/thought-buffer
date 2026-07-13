@@ -124,9 +124,16 @@ struct ICloudNoteStore: NoteStoring {
         readNote(at: fileURL(for: id))
     }
 
-    /// Delete a note's file. Coordinated. No-op if it does not exist.
+    /// Delete a note's file and its sibling audio recording. Coordinated. No-op for whichever does
+    /// not exist.
     func delete(id: UUID) throws {
-        let url = fileURL(for: id)
+        try coordinatedDelete(at: fileURL(for: id))
+        // Never leave an orphaned recording behind when the note goes.
+        try deleteAudio(for: id)
+    }
+
+    /// Coordinated delete of a single file. No-op if it does not exist.
+    private func coordinatedDelete(at url: URL) throws {
         var coordinationError: NSError?
         var thrown: Error?
         let coordinator = NSFileCoordinator()
@@ -141,6 +148,48 @@ struct ICloudNoteStore: NoteStoring {
         }
         if let coordinationError { throw coordinationError }
         if let thrown { throw thrown }
+    }
+
+    // MARK: - Audio recording (spec 0007)
+
+    /// The sibling audio URL for a note id: `<id>.m4a` next to `<id>.md`, in the same container.
+    func audioURL(for id: UUID) -> URL? {
+        directory.appendingPathComponent("\(id.uuidString).\(Self.audioFileExtension)", isDirectory: false)
+    }
+
+    /// Move a freshly captured recording into the note's audio slot, coordinated so the write does
+    /// not collide with a concurrent sync, and protected to match the note file.
+    @discardableResult
+    func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL {
+        try ensureDirectory()
+        guard let destination = audioURL(for: id) else { return temporaryURL }
+
+        var coordinationError: NSError?
+        var thrown: Error?
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(writingItemAt: destination, options: [.forReplacing], error: &coordinationError) { writeURL in
+            do {
+                if fileManager.fileExists(atPath: writeURL.path) {
+                    try fileManager.removeItem(at: writeURL)
+                }
+                try fileManager.moveItem(at: temporaryURL, to: writeURL)
+                try fileManager.setAttributes(
+                    [.protectionKey: FileProtectionType.completeUnlessOpen],
+                    ofItemAtPath: writeURL.path
+                )
+            } catch {
+                thrown = error
+            }
+        }
+        if let coordinationError { throw coordinationError }
+        if let thrown { throw thrown }
+        return destination
+    }
+
+    /// Delete a note's audio recording. Coordinated. No-op if it does not exist.
+    func deleteAudio(for id: UUID) throws {
+        guard let url = audioURL(for: id) else { return }
+        try coordinatedDelete(at: url)
     }
 
     /// Coordinated read of a single note file, mapping its contents through `Note`. Returns nil

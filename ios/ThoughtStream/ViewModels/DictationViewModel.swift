@@ -127,12 +127,25 @@ final class DictationViewModel: ObservableObject {
     private let store: NoteStoring
     private let processor: TextProcessor
     private let speaker: Speaker
+    /// Plays a paragraph's actual recording for "read that back" (spec 0007), falling back to the
+    /// text-to-speech `speaker` when the note or paragraph has no audio. Injected so tests can assert
+    /// what range played and stub the fallback.
+    private let audioPlayer: AudioNotePlayer
+    /// Whether to record the session's audio (spec 0007). Read from settings at construction so it
+    /// applies to this session; `transcriptOnly` never opens the file writer.
+    private let recordsAudio: Bool
     /// The active control word, used to assemble the command chip label (e.g. "Mira - new note").
     /// Injected so it stays in sync with the processor's control word once Settings makes it
     /// configurable, keeping the chip prefix out of the view.
     private let controlWord: String
     private var createdAt = Date()
     private var noteID = UUID()
+
+    /// One timing per committed paragraph, in lockstep with `paragraphs` (spec 0007). A finalized
+    /// segment appends its range here as its text is committed; a paragraph committed without a range
+    /// (a command-folded partial, or recording off) appends a nil placeholder so the arrays stay
+    /// aligned. Trailing nils are trimmed when the note is built.
+    private var paragraphTimings: [ParagraphTiming?] = []
 
     /// How long the command chip stays up before auto-dismissing.
     private let bannerDuration: Duration = .seconds(2)
@@ -151,6 +164,8 @@ final class DictationViewModel: ObservableObject {
         store: NoteStoring,
         processor: TextProcessor = PassthroughTextProcessor(),
         speaker: Speaker? = nil,
+        audioPlayer: AudioNotePlayer? = nil,
+        recordsAudio: Bool = false,
         controlWord: String = MiraTextProcessor.defaultControlWord
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
@@ -159,11 +174,18 @@ final class DictationViewModel: ObservableObject {
         self.store = store
         self.processor = processor
         self.speaker = speaker ?? SystemSpeaker()
+        self.audioPlayer = audioPlayer ?? SystemAudioNotePlayer()
+        self.recordsAudio = recordsAudio
         self.controlWord = controlWord
+        // Tell the capture service whether to tee audio to a file for this session, before it starts.
+        self.service.setRecordingEnabled(recordsAudio)
         self.service.onEvent = { [weak self] event in
             self?.handle(event)
         }
         self.speaker.onFinish = { [weak self] in
+            self?.readBackDidFinish()
+        }
+        self.audioPlayer.onFinish = { [weak self] in
             self?.readBackDidFinish()
         }
     }
@@ -230,6 +252,7 @@ final class DictationViewModel: ObservableObject {
     func finish() throws -> Note? {
         service.stop()
         speaker.stop()
+        audioPlayer.stop()
         // Fold any live partial into the committed paragraphs before saving. The partial is
         // already processed (see `handle`/`simulatePartial`), so append it directly rather than
         // running it through the processor a second time.
@@ -237,27 +260,110 @@ final class DictationViewModel: ObservableObject {
         level = 0
 
         guard !paragraphs.isEmpty else {
+            // Nothing to save: drop any (empty) recording so no orphan temp file lingers.
+            discardPendingRecording()
             phase = .saved
             return nil
         }
 
-        let title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
-        let note = Note(id: noteID, title: title, paragraphs: paragraphs, createdAt: createdAt)
-        try store.save(note)
+        // The session's recording (finalized by `service.stop()` above) belongs to this final note.
+        let note = try saveCurrentNote(adoptingRecording: true)
+        // A successful adopt MOVES the temp file into storage; if adopting was skipped or failed, a
+        // temp file may linger. Clean it up so no orphan recording is left on disk.
+        discardPendingRecording()
         phase = .saved
         return note
+    }
+
+    /// Build and save the current note, optionally adopting the session's recording into storage.
+    ///
+    /// When `adoptingRecording` is true and the capture service produced a recording, the temp file
+    /// is moved into the note's audio slot and the note is saved WITH its audio filename and
+    /// timings. If adopting the audio fails, the note is still saved text-only (the words are never
+    /// lost for the sake of the recording). Without a recording, the note saves exactly as before.
+    @discardableResult
+    private func saveCurrentNote(adoptingRecording: Bool) throws -> Note {
+        let title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
+
+        // Only the FINAL note (Stop) adopts the recording: mid-session "new note" saves text-only,
+        // because the one continuous session file is not finalized until Stop. Never discard the
+        // recording here - the writer may still be live for a following note; `finish()` owns
+        // discarding a recording that ends up attached to nothing.
+        var audioFileName: String?
+        var timings: [ParagraphTiming] = []
+        if adoptingRecording,
+           recordsAudio,
+           let recordingURL = service.recordingURL(),
+           let attached = try? attachRecording(recordingURL) {
+            audioFileName = attached.fileName
+            timings = attached.timings
+        }
+
+        let note = Note(
+            id: noteID,
+            title: title,
+            paragraphs: paragraphs,
+            createdAt: createdAt,
+            audioFileName: audioFileName,
+            timings: timings
+        )
+        try store.save(note)
+        return note
+    }
+
+    /// Move the session's recording into the note's audio slot and build its per-paragraph timings.
+    /// Returns nil (so the caller falls back to a text-only save) when the store keeps no audio.
+    private func attachRecording(_ recordingURL: URL) throws -> (fileName: String, timings: [ParagraphTiming])? {
+        guard let destination = store.audioURL(for: noteID) else { return nil }
+        try store.saveAudio(from: recordingURL, for: noteID)
+        // Trailing nils (partials, command-folded text) carry no timing; a note with no real timing
+        // at all is effectively text-only, so return nil and let the note save without audio.
+        let resolved = resolvedTimings()
+        guard resolved.contains(where: { $0.duration > 0 }) else {
+            try? store.deleteAudio(for: noteID)
+            return nil
+        }
+        return (destination.lastPathComponent, resolved)
+    }
+
+    /// The per-paragraph timings for the note, one per paragraph. A paragraph with no recorded range
+    /// gets a zero-length placeholder so the array lines up 1:1 with `paragraphs` and an old index
+    /// never maps to the wrong paragraph.
+    private func resolvedTimings() -> [ParagraphTiming] {
+        paragraphs.indices.map { index in
+            paragraphTimings.indices.contains(index) ? paragraphTimings[index] : nil
+        }.map { $0 ?? ParagraphTiming(start: 0, duration: 0) }
+    }
+
+    /// Discard the session's recording temp file if the capture service left one. Safe to call when
+    /// there is nothing to discard.
+    private func discardPendingRecording() {
+        if let recordingURL = service.recordingURL() {
+            try? FileManager.default.removeItem(at: recordingURL)
+        }
     }
 
     /// Discard the session without saving (used when the user backs out empty).
     func cancel() {
         service.stop()
+        speaker.stop()
+        audioPlayer.stop()
+        // Drop the session's recording so a cancelled session leaves no orphan temp file.
+        discardPendingRecording()
         level = 0
     }
 
     /// Inject text as if it had been finalized. Used by screenshot tooling and by tests to prove
-    /// the save flow (and command routing) without live audio in the simulator.
+    /// the save flow (and command routing) without live audio in the simulator. No timing, so the
+    /// injected paragraph behaves as text-only on playback.
     func injectFinalized(_ text: String) {
-        handleFinalized(text)
+        handleFinalized(text, range: nil)
+    }
+
+    /// Inject finalized text WITH a recording range, so tests can prove paragraph <-> time mapping
+    /// and ranged playback without live audio.
+    func injectFinalized(_ text: String, range: ParagraphTiming?) {
+        handleFinalized(text, range: range)
     }
 
     /// Set the live partial as if speech recognition had reported it. Test hook mirroring
@@ -274,8 +380,8 @@ final class DictationViewModel: ObservableObject {
         switch event {
         case .partial(let text):
             partial = partialText(from: processor.process(text))
-        case .finalizedSegment(let text):
-            handleFinalized(text)
+        case .finalizedSegment(let text, let range):
+            handleFinalized(text, range: range)
         case .level(let value):
             // Simple smoothing so bars glide rather than jump.
             level = level * 0.6 + value * 0.4
@@ -285,11 +391,12 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    /// Route a finalized segment through the processor: commit text, or run a command.
-    private func handleFinalized(_ text: String) {
+    /// Route a finalized segment through the processor: commit text (with its recording range), or
+    /// run a command. A command carries no paragraph, so its range is dropped.
+    private func handleFinalized(_ text: String, range: ParagraphTiming?) {
         switch processor.process(text) {
         case .text(let value):
-            commitParagraph(value)
+            commitParagraph(value, range: range)
             partial = ""
         case .command(let command):
             // A command is consumed: the command phrase itself never lands in the note (it arrived
@@ -308,10 +415,13 @@ final class DictationViewModel: ObservableObject {
         return partial
     }
 
-    private func commitParagraph(_ text: String) {
+    private func commitParagraph(_ text: String, range: ParagraphTiming? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         paragraphs.append(trimmed)
+        // Keep timings in lockstep with paragraphs: append the range (or a nil placeholder) so the
+        // two arrays never drift, even for a paragraph committed without a recording range.
+        paragraphTimings.append(range)
     }
 
     // MARK: - Command execution
@@ -347,8 +457,12 @@ final class DictationViewModel: ObservableObject {
         guard let last = paragraphs.last else { return false }
         if let remaining = SentenceTokenizer.removingLastSentence(from: last) {
             paragraphs[paragraphs.count - 1] = remaining
+            // The paragraph shrank but is still present; its recorded range no longer matches the
+            // edited text, so drop the timing (playback falls back to text-to-speech for it).
+            if !paragraphTimings.isEmpty { paragraphTimings[paragraphTimings.count - 1] = nil }
         } else {
             paragraphs.removeLast()
+            if !paragraphTimings.isEmpty { paragraphTimings.removeLast() }
         }
         return true
     }
@@ -358,6 +472,7 @@ final class DictationViewModel: ObservableObject {
     private func removeLastParagraph() -> Bool {
         guard !paragraphs.isEmpty else { return false }
         paragraphs.removeLast()
+        if !paragraphTimings.isEmpty { paragraphTimings.removeLast() }
         return true
     }
 
@@ -377,10 +492,11 @@ final class DictationViewModel: ObservableObject {
         foldPartialIntoParagraphs()
         let hadContent = !paragraphs.isEmpty
         if hadContent {
-            let title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
-            let note = Note(id: noteID, title: title, paragraphs: paragraphs, createdAt: createdAt)
             do {
-                try store.save(note)
+                // Mid-session "new note" saves the transcript only: the session's recording is one
+                // continuous file, finalized at Stop and attached to the FINAL note, so an
+                // intermediate note cannot claim a finished recording. The words are always kept.
+                try saveCurrentNote(adoptingRecording: false)
             } catch {
                 // Preserve content: do NOT reset. Surfacing the failure lets the user retry (or
                 // Stop) without silently double-saving or bleeding this note into the next.
@@ -388,6 +504,7 @@ final class DictationViewModel: ObservableObject {
             }
         }
         paragraphs = []
+        paragraphTimings = []
         partial = ""
         noteID = UUID()
         createdAt = Date()
@@ -412,10 +529,26 @@ final class DictationViewModel: ObservableObject {
         }
         wasRecordingBeforeReadBack = wasRecording
         isReadingBack = true
-        // Reflect the true state in the UI while Mira speaks, so the screen is honest.
+        // Reflect the true state in the UI while playback runs, so the screen is honest.
         if wasRecording { phase = .readingBack }
+        // Prefer the ACTUAL recording of the last paragraph (spec 0007): play its recorded range if
+        // there is one and a playable file. Otherwise fall back to text-to-speech. Both report
+        // completion through `readBackDidFinish` (the player and speaker share the same callback), so
+        // the resume handshake is identical.
+        if let timing = lastParagraphTiming(),
+           let recordingURL = service.recordingURL(),
+           audioPlayer.play(url: recordingURL, from: timing.start, duration: timing.duration) {
+            return true
+        }
         speaker.speak(last)
         return true
+    }
+
+    /// The recorded range of the last committed paragraph, or nil when it has no real recording
+    /// (recording off, a folded partial, or an edited paragraph whose timing was dropped).
+    private func lastParagraphTiming() -> ParagraphTiming? {
+        guard let timing = paragraphTimings.last ?? nil else { return nil }
+        return timing.duration > 0 ? timing : nil
     }
 
     /// Restore capture once read-back finishes. Guarded by `isReadingBack` (not `phase`), so a
@@ -435,11 +568,14 @@ final class DictationViewModel: ObservableObject {
         wasRecordingBeforeReadBack = false
     }
 
-    /// Fold any live partial into the committed paragraphs (used before save/read-back).
+    /// Fold any live partial into the committed paragraphs (used before save/read-back). The partial
+    /// was never finalized, so it has no recording range: append a nil placeholder to keep timings in
+    /// lockstep, and it plays back via text-to-speech.
     private func foldPartialIntoParagraphs() {
         let trimmed = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             paragraphs.append(trimmed)
+            paragraphTimings.append(nil)
             partial = ""
         }
     }

@@ -17,6 +17,17 @@ protocol SpeechCaptureService: AnyObject {
     /// Whether on-device recognition is possible right now. Returns the blocking error or nil.
     func availabilityError() -> SpeechCaptureError?
 
+    /// Turn the tee'd audio recording on or off for the session that `start()` will begin (spec
+    /// 0007). Set BEFORE `start()`. When true, the same input-tap buffers that feed recognition are
+    /// also written to a compressed `.m4a`; when false (transcript-only), no audio file is opened.
+    /// Defaults to off so a caller that never sets it behaves exactly as before.
+    func setRecordingEnabled(_ enabled: Bool)
+
+    /// The URL of the recording written for the session, or nil when nothing was recorded (recording
+    /// disabled, or capture never wrote a frame). Valid after `stop()`; the file is a temporary one
+    /// the caller adopts into storage via `NoteStoring.saveAudio(from:for:)`.
+    func recordingURL() -> URL?
+
     /// Begin capturing. Assumes authorization has already been granted.
     func start()
 
@@ -34,8 +45,10 @@ protocol SpeechCaptureService: AnyObject {
 enum SpeechCaptureEvent {
     /// The in-progress phrase for the current task (replaces the last partial).
     case partial(String)
-    /// A finalized phrase that should be committed to the note as a paragraph.
-    case finalizedSegment(String)
+    /// A finalized phrase that should be committed to the note as a paragraph, with its time range
+    /// in the recording (spec 0007). `range` is nil when nothing was recorded (recording disabled,
+    /// or the recognizer reported no segment timings) so a text-only session is unaffected.
+    case finalizedSegment(String, range: ParagraphTiming?)
     /// Microphone input level, 0...1, for the waveform.
     case level(Float)
     /// A user-facing failure. Capture has stopped.

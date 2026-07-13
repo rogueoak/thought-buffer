@@ -94,6 +94,22 @@ request path return a nil/no-op starter. Make presentation a pure function of th
 while backgrounded opens on appear; a re-request after a session ends re-opens). Generalizes to any
 future OS-triggered entry point that starts an in-app flow.
 
+## Tee a live stream at its existing fork, and keep one sink alive across the other's churn (spec 0007)
+
+When a live audio stream already fans out to more than one consumer (the input tap fed the
+recognizer and the waveform), adding a third sink is a tee at that SAME fork, not a second capture
+path: the tap forks each buffer to the recognizer AND a file writer, one mic, one engine. The trap
+is lifetime coupling. The recognizer restarts its task many times per session, but the recording
+must be ONE continuous file, so the file writer must live for the whole session and be created once
+(guarded by "only if none exists" so pause/resume and restart reuse it), while the churny consumer
+is rebuilt freely around it. Because each consumer keeps its OWN clock (segment timestamps reset to
+zero every restart), map back to the shared timeline by tracking an offset in the durable sink's own
+terms (audio seconds = frames written / sample rate, read at each restart) and adding it - never wall
+clock, so a pause that writes no frames does not advance the recording clock. Keep the off-main sink
+thread-safe on its own (a lock, `@unchecked Sendable`) exactly as the tap already treats
+`request.append`, so no isolated state crosses the audio thread. Generalizes to any second recorder,
+meter, or analyzer teed onto a stream whose primary consumer restarts under it.
+
 ## Validate a config value against its consumer's contract, not just its shape (spec 0006)
 
 A user-editable setting must be validated against what DOWNSTREAM does with it, not merely that it

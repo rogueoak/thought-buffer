@@ -16,8 +16,26 @@ protocol NoteStoring: Sendable {
     /// Load every note, newest first. Unreadable files are skipped, not fatal.
     func loadAll() -> [Note]
 
-    /// Delete a note by id. No-op if it does not exist.
+    /// Delete a note by id, including its sibling audio recording if present. No-op if it does not
+    /// exist.
     func delete(id: UUID) throws
+
+    // MARK: - Audio recording (spec 0007)
+
+    /// The on-disk URL of the sibling audio recording for a note id (`<id>.m4a` next to `<id>.md`),
+    /// or nil when this store does not keep audio on disk. The file may or may not exist; this is
+    /// just where it lives.
+    func audioURL(for id: UUID) -> URL?
+
+    /// Adopt a recording that capture wrote to a temporary location, moving it to the note's
+    /// sibling audio slot with the same coordination and protection as the note file. Overwrites any
+    /// existing recording for the id. Returns the final URL. Throws on failure.
+    @discardableResult
+    func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL
+
+    /// Delete a note's sibling audio recording. No-op if it does not exist. `delete(id:)` calls this
+    /// too, so deleting a note never leaves an orphaned recording behind.
+    func deleteAudio(for id: UUID) throws
 }
 
 extension NoteStoring {
@@ -26,4 +44,21 @@ extension NoteStoring {
     /// layer, not a stub. Exposed as one constant so the Settings "Format" row is driven from the
     /// truth rather than a duplicated literal that could silently drift.
     static var storageFormatLabel: String { "Markdown" }
+
+    /// The file extension used for a note's sibling audio recording. AAC in an `.m4a` container:
+    /// compressed so a long session stays small, and natively playable by `AVAudioPlayer`.
+    static var audioFileExtension: String { "m4a" }
+
+    // MARK: - Audio defaults
+
+    /// Default: a store that does not keep audio on disk (an in-memory test stub) reports no URL.
+    /// The file-backed stores override this.
+    func audioURL(for id: UUID) -> URL? { nil }
+
+    /// Default no-op for stores without on-disk audio. The file-backed stores override this.
+    @discardableResult
+    func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL { temporaryURL }
+
+    /// Default no-op for stores without on-disk audio. The file-backed stores override this.
+    func deleteAudio(for id: UUID) throws {}
 }

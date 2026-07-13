@@ -329,9 +329,12 @@ private final class StubCaptureService: SpeechCaptureService {
     var onEvent: ((SpeechCaptureEvent) -> Void)?
     private(set) var pauseCount = 0
     private(set) var resumeCount = 0
+    private(set) var recordingEnabled = false
 
     func requestAuthorization() async -> SpeechCaptureError? { nil }
     func availabilityError() -> SpeechCaptureError? { nil }
+    func setRecordingEnabled(_ enabled: Bool) { recordingEnabled = enabled }
+    func recordingURL() -> URL? { nil }
     func start() {}
     func pause() { pauseCount += 1 }
     func resume() { resumeCount += 1 }

@@ -20,12 +20,19 @@ struct SettingsView: View {
     /// SwiftUI drives the fields without fighting the protocol's plain properties.
     @State private var controlPhrase: String
     @State private var overrides: [SpellingOverride]
+    /// The chosen retention mode, plus the day count for the auto-delete mode (kept even while the
+    /// mode is not auto-delete, so toggling back restores the last window instead of resetting).
+    @State private var retentionMode: RetentionMode
+    @State private var autoDeleteDays: Int
 
     init(settings: SettingsStoring, storeKind: NoteStoreKind = .local) {
         self.settings = settings
         self.storeKind = storeKind
         _controlPhrase = State(initialValue: settings.controlPhrase)
         _overrides = State(initialValue: settings.spellingOverrides)
+        let retention = settings.audioRetention
+        _retentionMode = State(initialValue: RetentionMode(retention))
+        _autoDeleteDays = State(initialValue: retention.autoDeleteDays ?? SettingsView.defaultAutoDeleteDays)
     }
 
     var body: some View {
@@ -36,6 +43,7 @@ struct SettingsView: View {
                 List {
                     assistantSection
                     overridesSection
+                    recordingSection
                     storageSection
                 }
                 .scrollContentBackground(.hidden)
@@ -120,6 +128,77 @@ struct SettingsView: View {
 
     private func persistOverrides() {
         settings.spellingOverrides = overrides
+    }
+
+    // MARK: - Recording (spec 0007)
+
+    /// The default auto-delete window offered when the user first picks that mode.
+    static let defaultAutoDeleteDays = 30
+
+    /// The retention modes as a flat, pickable set (the associated `days` of the enum lives in a
+    /// separate stepper so the picker stays simple).
+    enum RetentionMode: String, CaseIterable, Identifiable {
+        case keep
+        case transcriptOnly
+        case autoDelete
+
+        var id: String { rawValue }
+
+        init(_ retention: AudioRetention) {
+            switch retention {
+            case .keep: self = .keep
+            case .transcriptOnly: self = .transcriptOnly
+            case .autoDeleteDays: self = .autoDelete
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .keep: return "Keep recordings"
+            case .transcriptOnly: return "Transcript only"
+            case .autoDelete: return "Auto-delete"
+            }
+        }
+    }
+
+    private var recordingSection: some View {
+        Section {
+            Picker("Recordings", selection: $retentionMode) {
+                ForEach(RetentionMode.allCases) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .onChange(of: retentionMode) { _, _ in persistRetention() }
+
+            if retentionMode == .autoDelete {
+                Stepper(value: $autoDeleteDays, in: AudioRetention.minDays...365) {
+                    Text("Delete after \(autoDeleteDays) day\(autoDeleteDays == 1 ? "" : "s")")
+                        .foregroundStyle(CanopyColor.text)
+                }
+                .onChange(of: autoDeleteDays) { _, _ in persistRetention() }
+            }
+        } header: {
+            Text("Voice recordings")
+                .foregroundStyle(CanopyColor.textMuted)
+        } footer: {
+            Text("Keep the audio of each note (default), record the transcript only, or delete "
+                + "recordings automatically after a while. Audio stays on your device (or your "
+                + "iCloud, if enabled) and is never uploaded to us.")
+                .font(.system(size: CanopyFont.sizeXs))
+                .foregroundStyle(CanopyColor.textSubtle)
+        }
+    }
+
+    /// Write the chosen retention back to the store. The day count only matters in auto-delete mode.
+    private func persistRetention() {
+        switch retentionMode {
+        case .keep:
+            settings.audioRetention = .keep
+        case .transcriptOnly:
+            settings.audioRetention = .transcriptOnly
+        case .autoDelete:
+            settings.audioRetention = .autoDeleteDays(autoDeleteDays)
+        }
     }
 
     // MARK: - Storage

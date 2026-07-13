@@ -81,7 +81,10 @@ struct StreamListView: View {
             }
             .navigationTitle("Stream")
             .navigationDestination(for: Note.self) { note in
-                NoteDetailView(note: note)
+                // Resolve the note's recording from the store only when the note claims audio and the
+                // file is actually on disk (it may have been auto-deleted, or not yet synced). A nil
+                // URL hides the play affordance, so playback never points at a missing file.
+                NoteDetailView(note: note, audioURL: resolvedAudioURL(for: note))
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -103,7 +106,13 @@ struct StreamListView: View {
             }
             .fullScreenCover(isPresented: showDictation) {
                 DictationView(
-                    model: DictationViewModel(store: store, processor: makeTextProcessor())
+                    model: DictationViewModel(
+                        store: store,
+                        processor: makeTextProcessor(),
+                        // Record audio for this session unless the user chose transcript-only. Read
+                        // now (per session) so a Settings change applies to the next session started.
+                        recordsAudio: settingsStore.audioRetention.recordsAudio
+                    )
                 ) { savedNote in
                     // The session is over: consuming the pending route (via the binding's setter on
                     // dismiss) closes the cover; here just refresh the feed if a note was saved.
@@ -132,6 +141,12 @@ struct StreamListView: View {
                 Task { @MainActor in feed.stop() }
             }
         }
+    }
+
+    /// The on-disk recording URL for a note, or nil when it has no audio or the file is missing.
+    private func resolvedAudioURL(for note: Note) -> URL? {
+        guard note.hasAudio, let url = store.audioURL(for: note.id) else { return nil }
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
     private var emptyState: some View {
