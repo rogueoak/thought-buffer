@@ -90,6 +90,6 @@ works if the buffer exists independent of the UI/startup that populates it; othe
 request (the one that launched the app) is the one it silently drops. So: back the seam with a
 resolution-independent latch that the composition root adopts when it comes up, and never let the
 request path return a nil/no-op starter. Make presentation a pure function of the pending state
-(`SessionRouting.shouldPresent`) so it is unit-testable and has no lost-edge cases (a start requested
+(`PendingSessionRoute.shouldPresent`) so it is unit-testable and has no lost-edge cases (a start requested
 while backgrounded opens on appear; a re-request after a session ends re-opens). Generalizes to any
 future OS-triggered entry point that starts an in-app flow.

@@ -13,11 +13,11 @@ final class SessionStartTests: XCTestCase {
         super.setUp()
         // The cold-start latch is process-wide; clear it so one test's request cannot bleed into
         // another that builds a fresh route.
-        PendingSessionRoute.pendingColdStart = false
+        PendingSessionRoute.clearColdStartLatch()
     }
 
     override func tearDown() {
-        PendingSessionRoute.pendingColdStart = false
+        PendingSessionRoute.clearColdStartLatch()
         super.tearDown()
     }
 
@@ -87,9 +87,9 @@ final class SessionStartTests: XCTestCase {
     // MARK: - Routing: pending start -> present dictation (the seam the root binds to)
 
     func testRoutingPresentsWhileStartPending() {
-        XCTAssertTrue(SessionRouting.shouldPresent(startRequested: true),
+        XCTAssertTrue(PendingSessionRoute.shouldPresent(startRequested: true),
                       "a pending start opens dictation")
-        XCTAssertFalse(SessionRouting.shouldPresent(startRequested: false),
+        XCTAssertFalse(PendingSessionRoute.shouldPresent(startRequested: false),
                        "nothing pending keeps dictation closed")
     }
 
@@ -100,30 +100,16 @@ final class SessionStartTests: XCTestCase {
         let route = PendingSessionRoute()
 
         route.startNewSession()
-        XCTAssertTrue(SessionRouting.shouldPresent(startRequested: route.startRequested),
+        XCTAssertTrue(PendingSessionRoute.shouldPresent(startRequested: route.startRequested),
                       "first start opens")
 
         route.consume()
-        XCTAssertFalse(SessionRouting.shouldPresent(startRequested: route.startRequested),
+        XCTAssertFalse(PendingSessionRoute.shouldPresent(startRequested: route.startRequested),
                        "consuming on dismiss closes")
 
         route.startNewSession()
-        XCTAssertTrue(SessionRouting.shouldPresent(startRequested: route.startRequested),
+        XCTAssertTrue(PendingSessionRoute.shouldPresent(startRequested: route.startRequested),
                       "a second start after the first ended re-opens - not lost")
-    }
-
-    func testDismissBindingConsumesTheRoute() {
-        // Mirror the root's presentation binding: setting it false (a dismiss) must consume the
-        // pending start so the cover closes and the next request re-opens cleanly.
-        let route = PendingSessionRoute()
-        route.startNewSession()
-
-        // The binding the root builds: get = shouldPresent, set(false) = consume.
-        let present = SessionRouting.shouldPresent(startRequested: route.startRequested)
-        XCTAssertTrue(present)
-        // Simulate the setter's false branch.
-        route.consume()
-        XCTAssertFalse(route.startRequested, "dismiss consumes the pending start")
     }
 
     // MARK: - Cold launch: a start that arrives before a route exists is not lost
@@ -151,6 +137,21 @@ final class SessionStartTests: XCTestCase {
         XCTAssertFalse(PendingSessionRoute.pendingColdStart)
         let route = PendingSessionRoute()
         XCTAssertFalse(route.startRequested, "no latch means no pending start on a fresh route")
+    }
+
+    func testProductionSessionStarterAccessorLatchesBeforeResolution() {
+        // Exercise the real production accessor `AppDependencies.sessionStarter` (not a hand-built
+        // `ColdStartSessionStarter`), so the pre-resolution branch it takes is covered rather than
+        // bypassed. Reset the shared root to its unresolved state first so this runs deterministically
+        // even if an earlier test resolved it. Before the root resolves, the accessor must hand back a
+        // starter whose request lands on the cold-start latch, so a cold hands-free launch is not lost.
+        AppDependencies.resetSharedForTesting()
+        XCTAssertFalse(PendingSessionRoute.pendingColdStart)
+
+        AppDependencies.sessionStarter.startNewSession()
+
+        XCTAssertTrue(PendingSessionRoute.pendingColdStart,
+                      "the pre-resolution accessor latches the start so a cold launch is not lost")
     }
 
     // MARK: - App Shortcuts are registered, one per hands-free intent

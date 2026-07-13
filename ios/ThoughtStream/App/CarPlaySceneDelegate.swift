@@ -12,6 +12,7 @@ import UIKit
 /// unaffected. The code is ready the day Apple grants the entitlement (or the category changes);
 /// until then Siri is the shippable hands-free-in-car path. Activating this needs the entitlement
 /// plus a CarPlay head unit or the CarPlay simulator.
+@MainActor
 final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate {
     /// The interface controller the system hands us on connect; retained so the template stays live.
     private var interfaceController: CPInterfaceController?
@@ -35,11 +36,13 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// phone opens a fresh dictation session - the same start the Record button and Siri trigger.
     private func makeRootTemplate() -> CPListTemplate {
         let start = CPListItem(text: "Start a thought stream", detailText: "Begin a new note by voice")
-        start.handler = { _, completion in
-            Task { @MainActor in
-                AppDependencies.sessionStarter.startNewSession()
-                completion()
-            }
+        // The handler already runs on the main actor (the class is `@MainActor`), so it requests the
+        // start directly with no `Task` hop. `[weak self]` is defensive - the handler outlives no
+        // state we own, but it keeps the closure from retaining the delegate.
+        start.handler = { [weak self] _, completion in
+            _ = self
+            AppDependencies.sessionStarter.startNewSession()
+            completion()
         }
         let section = CPListSection(items: [start])
         return CPListTemplate(title: "Thought Stream", sections: [section])

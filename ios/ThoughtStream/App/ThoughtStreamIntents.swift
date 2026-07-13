@@ -1,5 +1,14 @@
 import AppIntents
 
+/// Resolves the live starter for an App Intent built by the system. The system constructs App
+/// Intents outside the SwiftUI tree, so they cannot receive the route by injection; this reaches it
+/// through the `AppDependencies` bridge (which hands back a cold-start latch before the app has
+/// resolved, so a cold-launch request is never lost). The system builds and runs intents on the
+/// main actor, so `assumeIsolated` is safe here and keeps the stored `starter` non-optional.
+private func resolveDefaultStarter() -> SessionStarter {
+    MainActor.assumeIsolated { AppDependencies.sessionStarter }
+}
+
 /// "Hey Siri, start a stream in Thought Stream." Launches the app and begins a fresh dictation
 /// session hands-free - the shippable in-car capability, since Siri works through the phone and
 /// through CarPlay's Siri button without needing the (unavailable) CarPlay entitlement.
@@ -17,12 +26,14 @@ struct StartThoughtStreamIntent: AppIntent {
     /// Bring the app to the foreground so the dictation session can open and the microphone can run.
     static var openAppWhenRun: Bool = true
 
-    /// The seam that requests a session start. Defaults to the live route from the composition root;
-    /// tests inject a stub. Not an `@Parameter` - it is a dependency, never a user-supplied value.
-    let starter: SessionStarter?
+    /// The seam that requests a session start. Non-optional and fully resolved at construction (no
+    /// nil-coalescing seam in stored state): the default init resolves the live starter through
+    /// `resolveDefaultStarter()`, and tests inject a stub. Not an `@Parameter` - it is a dependency,
+    /// never a user-supplied value.
+    let starter: SessionStarter
 
     init() {
-        self.starter = nil
+        self.starter = resolveDefaultStarter()
     }
 
     /// Test/DI initializer: inject a stub starter to prove `perform()` requests a start without any
@@ -33,10 +44,7 @@ struct StartThoughtStreamIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        // The injected starter wins (tests); otherwise reach the live route from the composition
-        // root, which App Intents cannot receive by injection since the system builds them outside
-        // the SwiftUI tree.
-        (starter ?? AppDependencies.sessionStarter).startNewSession()
+        starter.startNewSession()
         return .result()
     }
 }
@@ -52,10 +60,12 @@ struct NewNoteIntent: AppIntent {
 
     static var openAppWhenRun: Bool = true
 
-    let starter: SessionStarter?
+    /// The seam that requests a session start. Non-optional, resolved at construction via
+    /// `resolveDefaultStarter()` (no nil-coalescing seam); tests inject a stub.
+    let starter: SessionStarter
 
     init() {
-        self.starter = nil
+        self.starter = resolveDefaultStarter()
     }
 
     init(starter: SessionStarter) {
@@ -64,7 +74,7 @@ struct NewNoteIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult {
-        (starter ?? AppDependencies.sessionStarter).startNewSession()
+        starter.startNewSession()
         return .result()
     }
 }

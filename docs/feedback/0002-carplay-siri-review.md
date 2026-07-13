@@ -40,7 +40,7 @@ untested.
   `ColdStartSessionStarter` that records the request on a process-wide
   `PendingSessionRoute.pendingColdStart` latch; the first route created adopts and clears it, so a
   cold-launch start always lands. Covered by tests.
-- Presentation is a pure `SessionRouting.shouldPresent(startRequested:)` the root binds to (get =
+- Presentation is a pure `PendingSessionRoute.shouldPresent(startRequested:)` the root binds to (get =
   should-present, set(false) = consume), unit-tested for open / consume / re-open, so a re-request
   after a session ends re-opens and nothing is lost on an edge.
 - The shortcut phrase leads are mirrored as testable `static let` arrays, and the test asserts the

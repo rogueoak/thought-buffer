@@ -19,14 +19,14 @@ struct StreamListView: View {
     @State private var showSettings = false
 
     /// Presentation of the dictation screen is a pure function of the pending route: it is shown
-    /// exactly while a start is pending (`SessionRouting.shouldPresent`). Setting it false - the
+    /// exactly while a start is pending (`PendingSessionRoute.shouldPresent`). Setting it false - the
     /// header chevron, a finished save, a swipe-down - consumes the pending start. Deriving the
     /// binding from the route (rather than a separate `@State` bool synced by `onChange`) means a
     /// start requested while backgrounded opens on appear, and a re-request right after a session
     /// ends re-opens, with no lost-edge cases.
     private var showDictation: Binding<Bool> {
         Binding(
-            get: { SessionRouting.shouldPresent(startRequested: sessionRoute.startRequested) },
+            get: { PendingSessionRoute.shouldPresent(startRequested: sessionRoute.startRequested) },
             set: { present in if !present { sessionRoute.consume() } }
         )
     }

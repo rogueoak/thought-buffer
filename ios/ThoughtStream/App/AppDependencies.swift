@@ -52,11 +52,19 @@ struct AppDependencies {
     /// view tree is still injected. `@MainActor` isolates the mutable shared state.
     @MainActor private(set) static var shared: AppDependencies?
 
+    /// Clear the resolved root back to the unresolved (nil) state. Test-only support so a test can
+    /// exercise the pre-resolution `sessionStarter` path deterministically, regardless of whether an
+    /// earlier test resolved the root; production only ever transitions nil -> resolved via `resolve`.
+    @MainActor static func resetSharedForTesting() {
+        shared = nil
+    }
+
     /// The shared session starter for hands-free callers (Siri App Intent, CarPlay). Returns the
     /// live route once the app has resolved; before that (a COLD hands-free launch, where the intent
     /// runs before `resolve()` finishes) it returns a latch-setting starter so the request is not
     /// dropped - the route seeds itself from the latch the moment it is created. Never nil, so a
-    /// cold-launch start always lands.
+    /// cold-launch start always lands. Allocates a fresh `ColdStartSessionStarter` on each
+    /// pre-resolution call; negligible, and it happens only on the rare cold hands-free launch.
     @MainActor
     static var sessionStarter: SessionStarter { shared?.sessionRoute ?? ColdStartSessionStarter() }
 

@@ -88,7 +88,7 @@ A COLD hands-free launch needs care: `openAppWhenRun` launches the app and runs 
 request that launched the app from being dropped, `AppDependencies.sessionStarter` returns a
 `ColdStartSessionStarter` when the root is unresolved; it records the request on a process-wide
 `PendingSessionRoute.pendingColdStart` latch, and the first route created adopts and clears it. The
-root's presentation is a pure function of `startRequested` (`SessionRouting.shouldPresent`, unit
+root's presentation is a pure function of `startRequested` (`PendingSessionRoute.shouldPresent`, unit
 tested), so the session opens the moment the Stream list appears.
 
 **App Intents (iOS 17+).** `StartThoughtStreamIntent` sets `openAppWhenRun = true` and, in

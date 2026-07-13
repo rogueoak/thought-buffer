@@ -29,8 +29,22 @@ protocol SessionStarter: AnyObject {
 final class PendingSessionRoute: ObservableObject, SessionStarter {
     /// Process-wide latch for a start requested before a route exists (a cold hands-free launch).
     /// The next route created reads and clears it, so exactly one session opens. Main-actor isolated,
-    /// so no locking is needed; hands-free callers already hop to the main actor.
-    static var pendingColdStart = false
+    /// so no locking is needed; hands-free callers already hop to the main actor. `private(set)` so
+    /// only this type's own latch operations mutate it; callers set it through `latchColdStart()` and
+    /// clear it by creating a route (or, in tests, `clearColdStartLatch()`).
+    static private(set) var pendingColdStart = false
+
+    /// Record a start that arrived before any route existed (a cold hands-free launch). The next
+    /// route created adopts it. Kept here so the latch's only writer is `PendingSessionRoute`.
+    static func latchColdStart() {
+        pendingColdStart = true
+    }
+
+    /// Clear the cold-start latch without adopting it. For tests that need a clean process-wide
+    /// starting state; production clears the latch only by creating a route that adopts it.
+    static func clearColdStartLatch() {
+        pendingColdStart = false
+    }
 
     /// True when a hands-free or in-app caller has asked to start a session and the root has not yet
     /// consumed it. The root presents `DictationView` while this is set, then calls `consume()`.
@@ -54,17 +68,14 @@ final class PendingSessionRoute: ObservableObject, SessionStarter {
     func consume() {
         startRequested = false
     }
-}
 
-/// The pure decision for turning the pending-route state into a "present dictation?" answer, split
-/// out from `StreamListView` so it is unit-testable without SwiftUI. Keeping it a static function of
-/// its inputs means the view holds no routing logic of its own and the routing is proven directly.
-enum SessionRouting {
-    /// Whether the dictation screen should be showing, given a pending start and whether it is
-    /// already up. A pending start opens it; nothing pending closes it. Making presentation a pure
-    /// function of `startRequested` (rather than only reacting to the flag's edges) means a start
-    /// requested while the app was backgrounded still opens on first appear, and a start requested
-    /// again right after a session ends re-opens once the previous one has been consumed.
+    /// The pure decision for turning the pending-route state into a "present dictation?" answer,
+    /// split out from `StreamListView` so it is unit-testable without SwiftUI. A pure, static
+    /// function of its input: the view holds no routing logic of its own and the routing is proven
+    /// directly. A pending start opens dictation; nothing pending closes it. Making presentation a
+    /// pure function of `startRequested` (rather than only reacting to the flag's edges) means a
+    /// start requested while the app was backgrounded still opens on first appear, and a start
+    /// requested again right after a session ends re-opens once the previous one has been consumed.
     static func shouldPresent(startRequested: Bool) -> Bool {
         startRequested
     }
@@ -77,6 +88,6 @@ enum SessionRouting {
 @MainActor
 final class ColdStartSessionStarter: SessionStarter {
     func startNewSession() {
-        PendingSessionRoute.pendingColdStart = true
+        PendingSessionRoute.latchColdStart()
     }
 }

@@ -19,7 +19,7 @@ How the system is built and why.
     concrete `@MainActor ObservableObject`) are the single "start a new dictation session" seam. The
     Record button, the Siri App Intent, and CarPlay all request a start through it. The root
     (`StreamListView`) presents `DictationView` as a pure function of `startRequested`
-    (`SessionRouting.shouldPresent`, bound so a dismiss `consume()`s the route), so a start requested
+    (`PendingSessionRoute.shouldPresent`, bound so a dismiss `consume()`s the route), so a start requested
     while backgrounded opens on appear and a re-request after a session ends re-opens - no lost-edge
     cases. `DictationView` begins capture in its `.task`. "Start a session" means "route to a fresh
     DictationView", so every entry point behaves identically and there is no parallel capture path.
