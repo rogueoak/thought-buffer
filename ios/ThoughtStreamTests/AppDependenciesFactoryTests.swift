@@ -55,4 +55,5 @@ private final class MutableSettingsStore: SettingsStoring {
         set { rawControlPhrase = newValue }
     }
     var spellingOverrides: [SpellingOverride] = []
+    var audioRetention: AudioRetention = .keep
 }

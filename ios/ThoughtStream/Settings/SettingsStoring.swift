@@ -16,6 +16,11 @@ protocol SettingsStoring: AnyObject {
 
     /// The ordered list of spelling fixes applied to dictated text before commit.
     var spellingOverrides: [SpellingOverride] { get set }
+
+    /// How long a note's voice recording is kept (spec 0007). Defaults to `.keep`. The capture path
+    /// reads this to decide whether to record at all; the auto-delete sweep reads it to expire old
+    /// recordings. Persisted as a small string tag so an unknown value falls back to `.keep`.
+    var audioRetention: AudioRetention { get set }
 }
 
 /// A `UserDefaults`-backed `SettingsStoring`. Persists the control phrase as a string and the
@@ -25,6 +30,7 @@ final class UserDefaultsSettingsStore: SettingsStoring {
     private enum Key {
         static let controlPhrase = "settings.controlPhrase"
         static let spellingOverrides = "settings.spellingOverrides"
+        static let audioRetention = "settings.audioRetention"
     }
 
     /// Bounds on the persisted overrides so a stuck field or a paste cannot grow `UserDefaults`
@@ -63,6 +69,17 @@ final class UserDefaultsSettingsStore: SettingsStoring {
             let data = try? JSONEncoder().encode(bounded)
             defaults.set(data, forKey: Key.spellingOverrides)
         }
+    }
+
+    var audioRetention: AudioRetention {
+        // Stored as a small string tag so a value written by a newer build never fails to decode;
+        // an absent or unknown tag falls back to `.keep` (the safe default: keeping is what a fresh
+        // install does today, and the transcript is unaffected either way).
+        get {
+            guard let tag = defaults.string(forKey: Key.audioRetention) else { return .default }
+            return AudioRetention(storageTag: tag)
+        }
+        set { defaults.set(newValue.storageTag, forKey: Key.audioRetention) }
     }
 
     /// Cap the row count and per-field length so persistence and the per-segment rescan stay

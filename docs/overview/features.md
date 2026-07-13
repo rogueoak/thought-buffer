@@ -126,3 +126,35 @@ Reachable from the gear in the Stream toolbar. Changes apply to the next dictati
 
 Settings persist in `UserDefaults` across relaunch. Cloud sync of settings, per-note settings, and
 importing / exporting override lists are out; changes take effect next session, not mid-session.
+
+## Dual-capture recording and playback (spec 0007)
+
+Dictation now keeps the real voice, not just the words. While a session runs, the same microphone
+feed that drives recognition is teed to a compressed `.m4a` recording for that note, on device.
+Recognition is unchanged and nothing leaves the phone.
+
+- **One continuous recording.** One tap, forked to two sinks: the recognizer and an audio-file
+  writer. The recognizer restarts its task many times per session (duration limits, hiccups), but
+  the writer lives for the whole session, so the recording is one continuous file across every
+  restart and across pause/resume.
+- **Paragraph timing.** Each finalized paragraph knows its time range in the recording, captured
+  from the recognizer's segment timestamps and anchored to absolute recording time across restarts.
+  The timings persist with the note (frontmatter, tolerant and backward compatible - a note with no
+  audio loads exactly as before).
+- **Playback in your own voice.** A saved note plays back in full (simple play / stop) from its
+  detail view, in the voice that recorded it. When a note has no recording (transcript-only, older
+  notes, or auto-deleted), the play affordance is simply not shown. In-session "Mira read that back"
+  speaks the last paragraph aloud - the current session's recording is still being written, so it is
+  not finalized to play yet - reusing the pause-capture handshake so it never feeds back into the
+  mic. The recording + timings model is left ready for a future recordings browser to seek per
+  paragraph.
+- **Retention you control.** Settings offers keep recordings (default), transcript-only (never
+  record), or auto-delete after N days. Transcript-only skips the file writer entirely; auto-delete
+  sweeps expired recordings at launch, keeping the note's text.
+- **Lifecycle.** The recording is a sibling `<id>.m4a` next to the note's `<id>.md`. It saves,
+  syncs, and deletes through the same storage layer with the same coordination and file protection;
+  deleting a note deletes its recording.
+
+Real mic capture and playback quality need a physical device (the Simulator mic produces no useful
+audio); the pipeline is proven structurally and by tests. A recordings list, a waveform scrubber,
+parameterized playback controls, and the CarPlay Audio surface / entitlement are out.

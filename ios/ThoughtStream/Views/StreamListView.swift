@@ -81,7 +81,10 @@ struct StreamListView: View {
             }
             .navigationTitle("Stream")
             .navigationDestination(for: Note.self) { note in
-                NoteDetailView(note: note)
+                // Pass the store as a lazy resolver rather than resolving here: the detail view's
+                // playback model validates the recording off the main actor at play time, so pushing
+                // into a note never blocks on the coordinated presence check (iCloud navigation jank).
+                NoteDetailView(note: note, resolver: StoreAudioURLResolver(store: store))
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -103,7 +106,13 @@ struct StreamListView: View {
             }
             .fullScreenCover(isPresented: showDictation) {
                 DictationView(
-                    model: DictationViewModel(store: store, processor: makeTextProcessor())
+                    model: DictationViewModel(
+                        store: store,
+                        processor: makeTextProcessor(),
+                        // Record audio for this session unless the user chose transcript-only. Read
+                        // now (per session) so a Settings change applies to the next session started.
+                        recordsAudio: settingsStore.audioRetention.recordsAudio
+                    )
                 ) { savedNote in
                     // The session is over: consuming the pending route (via the binding's setter on
                     // dismiss) closes the cover; here just refresh the feed if a note was saved.

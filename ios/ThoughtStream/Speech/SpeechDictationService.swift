@@ -32,6 +32,23 @@ final class SpeechDictationService: SpeechCaptureService {
     /// task ending after we deliberately stopped does not spin up a new one.
     private var isCapturing = false
 
+    /// Whether to tee the audio to a file for this session (spec 0007). Set via
+    /// `setRecordingEnabled` before `start()`. Off by default so a caller that never opts in behaves
+    /// exactly as before.
+    private var recordingEnabled = false
+
+    /// The tee'd audio writer for the current session, or nil when recording is off or not yet
+    /// started. Created ONCE per session (in `start()` when none exists) and kept across recognizer
+    /// task restarts AND across pause/resume, so one continuous file spans the whole note. Cleared
+    /// (finished) only on `stop()`.
+    private var recordingWriter: RecordingWriter?
+
+    /// The recording's absolute time offset at the CURRENT recognition request's start, in seconds.
+    /// `SFTranscriptionSegment.timestamp` is relative to its request, and the request restarts many
+    /// times per session, so a finalized segment's absolute range is `requestAudioOffset + segment
+    /// timestamp`. Captured as the elapsed recording time each time a request begins.
+    private var requestAudioOffset: Double = 0
+
     init(locale: Locale = Locale.current) {
         // Prefer the device locale; fall back to en-US if that locale has no recognizer.
         if let r = SFSpeechRecognizer(locale: locale) {
@@ -75,13 +92,41 @@ final class SpeechDictationService: SpeechCaptureService {
         return nil
     }
 
+    // MARK: - Recording (spec 0007)
+
+    /// Enable or disable the audio tee for the session `start()` will begin. Set before `start()`.
+    func setRecordingEnabled(_ enabled: Bool) {
+        recordingEnabled = enabled
+    }
+
+    /// The recording written for the session, or nil when nothing was recorded. Only finalized after
+    /// `stop()`; the caller adopts the temporary file into storage.
+    func recordingURL() -> URL? {
+        guard let writer = recordingWriter, writer.hasContent else { return nil }
+        return writer.url
+    }
+
+    /// Delete the session's recording temp file through the writer (so even a zero-frame file that
+    /// `recordingURL()` would not report is removed) and drop the writer, leaving no orphan.
+    func discardRecording() {
+        recordingWriter?.discard()
+        recordingWriter = nil
+    }
+
     // MARK: - Capture lifecycle
 
     /// Begin capturing. Assumes authorization has already been granted.
+    ///
+    /// `resume()` routes here too, so the recording writer is created only when one does not already
+    /// exist: a pause/resume within the same note keeps appending to the one continuous file, while
+    /// a fresh session (after `stop()` cleared it) opens a new one.
     func start() {
         if let error = availabilityError() {
             emit(.failure(error))
             return
+        }
+        if recordingEnabled && recordingWriter == nil {
+            recordingWriter = RecordingWriter()
         }
         do {
             try configureSession()
@@ -94,7 +139,9 @@ final class SpeechDictationService: SpeechCaptureService {
     }
 
     /// Pause capture, keeping the note. The engine and current task stop; text already
-    /// committed to the note is untouched (the note lives in the view model, not here).
+    /// committed to the note is untouched (the note lives in the view model, not here). The
+    /// recording writer is NOT finished here - a resume keeps appending to the same file, so one
+    /// note maps to one continuous recording.
     func pause() {
         isCapturing = false
         teardownEngineAndTask()
@@ -106,11 +153,14 @@ final class SpeechDictationService: SpeechCaptureService {
         start()
     }
 
-    /// Stop capture entirely and release the session.
+    /// Stop capture entirely and release the session. Finishes the recording so its file is complete
+    /// and ready for the caller to adopt.
     func stop() {
         isCapturing = false
         teardownEngineAndTask()
         deactivateSession()
+        recordingWriter?.finish()
+        requestAudioOffset = 0
     }
 
     // MARK: - Engine + task
@@ -134,15 +184,20 @@ final class SpeechDictationService: SpeechCaptureService {
         let request = makeRequest()
         self.request = request
 
+        // This request starts at the current recording position, so segment timestamps (which are
+        // relative to the request) map to absolute recording time. A resumed session already has
+        // frames written; `elapsedSeconds` reflects that, so the offset stays continuous.
+        requestAudioOffset = recordingWriter?.elapsedSeconds ?? 0
+
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
 
-        // Install a single tap that both feeds the recognizer and drives the waveform level.
-        // The tap runs on the audio thread: it appends to the request it captured (that API is
-        // thread-safe) and hops to the main actor only to emit the level. It never reads or
-        // mutates the service's isolated state.
+        // Install a single tap that feeds the recognizer, tees to the recording, and drives the
+        // waveform level. The tap runs on the audio thread: it appends to the request and writer it
+        // captured (both thread-safe) and hops to the main actor only to emit the level. It never
+        // reads or mutates the service's isolated state.
         inputNode.removeTap(onBus: 0)
-        installTap(on: inputNode, format: format, request: request)
+        installTap(on: inputNode, format: format, request: request, writer: recordingWriter)
 
         self.task = makeTask(with: request, recognizer: recognizer)
 
@@ -158,15 +213,23 @@ final class SpeechDictationService: SpeechCaptureService {
         return request
     }
 
-    /// Install the audio tap that feeds `request` and reports the mic level. The request is
-    /// captured by value so the tap never touches the service's isolated `request` property.
+    /// Install the audio tap that feeds `request`, tees the buffer to the recording writer, and
+    /// reports the mic level. The request and writer are captured by value so the tap never touches
+    /// the service's isolated state; both `SFSpeechAudioBufferRecognitionRequest.append` and
+    /// `RecordingWriter.append` are safe to call off the main actor (the writer guards its own
+    /// state with a lock). This is the tee: one mic, one tap, buffers forked to two sinks.
     private func installTap(
         on inputNode: AVAudioInputNode,
         format: AVAudioFormat,
-        request: SFSpeechAudioBufferRecognitionRequest
+        request: SFSpeechAudioBufferRecognitionRequest,
+        writer: RecordingWriter?
     ) {
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            // `append` is thread-safe and does not touch isolated state.
+            // Tee to the recording FIRST, then feed recognition. Both appends are thread-safe and
+            // touch no isolated service state. Ordering matters for timing: a restart captures the
+            // request offset from the writer's frame count, so counting the buffer into the writer
+            // before it reaches the recognizer keeps that offset from under-counting at the seam.
+            writer?.append(buffer)
             request.append(buffer)
             guard let level = Self.rmsLevel(buffer) else { return }
             Task { @MainActor [weak self] in
@@ -186,12 +249,19 @@ final class SpeechDictationService: SpeechCaptureService {
             // reading or mutating state or restarting.
             let text = result?.bestTranscription.formattedString
             let isFinal = result?.isFinal ?? false
+            // Segment timings are relative to THIS request; convert to absolute recording time on
+            // the main actor (where `requestAudioOffset` is read). Computed here as request-relative
+            // and finalized below.
+            let relativeRange = result.map { Self.relativeRange(of: $0.bestTranscription.segments) } ?? nil
             let ended = isFinal || error != nil
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let text {
                     if isFinal {
-                        self.emit(.finalizedSegment(text))
+                        // Anchor the request-relative range to the recording. Nil when nothing was
+                        // recorded or the recognizer reported no timings (a text-only note path).
+                        let range = self.absoluteRange(from: relativeRange)
+                        self.emit(.finalizedSegment(text, range: range))
                     } else {
                         self.emit(.partial(text))
                     }
@@ -223,12 +293,16 @@ final class SpeechDictationService: SpeechCaptureService {
             return
         }
 
-        // Bring up the replacement before retiring the old one, so the tap never sees nil.
+        // Bring up the replacement before retiring the old one, so the tap never sees nil. The new
+        // request starts at the current recording position so its segment timestamps stay anchored
+        // to absolute recording time across the seam - the file is continuous, only the request
+        // clock resets.
         let newRequest = makeRequest()
+        requestAudioOffset = recordingWriter?.elapsedSeconds ?? 0
         let newInputNode = audioEngine.inputNode
         let format = newInputNode.outputFormat(forBus: 0)
         newInputNode.removeTap(onBus: 0)
-        installTap(on: newInputNode, format: format, request: newRequest)
+        installTap(on: newInputNode, format: format, request: newRequest, writer: recordingWriter)
 
         request = newRequest
         task = makeTask(with: newRequest, recognizer: recognizer)
@@ -253,6 +327,30 @@ final class SpeechDictationService: SpeechCaptureService {
 
     private func emit(_ event: SpeechCaptureEvent) {
         onEvent?(event)
+    }
+
+    /// The request-relative range spanned by a transcription's segments, or nil when there are none.
+    /// Pulls the raw `timestamp`/`duration` off the first/last segments and delegates the math to the
+    /// testable `RecordingTiming` (segments have no public initializer, so the numbers are extracted
+    /// here and the logic lives where it can be unit-tested).
+    ///
+    /// Nonisolated: called on the Speech framework's queue before hopping to the main actor. It only
+    /// reads the passed-in segments and touches no service state.
+    nonisolated static func relativeRange(of segments: [SFTranscriptionSegment]) -> (start: Double, duration: Double)? {
+        guard let first = segments.first, let last = segments.last else { return nil }
+        return RecordingTiming.relativeRange(
+            firstStart: first.timestamp,
+            lastStart: last.timestamp,
+            lastDuration: last.duration
+        )
+    }
+
+    /// Anchor a request-relative range to the recording by adding the offset captured when this
+    /// request began. Returns nil when there is no recording (recording disabled) or no relative
+    /// range, so a text-only session emits a nil range and behaves exactly as before.
+    private func absoluteRange(from relative: (start: Double, duration: Double)?) -> ParagraphTiming? {
+        guard recordingWriter != nil else { return nil }
+        return RecordingTiming.absolute(offset: requestAudioOffset, relative: relative)
     }
 
     /// Root-mean-square level of a buffer, normalized to a rough 0...1 for the waveform.

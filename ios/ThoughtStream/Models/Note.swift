@@ -1,21 +1,55 @@
 import Foundation
 
+/// A time range inside a note's recording, in seconds from the start of the recording. Attached
+/// to a committed paragraph so playback can seek straight to it (see `AudioNotePlayer`).
+struct ParagraphTiming: Hashable {
+    /// Seconds from the start of the recording to where this paragraph begins.
+    let start: Double
+    /// The paragraph's length in seconds.
+    let duration: Double
+
+    init(start: Double, duration: Double) {
+        self.start = start
+        self.duration = duration
+    }
+}
+
 /// A single captured note: a title plus an ordered list of paragraphs.
 ///
 /// Notes persist as Markdown files (see `NoteStore`). The value type stays small and
 /// extensible: later milestones (tags, source, edits, sync) can add fields and frontmatter
 /// keys without breaking files already on disk, because parsing is tolerant of unknown keys.
+///
+/// A note MAY carry a recording of the voice that produced it (spec 0007): `audioFileName` names
+/// the sibling `.m4a` next to the note's `.md`, and `timings` maps each paragraph to its range in
+/// that recording. Both are optional and tolerant - a note with no audio (older files, or capture
+/// with recording turned off) loads and behaves exactly as a text-only note always has.
 struct Note: Identifiable, Hashable {
     let id: UUID
     let title: String
     let paragraphs: [String]
     let createdAt: Date
+    /// The name of the sibling audio file (`<id>.m4a`), or nil when the note has no recording.
+    let audioFileName: String?
+    /// One timing per paragraph, in order, or empty when the note has no recording. When present
+    /// but shorter than `paragraphs` (e.g. a paragraph edited in without audio), the extra
+    /// paragraphs simply have no timing and fall back to text-to-speech on playback.
+    let timings: [ParagraphTiming]
 
-    init(id: UUID = UUID(), title: String, paragraphs: [String], createdAt: Date) {
+    init(
+        id: UUID = UUID(),
+        title: String,
+        paragraphs: [String],
+        createdAt: Date,
+        audioFileName: String? = nil,
+        timings: [ParagraphTiming] = []
+    ) {
         self.id = id
         self.title = title
         self.paragraphs = paragraphs
         self.createdAt = createdAt
+        self.audioFileName = audioFileName
+        self.timings = timings
     }
 
     /// The number of paragraphs in the note.
@@ -24,6 +58,28 @@ struct Note: Identifiable, Hashable {
     /// A short preview drawn from the first paragraph.
     var snippet: String {
         paragraphs.first ?? ""
+    }
+
+    /// Whether this note carries a recording. Both an audio filename AND at least one timing are
+    /// required, and this is an intentional dual-guard rather than an accident:
+    ///
+    /// - `DictationViewModel.attachRecording` GUARANTEES the pairing when it saves: it only sets
+    ///   `audioFileName` after building one timing per paragraph, and it refuses to attach (deleting
+    ///   the just-saved `.m4a` and saving text-only) unless at least one timing has a real, non-zero
+    ///   duration. So a recording whose recognizer returned all-zero timings is never silently kept
+    ///   as an unplayable file with no ranges - it is dropped cleanly, audio file and all.
+    /// - On parse (`init(markdown:)`) both keys must be present for the same reason: a stray `audio:`
+    ///   key with no `timings:` (or vice versa) is treated as a text-only note, so a half-written or
+    ///   future-format file never surfaces a recording we cannot map to paragraphs.
+    ///
+    /// The storage sweep and playback both key off this, so they agree on exactly one definition of
+    /// "has a recording" and a recording is never half-recognized.
+    var hasAudio: Bool { audioFileName != nil && !timings.isEmpty }
+
+    /// The timing of the paragraph at `index`, or nil when there is no recorded range for it.
+    func timing(forParagraphAt index: Int) -> ParagraphTiming? {
+        guard timings.indices.contains(index) else { return nil }
+        return timings[index]
     }
 }
 
@@ -81,16 +137,52 @@ extension Note {
     }
 
     /// The full Markdown file contents: YAML frontmatter followed by the body.
+    ///
+    /// The `audio` and `timings` keys are written only when the note has a recording, so a
+    /// text-only note serializes byte-for-byte as it always has. `timings` is a compact JSON array
+    /// of `[start, duration]` pairs (seconds), one per paragraph; an old parser ignores both keys.
     var markdown: String {
         let created = Note.iso8601.string(from: createdAt)
-        let front = """
-        ---
-        id: \(id.uuidString)
-        title: \(Note.escapeYAML(title))
-        created: \(created)
-        ---
-        """
+        var lines = [
+            "---",
+            "id: \(id.uuidString)",
+            "title: \(Note.escapeYAML(title))",
+            "created: \(created)",
+        ]
+        if let audioFileName {
+            lines.append("audio: \(Note.escapeYAML(audioFileName))")
+        }
+        if !timings.isEmpty {
+            lines.append("timings: \(Note.encodeTimings(timings))")
+        }
+        lines.append("---")
+        let front = lines.joined(separator: "\n")
         return front + "\n\n" + bodyMarkdown + "\n"
+    }
+
+    /// Encode timings as a compact JSON array of `[start, duration]` pairs. Kept on one frontmatter
+    /// line so the format stays a single tolerant key.
+    static func encodeTimings(_ timings: [ParagraphTiming]) -> String {
+        let pairs = timings.map { [$0.start, $0.duration] }
+        guard let data = try? JSONSerialization.data(withJSONObject: pairs, options: []),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
+    }
+
+    /// Decode timings from the compact JSON array written by `encodeTimings`. Tolerant: a malformed
+    /// value yields an empty array (the note simply behaves as text-only) rather than failing the
+    /// whole parse.
+    static func decodeTimings(_ value: String) -> [ParagraphTiming] {
+        guard let data = value.data(using: .utf8),
+              let pairs = try? JSONSerialization.jsonObject(with: data) as? [[Double]] else {
+            return []
+        }
+        return pairs.compactMap { pair in
+            guard pair.count == 2 else { return nil }
+            return ParagraphTiming(start: pair[0], duration: pair[1])
+        }
     }
 
     /// Parse a note from Markdown file contents. Tolerant: a file without frontmatter still
@@ -100,6 +192,8 @@ extension Note {
         var id = fallbackID
         var title: String?
         var createdAt = fallbackDate
+        var audioFileName: String?
+        var timings: [ParagraphTiming] = []
         var body = text
 
         if let front = Note.extractFrontmatter(text) {
@@ -113,6 +207,11 @@ extension Note {
                     if !unescaped.isEmpty { title = unescaped }
                 case "created":
                     if let parsed = Note.iso8601.date(from: value) { createdAt = parsed }
+                case "audio":
+                    let unescaped = Note.unescapeYAML(value)
+                    if !unescaped.isEmpty { audioFileName = unescaped }
+                case "timings":
+                    timings = Note.decodeTimings(value)
                 default:
                     break // unknown keys are ignored so future fields do not break old parsers
                 }
@@ -123,6 +222,15 @@ extension Note {
         self.id = id
         self.paragraphs = paragraphs
         self.createdAt = createdAt
+        // Only keep a recording reference when both halves are present; a stray key alone is not a
+        // real recording, so treat it as a text-only note (backward compatible).
+        if let audioFileName, !timings.isEmpty {
+            self.audioFileName = audioFileName
+            self.timings = timings
+        } else {
+            self.audioFileName = nil
+            self.timings = []
+        }
         self.title = title ?? Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
     }
 

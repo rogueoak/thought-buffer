@@ -94,6 +94,49 @@ request path return a nil/no-op starter. Make presentation a pure function of th
 while backgrounded opens on appear; a re-request after a session ends re-opens). Generalizes to any
 future OS-triggered entry point that starts an in-app flow.
 
+## A file being written is not a file you can read - honor the finalize boundary (spec 0007)
+
+A container format (AAC/`.m4a`, and most compressed media) is only playable once its writer has
+finalized it - closed the file so the trailing index/`moov` atom is written. So an in-flight
+recording is NOT a readable file, even though it exists on disk with content. The tempting shortcut -
+play the session's own recording for in-session "read that back" - fails: the writer is finalized at
+`stop()`, not at the `pause()` read-back uses, so the player gets an unfinalized file and silently
+degrades. The fix respects the boundary: play recorded audio only where the file IS finalized (a
+SAVED note) and use the already-available text-to-speech path for the in-session case. Encode the
+boundary in the seam's contract too - the "give me the recording URL" method documents that the file
+is finalized only after `stop()`, and a separate `discardRecording()` cleans up an orphan (including
+a zero-frame file the content-gated URL getter would not even report), so the next consumer (a
+headless CarPlay Audio browser) can't repeat the mistake. Generalizes to any producer/consumer split
+over a container-format artifact: a consumer may touch it only after the producer signals finalized,
+and the seam should say so rather than leave the lifetime implicit.
+
+## Push an existence/availability check behind the storage seam, not a bare fileExists (spec 0007)
+
+Deciding "is there a recording to play?" with `FileManager.fileExists` in the view leaks storage
+internals and is wrong for a coordinated backend: `ICloudNoteStore` wraps IO in `NSFileCoordinator`,
+so a bare `fileExists` races the sync daemon and mis-reports a synced-but-not-downloaded file as
+absent (the Play affordance silently vanishes). Put the question on the `NoteStoring` seam
+(`audioExists(for:)`, coordinated on iCloud, plain on local) so the view asks "is there a recording?"
+without knowing how storage answers - and the same coordinated check is ready for the future headless
+consumer. Generalizes: any "does X exist / is X available" decision over a store belongs on the
+store's protocol, not inlined at the call site, especially when one backend needs coordination.
+
+## Tee a live stream at its existing fork, and keep one sink alive across the other's churn (spec 0007)
+
+When a live audio stream already fans out to more than one consumer (the input tap fed the
+recognizer and the waveform), adding a third sink is a tee at that SAME fork, not a second capture
+path: the tap forks each buffer to the recognizer AND a file writer, one mic, one engine. The trap
+is lifetime coupling. The recognizer restarts its task many times per session, but the recording
+must be ONE continuous file, so the file writer must live for the whole session and be created once
+(guarded by "only if none exists" so pause/resume and restart reuse it), while the churny consumer
+is rebuilt freely around it. Because each consumer keeps its OWN clock (segment timestamps reset to
+zero every restart), map back to the shared timeline by tracking an offset in the durable sink's own
+terms (audio seconds = frames written / sample rate, read at each restart) and adding it - never wall
+clock, so a pause that writes no frames does not advance the recording clock. Keep the off-main sink
+thread-safe on its own (a lock, `@unchecked Sendable`) exactly as the tap already treats
+`request.append`, so no isolated state crosses the audio thread. Generalizes to any second recorder,
+meter, or analyzer teed onto a stream whose primary consumer restarts under it.
+
 ## Validate a config value against its consumer's contract, not just its shape (spec 0006)
 
 A user-editable setting must be validated against what DOWNSTREAM does with it, not merely that it

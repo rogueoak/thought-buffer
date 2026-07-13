@@ -17,6 +17,24 @@ protocol SpeechCaptureService: AnyObject {
     /// Whether on-device recognition is possible right now. Returns the blocking error or nil.
     func availabilityError() -> SpeechCaptureError?
 
+    /// Turn the tee'd audio recording on or off for the session that `start()` will begin (spec
+    /// 0007). Set BEFORE `start()`. When true, the same input-tap buffers that feed recognition are
+    /// also written to a compressed `.m4a`; when false (transcript-only), no audio file is opened.
+    /// Defaults to off so a caller that never sets it behaves exactly as before.
+    func setRecordingEnabled(_ enabled: Bool)
+
+    /// The URL of the recording written for the session, or nil when there is no recording to adopt
+    /// (recording disabled, or capture never wrote a frame). Only guaranteed FINALIZED after `stop()`
+    /// - the writer is closed at `stop()`, not at `pause()` - so a caller must not play or copy this
+    /// file mid-session; it is meant to be adopted into storage via `NoteStoring.saveAudio(from:for:)`
+    /// once `stop()` has run.
+    func recordingURL() -> URL?
+
+    /// Delete the session's recording temp file, whether or not it has content. Discards a recording
+    /// that ends up attached to nothing (a cancelled or empty session), including a zero-frame file
+    /// that `recordingURL()` would not report. No-op when there is no recording.
+    func discardRecording()
+
     /// Begin capturing. Assumes authorization has already been granted.
     func start()
 
@@ -34,8 +52,10 @@ protocol SpeechCaptureService: AnyObject {
 enum SpeechCaptureEvent {
     /// The in-progress phrase for the current task (replaces the last partial).
     case partial(String)
-    /// A finalized phrase that should be committed to the note as a paragraph.
-    case finalizedSegment(String)
+    /// A finalized phrase that should be committed to the note as a paragraph, with its time range
+    /// in the recording (spec 0007). `range` is nil when nothing was recorded (recording disabled,
+    /// or the recognizer reported no segment timings) so a text-only session is unaffected.
+    case finalizedSegment(String, range: ParagraphTiming?)
     /// Microphone input level, 0...1, for the waveform.
     case level(Float)
     /// A user-facing failure. Capture has stopped.

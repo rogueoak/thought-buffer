@@ -50,6 +50,10 @@ the spelling "Shea".
 
 - **On-device speech-to-text.** Recognition runs entirely on your phone and works offline; the
   audio never leaves the device. No Thought Stream account required.
+- **Voice recordings, kept or not.** Each note can keep the actual recording of your voice, so
+  "read that back" plays how you said it and a note plays back in full. Recordings stay on your
+  device by default (or your iCloud, if enabled). Turn them off (transcript only) or have them
+  auto-delete after a set number of days, all in Settings.
 - **Continuous feed.** Notes are a stream you can pause and resume, not a blank page each time.
 - **Voice editing.** Fix and manage notes hands-free with the control word.
 - **CarPlay support.** Capture safely while driving.
@@ -70,6 +74,11 @@ the spelling "Shea".
   through your own iCloud account (Apple) so they appear in the Files app and follow you across
   your devices - the same way any iCloud Drive document does. That is the only thing that leaves
   the device, it is your choice, and it can be kept off.
+- **Voice recordings are stored, and you control them.** When recording is on (the default), the
+  raw audio of a note is saved as an `.m4a` next to its Markdown file, encrypted at rest, and
+  syncs only where your notes do (locally, or your own iCloud). It is never uploaded to us. Set
+  recordings to transcript-only to never save audio, or auto-delete them after a number of days,
+  in Settings.
 
 ## Tech and design
 
