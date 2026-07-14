@@ -89,7 +89,7 @@ How the system is built and why.
     (both committed). The Simulator config disables code signing so the unsigned, teamless build
     stays green.
 - `Speech/` - `SpeechAnalyzerService` owns the `AVAudioEngine` and the iOS 26 `SpeechAnalyzer` +
-  `SpeechTranscriber` (spec 0009). On-device only. Emits events (partial, finalized, level, failure)
+  `SpeechTranscriber` (spec 0002). On-device only. Emits events (partial, finalized, level, failure)
   behind the unchanged `SpeechCaptureService` protocol, so the view model and its tests did not
   change. The transcriber reports VOLATILE results (in-progress, mapped to `.partial`) and FINALIZED
   results (stable, immutable, each mapped to a `.finalizedSegment` with its audio `CMTimeRange`), so

@@ -262,7 +262,7 @@ Fixes and refinements from a round of on-device testing:
 - **Resume** on a saved note is a centered pill pinned to the bottom of the screen, clear of the
   scrolling note body.
 
-## Modern on-device speech engine (spec 0009)
+## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires
 iOS 26.

@@ -267,7 +267,7 @@ occasional missed paragraph break), and unrelated-utterance tests guard the comm
 when matching noisy machine output against itself, normalize on the dimension the machine is unstable
 on and compare on the invariant that survives its edits, not on raw position.
 
-## When the platform can give you the boundary, stop inferring it (spec 0009)
+## When the platform can give you the boundary, stop inferring it (spec 0002)
 
 Five feedback rounds (0005-0009) were spent inferring utterance boundaries from `SFSpeechRecognizer`'s
 accumulating single-task stream - reset detection, task-end dedup, restart-to-continue, overlap
