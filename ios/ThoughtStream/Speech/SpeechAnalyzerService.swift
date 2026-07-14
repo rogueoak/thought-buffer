@@ -6,7 +6,7 @@ import Foundation
 import Speech
 
 /// On-device speech-to-text capture built on the iOS 26 `SpeechAnalyzer` + `SpeechTranscriber` API
-/// (spec 0009). Owns the audio engine, the analyzer, and the transcriber, and reports what it hears
+/// (spec 0002). Owns the audio engine, the analyzer, and the transcriber, and reports what it hears
 /// through `onEvent`.
 ///
 /// Why this replaces the old `SFSpeechRecognizer` service: the transcriber reports VOLATILE
@@ -16,28 +16,34 @@ import Speech
 /// dedup, restart-to-continue) - the recognizer now tells us where a paragraph ends instead of us
 /// guessing from a noisy accumulating stream.
 ///
-/// Threading: `@MainActor`-isolated state. The audio-tap closure runs on the audio thread and only
-/// touches the thread-safe recording writer, the (audio-thread-serial) format converter, and the
-/// `AsyncStream` continuation; it hops to the main actor only to emit the level. Transcriber results
-/// are consumed in a task that hops to the main actor before emitting.
+/// Threading: `@MainActor`-isolated state. Each live session's disposable parts are captured in an
+/// `Analysis` value so an async teardown (pause finalizes off the main run loop) only ever touches
+/// ITS OWN session, never a newer one a concurrent resume may have installed. Session transitions are
+/// serialized: a start awaits any in-flight teardown first. The audio-tap closure runs on the audio
+/// thread and only touches the thread-safe recording writer, the (audio-thread-serial) converter, and
+/// the `AsyncStream` continuation; it hops to the main actor only to emit the level.
 @MainActor
 final class SpeechAnalyzerService: SpeechCaptureService {
     var onEvent: ((SpeechCaptureEvent) -> Void)?
 
     private let audioEngine = AVAudioEngine()
 
-    /// Built per session in `beginAnalysis`. The analyzer is an actor; the transcriber is Sendable, so
-    /// its `results` sequence is consumed from a task.
-    private var analyzer: SpeechAnalyzer?
-    private var transcriber: SpeechTranscriber?
+    /// The disposable parts of one live analysis, captured together so a teardown works on locals and
+    /// never races a session a concurrent resume installed.
+    private struct Analysis {
+        let analyzer: SpeechAnalyzer
+        let continuation: AsyncStream<AnalyzerInput>.Continuation
+        let resultsTask: Task<Void, Never>
+    }
 
-    /// Feeds converted mic buffers to the analyzer. Finished on pause/stop so the analyzer knows input
-    /// ended and can flush its final results.
-    private var inputContinuation: AsyncStream<AnalyzerInput>.Continuation?
-    /// Consumes `transcriber.results`, mapping volatile -> `.partial` and final -> `.finalizedSegment`.
-    private var resultsTask: Task<Void, Never>?
+    /// The current live analysis, or nil between sessions. Detached (set nil) synchronously on
+    /// pause/stop so a following start never sees the old one.
+    private var analysis: Analysis?
     /// The async session bring-up, cancellable if the user stops before it finishes.
     private var startTask: Task<Void, Never>?
+    /// The async pause teardown (finalize + drain). A start awaits this so a resume never overlaps the
+    /// previous session; a stop cancels it.
+    private var teardownTask: Task<Void, Never>?
 
     /// The locale resolved to one the transcriber supports (set during authorization).
     private var resolvedLocale = Locale.current
@@ -136,38 +142,39 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         }
         isCapturing = true
         // Bring the session up asynchronously (the analyzer format and start are async); a failure
-        // surfaces as a `.failure` event, mirroring the old engine-failure path.
+        // surfaces as a `.failure` event. Serialize behind any in-flight teardown so a resume never
+        // overlaps the previous session's finalize/drain on the shared engine and state.
         startTask = Task { [weak self] in
+            await self?.teardownTask?.value
             await self?.beginAnalysis()
         }
     }
 
-    /// Stand up the transcriber, analyzer, input stream, results consumer, mic tap, and engine.
+    /// Stand up the transcriber, analyzer, input stream, results consumer, mic tap, and engine. Bails
+    /// cleanly at each await if a stop landed in between, so it never starts an engine on a torn-down
+    /// session.
     private func beginAnalysis() async {
         do {
+            guard isCapturing else { return }
             try configureSession()
 
             let transcriber = makeTranscriber(locale: resolvedLocale)
-            self.transcriber = transcriber
+            let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
+            guard isCapturing, !Task.isCancelled else {
+                deactivateSession()
+                return
+            }
 
             let analyzer = SpeechAnalyzer(modules: [transcriber])
-            self.analyzer = analyzer
-
-            // The format the analyzer wants; the mic tap is converted into it.
-            let analyzerFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: [transcriber])
-
-            guard isCapturing else { return } // stopped during async bring-up
-
             let (stream, continuation) = AsyncStream.makeStream(
                 of: AnalyzerInput.self, bufferingPolicy: .unbounded)
-            inputContinuation = continuation
 
             // This analysis starts at the current recording position, so finalized-result time ranges
             // map to absolute recording time across a pause/resume seam.
             analyzerAudioOffset = recordingWriter?.elapsedSeconds ?? 0
 
             // Consume results (transcriber is Sendable). Volatile -> partial, final -> paragraph.
-            resultsTask = Task { [weak self] in
+            let resultsTask = Task { [weak self] in
                 do {
                     for try await result in transcriber.results {
                         await self?.handle(result: result)
@@ -176,9 +183,10 @@ final class SpeechAnalyzerService: SpeechCaptureService {
                     await self?.handleResultsFailure(error)
                 }
             }
-
+            // Everything from here to `audioEngine.start()` runs with no suspension point, so a stop
+            // cannot interleave and start the engine after teardown.
+            analysis = Analysis(analyzer: analyzer, continuation: continuation, resultsTask: resultsTask)
             installTap(analyzerFormat: analyzerFormat, continuation: continuation, writer: recordingWriter)
-
             audioEngine.prepare()
             try audioEngine.start()
             try await analyzer.start(inputSequence: stream)
@@ -190,10 +198,16 @@ final class SpeechAnalyzerService: SpeechCaptureService {
 
     func pause() {
         isCapturing = false
-        // Finalize so the in-progress utterance is committed (with its timing) before teardown, then
-        // release the session. Async because finalizing flushes the last results through the consumer.
-        Task { [weak self] in
-            await self?.finishAnalysis(deactivate: true)
+        guard let pending = detachAnalysis() else {
+            deactivateSession()
+            return
+        }
+        // Finalize so the in-progress utterance commits (with its timing) before releasing the session,
+        // working on the CAPTURED session so a concurrent resume's new session is never touched.
+        teardownTask = Task { [weak self] in
+            try? await pending.analyzer.finalizeAndFinishThroughEndOfInput()
+            await Self.drain(pending.resultsTask, timeout: .seconds(2))
+            self?.deactivateSession()
         }
     }
 
@@ -203,39 +217,41 @@ final class SpeechAnalyzerService: SpeechCaptureService {
 
     func stop() {
         isCapturing = false
-        // Stop emitting immediately: the view model folds the last live partial into the note on
-        // finish, so no words are lost, and cancelling here means no late finalized result lands after
-        // the note is already saved (which would append a duplicate paragraph).
-        resultsTask?.cancel()
-        resultsTask = nil
         startTask?.cancel()
         startTask = nil
-        teardownEngine()
-        inputContinuation?.finish()
-        inputContinuation = nil
-        analyzer = nil
-        transcriber = nil
+        let pending = detachAnalysis()
+        // Stop emitting immediately: the view model folds the last live partial into the note on
+        // finish, so no words are lost, and cancelling means no late finalized result lands after the
+        // note is already saved (which would append a duplicate paragraph).
+        pending?.resultsTask.cancel()
+        // A pause teardown may be in flight; stop supersedes it.
+        teardownTask?.cancel()
+        teardownTask = nil
         deactivateSession()
         recordingWriter?.finish()
         analyzerAudioOffset = 0
     }
 
-    /// Tear the engine and analyzer down, finalizing so any last finalized result is flushed through
-    /// the results consumer first (used by pause, where the in-progress utterance should commit).
-    private func finishAnalysis(deactivate: Bool) async {
-        startTask?.cancel()
-        startTask = nil
+    /// Synchronously stop the engine and tap, finish the input stream, and hand back the current
+    /// analysis (clearing `self.analysis`), so an async teardown works on the captured locals and a
+    /// following start sees a clean slate.
+    private func detachAnalysis() -> Analysis? {
         teardownEngine()
-        inputContinuation?.finish()
-        inputContinuation = nil
-        if let analyzer {
-            try? await analyzer.finalizeAndFinishThroughEndOfInput()
+        let current = analysis
+        analysis = nil
+        current?.continuation.finish()
+        return current
+    }
+
+    /// Await a results task, bounded so a stuck results stream cannot wedge teardown (and thus the
+    /// next resume, which serializes behind it): a watchdog cancels the task if it does not finish.
+    private static func drain(_ task: Task<Void, Never>, timeout: Duration) async {
+        let watchdog = Task {
+            try? await Task.sleep(for: timeout)
+            task.cancel()
         }
-        await resultsTask?.value // let the final results drain into paragraphs
-        resultsTask = nil
-        analyzer = nil
-        transcriber = nil
-        if deactivate { deactivateSession() }
+        await task.value
+        watchdog.cancel()
     }
 
     // MARK: - Engine + tap
@@ -312,16 +328,31 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         }
     }
 
-    /// Map a finalized result's audio `CMTimeRange` to a `ParagraphTiming` in absolute recording time,
-    /// or nil when nothing was recorded (transcript-only) or the range is empty, so a text-only session
-    /// behaves exactly as before.
+    /// Map a finalized result's audio `CMTimeRange` to a `ParagraphTiming` in absolute recording time.
+    /// The pure decision (guards + offset add) lives in the static overload so it is unit-testable
+    /// without a `CMTimeRange` (which has no seconds to pass through a stub).
     private func paragraphTiming(for range: CMTimeRange) -> ParagraphTiming? {
-        guard recordingWriter != nil else { return nil }
-        let start = range.start.seconds
-        let duration = range.duration.seconds
-        guard start.isFinite, duration.isFinite, duration > 0 else { return nil }
+        Self.paragraphTiming(
+            startSeconds: range.start.seconds,
+            durationSeconds: range.duration.seconds,
+            offset: analyzerAudioOffset,
+            hasRecording: recordingWriter != nil
+        )
+    }
+
+    /// Pure timing decision: nil when nothing was recorded (transcript-only) or the range is empty /
+    /// non-finite, so a text-only session behaves exactly as before; otherwise the range anchored to
+    /// absolute recording time by adding the analysis-start offset. Nonisolated for unit testing.
+    nonisolated static func paragraphTiming(
+        startSeconds: Double,
+        durationSeconds: Double,
+        offset: Double,
+        hasRecording: Bool
+    ) -> ParagraphTiming? {
+        guard hasRecording else { return nil }
+        guard startSeconds.isFinite, durationSeconds.isFinite, durationSeconds > 0 else { return nil }
         return RecordingTiming.absolute(
-            offset: analyzerAudioOffset, relative: (start: start, duration: duration))
+            offset: offset, relative: (start: startSeconds, duration: durationSeconds))
     }
 
     private func handleResultsFailure(_ error: Error) {
@@ -342,8 +373,10 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         using converter: AVAudioConverter,
         to format: AVAudioFormat
     ) -> AVAudioPCMBuffer? {
-        let ratio = format.sampleRate / buffer.format.sampleRate
-        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * ratio) + 1024
+        let capacity = convertedCapacity(
+            frameLength: buffer.frameLength,
+            inputRate: buffer.format.sampleRate,
+            outputRate: format.sampleRate)
         guard capacity > 0, let output = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else {
             return nil
         }
@@ -360,6 +393,19 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         }
         guard status != .error, conversionError == nil, output.frameLength > 0 else { return nil }
         return output
+    }
+
+    /// Output-buffer capacity for converting `frameLength` input frames from `inputRate` to
+    /// `outputRate`, with headroom so a resample never truncates. Pure, so the capacity math (a wrong
+    /// ratio would silently drop audio) is unit-testable. Returns 0 on a degenerate input.
+    nonisolated static func convertedCapacity(
+        frameLength: AVAudioFrameCount,
+        inputRate: Double,
+        outputRate: Double
+    ) -> AVAudioFrameCount {
+        guard frameLength > 0, inputRate > 0, outputRate > 0 else { return 0 }
+        let ratio = outputRate / inputRate
+        return AVAudioFrameCount(Double(frameLength) * ratio) + 1024
     }
 
     /// Root-mean-square level of a buffer, normalized to a rough 0...1 for the waveform. Unchanged

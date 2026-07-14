@@ -101,9 +101,14 @@ transcription runs fully on device and no audio or text leaves the phone.
 
 ### Pause / resume
 
-Pause stops the engine and finishes the analyzer input, but keeps the note and its paragraphs in
-memory. Resume reconfigures the session, restarts the engine, and feeds a fresh analyzer input
-stream that appends to the same note.
+Pause stops the engine and finishes the analyzer input, then FINALIZES the analyzer so the
+in-progress utterance is committed as a paragraph (with its timing) before the session is released;
+the note and its paragraphs stay in memory. The finalize + result drain runs on the captured session
+so a concurrent resume never races it, and is bounded by a watchdog so a stuck results stream cannot
+wedge teardown. Resume reconfigures the session, restarts the engine, and feeds a fresh analyzer
+input stream that appends to the same note - serialized to wait for any in-flight pause teardown
+first. Stop, by contrast, cancels the results stream (the view model folds the last live partial into
+the note) so a late finalized result never appends a duplicate after the note is saved.
 
 Speech + microphone authorization is unchanged (`SFSpeechRecognizer.requestAuthorization` /
 `AVAudioApplication.requestRecordPermission`); the Speech authorization gate still governs

@@ -594,3 +594,65 @@ final class ResumeAndEditTests: XCTestCase {
         XCTAssertEqual(resumedSaved.audioFileName, "rec.m4a")
     }
 }
+
+/// Spec 0002 (SpeechAnalyzer swap): the pure mappers extracted from the device-only service so the
+/// timing decision and the resample-buffer capacity math are provable in CI.
+final class SpeechAnalyzerMappingTests: XCTestCase {
+    // MARK: paragraphTiming (CMTimeRange seconds -> ParagraphTiming)
+
+    func testNoRecordingYieldsNilTiming() {
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.0, durationSeconds: 2.0, offset: 0, hasRecording: false))
+    }
+
+    func testZeroOrNonFiniteDurationYieldsNilTiming() {
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.0, durationSeconds: 0, offset: 0, hasRecording: true))
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.0, durationSeconds: .nan, offset: 0, hasRecording: true))
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: .infinity, durationSeconds: 2.0, offset: 0, hasRecording: true))
+    }
+
+    func testTimingAnchorsToAbsoluteRecordingTimeWithOffset() {
+        // A finalized result at 1.5s..2.0s in the SECOND analysis, which began 10s into the recording,
+        // maps to 11.5s..12.0s absolute.
+        let timing = SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.5, durationSeconds: 0.5, offset: 10, hasRecording: true)
+        XCTAssertEqual(timing, ParagraphTiming(start: 11.5, duration: 0.5))
+    }
+
+    func testTimingWithZeroOffsetIsTheRelativeRange() {
+        let timing = SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 3.0, durationSeconds: 1.0, offset: 0, hasRecording: true)
+        XCTAssertEqual(timing, ParagraphTiming(start: 3.0, duration: 1.0))
+    }
+
+    // MARK: convertedCapacity (resample output-buffer size)
+
+    func testCapacityDownsampleAddsHeadroom() {
+        // 48k -> 16k, 4800 frames -> 1600 + 1024 headroom.
+        XCTAssertEqual(
+            SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 48000, outputRate: 16000),
+            2624)
+    }
+
+    func testCapacityUpsampleAddsHeadroom() {
+        // 16k -> 48k, 1600 frames -> 4800 + 1024.
+        XCTAssertEqual(
+            SpeechAnalyzerService.convertedCapacity(frameLength: 1600, inputRate: 16000, outputRate: 48000),
+            5824)
+    }
+
+    func testCapacitySameRateIsFramesPlusHeadroom() {
+        XCTAssertEqual(
+            SpeechAnalyzerService.convertedCapacity(frameLength: 4096, inputRate: 48000, outputRate: 48000),
+            5120)
+    }
+
+    func testCapacityDegenerateInputsYieldZero() {
+        XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 0, inputRate: 48000, outputRate: 16000), 0)
+        XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 0, outputRate: 16000), 0)
+        XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 48000, outputRate: 0), 0)
+    }
+}

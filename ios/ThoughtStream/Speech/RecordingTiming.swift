@@ -23,11 +23,12 @@ enum RecordingTiming {
         return (firstStart, end - firstStart)
     }
 
-    /// Anchor a request-relative range to absolute recording time by adding the offset captured when
-    /// the request began (the recording seconds elapsed at that point). Because the recognition
-    /// request restarts many times per session and its clock resets each time, this offset is what
-    /// keeps a paragraph's range pointing at the right place in the ONE continuous recording. Returns
-    /// nil when there is no relative range.
+    /// Anchor an analysis-relative range to absolute recording time by adding the offset captured when
+    /// the analysis began (the recording seconds elapsed at that point). A finalized result's
+    /// `CMTimeRange` is relative to the analysis start, and analysis restarts on resume while the
+    /// recording file is continuous, so this offset keeps a paragraph's range pointing at the right
+    /// place in the ONE continuous recording across a pause/resume seam. Returns nil when there is no
+    /// relative range.
     static func absolute(
         offset: Double,
         relative: (start: Double, duration: Double)?
