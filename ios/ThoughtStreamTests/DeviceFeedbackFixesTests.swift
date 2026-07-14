@@ -12,11 +12,11 @@ final class DeviceFeedbackFixesTests: XCTestCase {
     /// A zero level yields no lift (bars at floor); a non-zero level lifts them clearly. The mapping
     /// is monotonic and saturates at 1, and normal-speaking RMS clears the floor by a wide margin.
     func testLevelMappingLiftsBarsForNonZeroLevel() {
-        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: 0), 0, accuracy: 0.0001)
+        XCTAssertEqual(SpeechAnalyzerService.normalizedLevel(fromRMS: 0), 0, accuracy: 0.0001)
 
-        let quiet = SpeechDictationService.normalizedLevel(fromRMS: 0.01)
-        let normal = SpeechDictationService.normalizedLevel(fromRMS: 0.05)
-        let loud = SpeechDictationService.normalizedLevel(fromRMS: 0.5)
+        let quiet = SpeechAnalyzerService.normalizedLevel(fromRMS: 0.01)
+        let normal = SpeechAnalyzerService.normalizedLevel(fromRMS: 0.05)
+        let loud = SpeechAnalyzerService.normalizedLevel(fromRMS: 0.5)
 
         // A non-zero level yields a taller bar than zero.
         XCTAssertGreaterThan(quiet, 0)
@@ -27,15 +27,15 @@ final class DeviceFeedbackFixesTests: XCTestCase {
         XCTAssertGreaterThan(loud, normal)
         // Saturates at 1 and never exceeds it.
         XCTAssertLessThanOrEqual(loud, 1)
-        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: 1), 1, accuracy: 0.0001)
+        XCTAssertEqual(SpeechAnalyzerService.normalizedLevel(fromRMS: 1), 1, accuracy: 0.0001)
     }
 
     /// A NaN (or infinite) RMS must map to 0, not crash or produce a NaN bar height. This is the
     /// single finite guard (the duplicate in `rmsLevel` was removed in favor of this one).
     func testLevelMappingHandlesNaNAndInfinity() {
-        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: .nan), 0, accuracy: 0.0001)
-        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: .infinity), 0, accuracy: 0.0001)
-        XCTAssertEqual(SpeechDictationService.normalizedLevel(fromRMS: -1), 0, accuracy: 0.0001)
+        XCTAssertEqual(SpeechAnalyzerService.normalizedLevel(fromRMS: .nan), 0, accuracy: 0.0001)
+        XCTAssertEqual(SpeechAnalyzerService.normalizedLevel(fromRMS: .infinity), 0, accuracy: 0.0001)
+        XCTAssertEqual(SpeechAnalyzerService.normalizedLevel(fromRMS: -1), 0, accuracy: 0.0001)
     }
 
     /// The Waveform's own height mapping: a non-zero level yields a taller bar than a zero level.
@@ -110,63 +110,6 @@ final class DeviceFeedbackFixesTests: XCTestCase {
 }
 
 // MARK: - Feedback 0006 Fix A: last-partial commit on a nil-result task end (device-only)
-
-/// The commit-on-end decision (`SpeechDictationService.resolveEnd`) is pure and testable, so the
-/// accumulating-segment + nil-result-end behavior can be proven WITHOUT a live mic. On a real device
-/// a task accumulates the whole passage and can end with an ERROR and a NIL result, holding the words
-/// only as the in-progress partial - which must still be committed.
-final class LastPartialCommitTests: XCTestCase {
-
-    /// (1) Partials "he" -> "hello" -> "hello world" arrive, THEN the task ends with error+nil result:
-    /// the last partial "hello world" is what must be committed (not lost).
-    func testNilResultEndCommitsLastPartial() {
-        // The service tracks the growing partial; the resolver commits it when the result is nil.
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "hello world"),
-                       .usedPartial("hello world"))
-    }
-
-    /// (3) A clean final does NOT double-commit: a non-empty result already CONTAINS the partial, so
-    /// the resolver returns the result (used once), never the result plus the partial.
-    func testCleanFinalUsesResultNotPartial() {
-        // Result is the full accumulated phrase; the partial was an earlier prefix. The resolver
-        // returns the result exactly once.
-        XCTAssertEqual(
-            SpeechDictationService.resolveEnd(resultText: "hello world", lastPartial: "hello"),
-            .usedResult("hello world")
-        )
-    }
-
-    /// An end with neither a usable result NOR a partial commits nothing (no empty paragraph).
-    func testEmptyResultAndEmptyPartialCommitsNothing() {
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: ""), .none)
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: "   ", lastPartial: "  \n\t "), .none)
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "   "), .none)
-    }
-
-    /// An empty/whitespace result falls back to the partial (the device's nil-ish end).
-    func testEmptyResultFallsBackToPartial() {
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: "  ", lastPartial: "kept text"),
-                       .usedPartial("kept text"))
-    }
-
-    /// The resolver now reports WHICH source it used, so `handleTaskEnd` attaches a range only when
-    /// the RESULT (which carries valid timings) was committed - never re-derived from raw inputs.
-    func testResolveEndReportsWhichSourceWasUsed() {
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: "hello world", lastPartial: "x"),
-                       .usedResult("hello world"))
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: "held"),
-                       .usedPartial("held"))
-    }
-
-    /// PR #10 review (stop clears the tracked partial): after `stop()` empties `lastPartialText`, a
-    /// late cancelled-task nil-result end resolves to nothing, so no stray second finalized segment is
-    /// emitted (which would double the live paragraph after the note is already saved). Modeled at the
-    /// resolver, the source of that decision: nil result + empty partial commits nothing.
-    func testStopClearedPartialMeansLateNilEndCommitsNothing() {
-        XCTAssertEqual(SpeechDictationService.resolveEnd(resultText: nil, lastPartial: ""), .none)
-    }
-}
-
 // MARK: - #2 Pause / restart never loses text (event-boundary regression)
 
 /// Proves the view model's finalize/restart/partial handling at the service->view-model event seam:
@@ -501,238 +444,6 @@ private final class ThrowingDeleteStore: NoteStoring, @unchecked Sendable {
     func delete(id: UUID) throws { throw DeleteError() }
 }
 
-/// The on-device utterance-RESET detection (`SpeechDictationService.isReset`) is pure and testable.
-/// It is what commits the pre-pause words when the recognizer starts a new utterance within a task
-/// without ending it (feedback 0007), so the "Hey how's it going" -> "Yeah things..." reset from the
-/// device recording no longer loses the first utterance.
-final class UtteranceResetTests: XCTestCase {
-    func testNewUtteranceWithDifferentStartIsReset() {
-        // The exact case from the device screen recording.
-        XCTAssertTrue(SpeechDictationService.isReset(
-            previous: "Hey how's it going", current: "Yeah things are going pretty good"))
-    }
-
-    func testMonotonicGrowthIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hey how's", current: "Hey how's it going"))
-    }
-
-    func testLastWordRevisionIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hey how's it going", current: "Hey how's it goin"))
-    }
-
-    func testSameFirstWordDifferentSecondIsReset() {
-        XCTAssertTrue(SpeechDictationService.isReset(previous: "The cat sat", current: "The dog ran"))
-    }
-
-    func testEmptyPreviousIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(previous: "", current: "anything at all"))
-    }
-
-    func testSingleWordGrowthIsNotResetButNewWordIs() {
-        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hey", current: "Hey there"))
-        XCTAssertTrue(SpeechDictationService.isReset(previous: "Hey", current: "Yeah"))
-    }
-
-    // Revisions the recognizer makes as it gains context must NOT count as a reset - they caused the
-    // duplicate-paragraph bug (feedback 0007) by re-committing growing prefixes of one sentence.
-    func testFirstWordRevisionIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(
-            previous: "It", current: "It's almost like I wonder in that particular case"))
-    }
-
-    func testMidSentenceRevisionIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(
-            previous: "So you're getting a request the same week that it just",
-            current: "So you're getting a request the same week that it's just like figure it out"))
-    }
-
-    func testContractionRevisionMidTextIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(
-            previous: "the product team is built a thing and there is",
-            current: "the product team is built a thing and there's making a bunch"))
-    }
-
-    // Feedback 0008 round 2 (screenshot duplicates): revisions that collapse spacing or drop a leading
-    // word must NOT read as a new utterance - a plain prefix comparison split these into two paragraphs.
-    func testSpaceCollapsingUrlRevisionIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(
-            previous: "I'm saying the", current: "I'msayingthe.com"))
-    }
-
-    func testLeadingWordDroppedRevisionIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(
-            previous: "What kind of games", current: "Kind of games"))
-    }
-
-    func testTrailingRevisionKeepingStartIsNotReset() {
-        XCTAssertFalse(SpeechDictationService.isReset(
-            previous: "baked potato or baked", current: "baked potato or baked potato"))
-    }
-
-    func testUnrelatedNewUtteranceIsStillReset() {
-        // The improved logic must not START merging genuinely separate utterances.
-        XCTAssertTrue(SpeechDictationService.isReset(
-            previous: "I don't understand that", current: "Baked potato or baked potato"))
-        XCTAssertTrue(SpeechDictationService.isReset(
-            previous: "Aren't a good price", current: "OK"))
-    }
-
-    // Wrongful-merge guards (engineer + tester review): the revision-tolerant logic must NOT swallow a
-    // genuinely new utterance just because it sits inside the previous or shares an ending. Losing a
-    // paragraph is worse than a duplicate, so these MUST reset.
-    func testShortNewUtteranceThatIsSubstringOfPreviousIsReset() {
-        XCTAssertTrue(SpeechDictationService.isReset(previous: "I know", current: "No"))
-        XCTAssertTrue(SpeechDictationService.isReset(
-            previous: "I went to the store", current: "store"))
-        XCTAssertTrue(SpeechDictationService.isReset(
-            previous: "that looks ok now", current: "ok"))
-    }
-
-    func testDistinctUtterancesSharingAnEndingAreReset() {
-        XCTAssertTrue(SpeechDictationService.isReset(
-            previous: "please call the doctor", current: "do not call the doctor"))
-        XCTAssertTrue(SpeechDictationService.isReset(
-            previous: "we are going home", current: "they are going home"))
-    }
-
-    func testPunctuationOnlyNormalizesToEmptyAndIsNotReset() {
-        XCTAssertEqual(SpeechDictationService.normalizedForReset("...!!!"), "")
-        // An empty compact string on either side is not a reset (nothing to commit / adopt).
-        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hello there", current: "!!!"))
-        XCTAssertFalse(SpeechDictationService.isReset(previous: "***", current: "Hello there"))
-    }
-}
-
-/// Feedback 0008: a paragraph doubled when a Mira command followed it. A reset commits the paragraph,
-/// then the same task's final transcription STILL leads with it, and the command split commits it
-/// again. `strippingCommittedPrefix` removes the already-committed lead so it is committed only once.
-final class CommittedPrefixDedupTests: XCTestCase {
-    func testStripsExactCommittedParagraphBeforeCommand() {
-        // The reported case: P2 was committed on the pause, then the command's final transcription
-        // accumulated "P2 Mira read that back". The committed P2 must be stripped so the split does
-        // not re-commit it.
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "Buy milk and eggs Mira read that back", committed: "Buy milk and eggs")
-        XCTAssertEqual(result, "Mira read that back")
-    }
-
-    func testKeepsResultWhenRecognizerDroppedTheCommittedLead() {
-        // The other device behavior: the recognizer internally reset, so its final transcription does
-        // NOT lead with the committed paragraph. Nothing is stripped; the new utterance is kept whole.
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "Mira read that back", committed: "Buy milk and eggs")
-        XCTAssertEqual(result, "Mira read that back")
-    }
-
-    func testStripsDespiteWordRevisionInTheCommittedLead() {
-        // The recognizer revised "there is" -> "there's" between the committed partial and the final,
-        // so the lead is not a byte-exact prefix. It is still consumed whole, not half-left.
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "I think there's Mira new note", committed: "I think there is")
-        XCTAssertEqual(result, "Mira new note")
-    }
-
-    func testResultEqualToCommittedYieldsEmpty() {
-        // The task ended right on the committed paragraph with no trailing words: everything is
-        // already committed, so nothing remains to commit again.
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "Buy milk and eggs", committed: "Buy milk and eggs")
-        XCTAssertEqual(result, "")
-    }
-
-    func testDifferentUtteranceIsNotStripped() {
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "Sell the car Mira stop", committed: "Buy milk and eggs")
-        XCTAssertEqual(result, "Sell the car Mira stop")
-    }
-
-    func testEmptyCommittedReturnsResultUnchanged() {
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "Buy milk Mira new note", committed: "")
-        XCTAssertEqual(result, "Buy milk Mira new note")
-    }
-
-    func testCaseInsensitiveLeadIsStripped() {
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "buy MILK and eggs Mira read that back", committed: "Buy milk and eggs")
-        XCTAssertEqual(result, "Mira read that back")
-    }
-
-    func testWhitespacePaddedCommittedStillStrips() {
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "Buy milk Mira new note", committed: "   Buy milk   ")
-        XCTAssertEqual(result, "Mira new note")
-    }
-
-    func testBelowMatchRatioThresholdIsNotStripped() {
-        // Under 60% of the committed text lines up at the start, so it is a different utterance.
-        let result = SpeechDictationService.strippingCommittedPrefix(
-            from: "abcXXXXXXX and then some", committed: "abcdefghij")
-        XCTAssertEqual(result, "abcXXXXXXX and then some")
-    }
-}
-
-/// Feedback 0008: the pure task-end commit decision that wires the dedup (strip already-committed
-/// lead), the text resolution, and the range-drop-when-stripped rule. This exercises the actual fix
-/// path, not just the `strippingCommittedPrefix` helper.
-final class TaskEndCommitTests: XCTestCase {
-    func testStripsCommittedLeadAndDropsRange() {
-        // The reported bug at the decision level: the reset committed "Second thoughts here", the
-        // task-end result still leads with it plus the command. It is stripped, and the range is
-        // dropped because the remaining text no longer matches the reported range.
-        let commit = SpeechDictationService.resolveTaskEndCommit(
-            resultText: "Second thoughts here Mira new note",
-            resultRange: ParagraphTiming(start: 2, duration: 3),
-            lastPartial: "Mira new note",
-            committed: "Second thoughts here")
-        XCTAssertEqual(commit?.text, "Mira new note")
-        XCTAssertNil(commit?.range, "a stripped prefix drops the reported range")
-    }
-
-    func testKeepsRangeWhenNothingStripped() {
-        let range = ParagraphTiming(start: 0, duration: 5)
-        let commit = SpeechDictationService.resolveTaskEndCommit(
-            resultText: "Buy milk and eggs", resultRange: range,
-            lastPartial: "Buy milk and eggs", committed: "")
-        XCTAssertEqual(commit?.text, "Buy milk and eggs")
-        XCTAssertEqual(commit?.range, range, "with nothing stripped the reported range is kept")
-    }
-
-    func testResultFullyStrippedFallsBackToPartial() {
-        // The task ended right on the committed paragraph: the result strips to empty, so the tracked
-        // partial (a fresh utterance) is what commits, always without a range.
-        let commit = SpeechDictationService.resolveTaskEndCommit(
-            resultText: "Buy milk", resultRange: ParagraphTiming(start: 0, duration: 1),
-            lastPartial: "next thought", committed: "Buy milk")
-        XCTAssertEqual(commit?.text, "next thought")
-        XCTAssertNil(commit?.range)
-    }
-
-    func testNilResultCommitsPartialWithoutRange() {
-        let commit = SpeechDictationService.resolveTaskEndCommit(
-            resultText: nil, resultRange: nil, lastPartial: "held partial", committed: "anything")
-        XCTAssertEqual(commit?.text, "held partial")
-        XCTAssertNil(commit?.range)
-    }
-
-    func testNothingUsableCommitsNothing() {
-        let commit = SpeechDictationService.resolveTaskEndCommit(
-            resultText: nil, resultRange: nil, lastPartial: "", committed: "")
-        XCTAssertNil(commit, "no result and no partial commits nothing")
-    }
-
-    func testDroppedCommittedLeadKeepsFullResult() {
-        // The recognizer internally reset, so its final result does NOT lead with the committed text.
-        // Nothing is stripped, so the whole new utterance commits and its range is kept.
-        let range = ParagraphTiming(start: 4, duration: 2)
-        let commit = SpeechDictationService.resolveTaskEndCommit(
-            resultText: "A brand new sentence", resultRange: range,
-            lastPartial: "A brand new sentence", committed: "Older committed paragraph")
-        XCTAssertEqual(commit?.text, "A brand new sentence")
-        XCTAssertEqual(commit?.range, range)
-    }
-}
-
 /// Feedback 0008: every cheat-sheet command phrase actually parses to its command, so the on-screen
 /// list never drifts from the parser grammar (architect review follow-up).
 final class CheatSheetGrammarTests: XCTestCase {
@@ -881,5 +592,67 @@ final class ResumeAndEditTests: XCTestCase {
         // The resumed note was saved with its recording preserved.
         let resumedSaved = try XCTUnwrap(store.notes.first { $0.id == original.id })
         XCTAssertEqual(resumedSaved.audioFileName, "rec.m4a")
+    }
+}
+
+/// Spec 0002 (SpeechAnalyzer swap): the pure mappers extracted from the device-only service so the
+/// timing decision and the resample-buffer capacity math are provable in CI.
+final class SpeechAnalyzerMappingTests: XCTestCase {
+    // MARK: paragraphTiming (CMTimeRange seconds -> ParagraphTiming)
+
+    func testNoRecordingYieldsNilTiming() {
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.0, durationSeconds: 2.0, offset: 0, hasRecording: false))
+    }
+
+    func testZeroOrNonFiniteDurationYieldsNilTiming() {
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.0, durationSeconds: 0, offset: 0, hasRecording: true))
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.0, durationSeconds: .nan, offset: 0, hasRecording: true))
+        XCTAssertNil(SpeechAnalyzerService.paragraphTiming(
+            startSeconds: .infinity, durationSeconds: 2.0, offset: 0, hasRecording: true))
+    }
+
+    func testTimingAnchorsToAbsoluteRecordingTimeWithOffset() {
+        // A finalized result at 1.5s..2.0s in the SECOND analysis, which began 10s into the recording,
+        // maps to 11.5s..12.0s absolute.
+        let timing = SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 1.5, durationSeconds: 0.5, offset: 10, hasRecording: true)
+        XCTAssertEqual(timing, ParagraphTiming(start: 11.5, duration: 0.5))
+    }
+
+    func testTimingWithZeroOffsetIsTheRelativeRange() {
+        let timing = SpeechAnalyzerService.paragraphTiming(
+            startSeconds: 3.0, durationSeconds: 1.0, offset: 0, hasRecording: true)
+        XCTAssertEqual(timing, ParagraphTiming(start: 3.0, duration: 1.0))
+    }
+
+    // MARK: convertedCapacity (resample output-buffer size)
+
+    func testCapacityDownsampleAddsHeadroom() {
+        // 48k -> 16k, 4800 frames -> 1600 + 1024 headroom.
+        XCTAssertEqual(
+            SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 48000, outputRate: 16000),
+            2624)
+    }
+
+    func testCapacityUpsampleAddsHeadroom() {
+        // 16k -> 48k, 1600 frames -> 4800 + 1024.
+        XCTAssertEqual(
+            SpeechAnalyzerService.convertedCapacity(frameLength: 1600, inputRate: 16000, outputRate: 48000),
+            5824)
+    }
+
+    func testCapacitySameRateIsFramesPlusHeadroom() {
+        XCTAssertEqual(
+            SpeechAnalyzerService.convertedCapacity(frameLength: 4096, inputRate: 48000, outputRate: 48000),
+            5120)
+    }
+
+    func testCapacityDegenerateInputsYieldZero() {
+        XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 0, inputRate: 48000, outputRate: 16000), 0)
+        XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 0, outputRate: 16000), 0)
+        XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 48000, outputRate: 0), 0)
     }
 }

@@ -2,6 +2,10 @@
 
 Source: `docs/specs/0002-dictation-mvp.md`.
 
+This is the original MVP build log. Capture has since moved to iOS 26 `SpeechAnalyzer` /
+`SpeechTranscriber` per the spec, which is the living source of truth for the capture engine; the
+`SFSpeechRecognizer` steps below record how the first build shipped.
+
 ## Steps
 
 1. **Model + storage**

@@ -171,7 +171,7 @@ final class DictationViewModel: ObservableObject {
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
         // service's main-actor-isolated initializer is not called from a nonisolated default.
-        self.service = service ?? SpeechDictationService()
+        self.service = service ?? SpeechAnalyzerService()
         self.store = store
         self.processor = processor
         self.speaker = speaker ?? SystemSpeaker()

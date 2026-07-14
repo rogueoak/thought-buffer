@@ -266,3 +266,19 @@ prior), but that trades a frequent, visible bug (duplicate paragraphs) for a rar
 occasional missed paragraph break), and unrelated-utterance tests guard the common case. Generalizes:
 when matching noisy machine output against itself, normalize on the dimension the machine is unstable
 on and compare on the invariant that survives its edits, not on raw position.
+
+## When the platform can give you the boundary, stop inferring it (spec 0002)
+
+Five feedback rounds (0005-0009) were spent inferring utterance boundaries from `SFSpeechRecognizer`'s
+accumulating single-task stream - reset detection, task-end dedup, restart-to-continue, overlap
+ratios. The iOS 26 `SpeechAnalyzer` / `SpeechTranscriber` reports volatile-vs-finalized results
+directly, so ALL of that inference deleted at once and the whole bug class went with it. The lesson is
+not "use the new API" but the shape of the decision: when you find yourself building ever-more-elaborate
+heuristics to reconstruct a signal the platform withholds, the highest-leverage move is often to change
+the SOURCE of the signal, not to refine the heuristic. Two enablers made the swap cheap and safe: the
+capture backend sat behind a narrow protocol (`SpeechCaptureService`) whose consumer had its own tests,
+so the entire recognizer could be replaced with the view-model suite passing untouched as the proof;
+and the design was pinned in a spec while the exact new-API signatures were verified against the
+installed SDK's `.swiftinterface` before writing code, not guessed. Generalizes: isolate volatile
+platform dependencies behind a seam with consumer-side tests, and periodically ask whether a hard
+problem is inherent or just an artifact of an API that predates a better one.

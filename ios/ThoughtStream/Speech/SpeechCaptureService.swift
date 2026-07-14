@@ -2,9 +2,9 @@ import Foundation
 
 /// The speech-capture surface the dictation view model depends on.
 ///
-/// The view model talks to this protocol rather than the concrete `SpeechDictationService`, so
+/// The view model talks to this protocol rather than the concrete `SpeechAnalyzerService`, so
 /// later milestones (or tests) can drop in a different capture backend without touching the view
-/// model. The production implementation is `SpeechDictationService`.
+/// model. The production implementation is `SpeechAnalyzerService`.
 @MainActor
 protocol SpeechCaptureService: AnyObject {
     /// Called for every capture event, on the main actor. Set before `start()`.

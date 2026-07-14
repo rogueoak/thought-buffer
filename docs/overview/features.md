@@ -261,3 +261,17 @@ Fixes and refinements from a round of on-device testing:
 - **Transcript auto-scrolls** while recording, keeping the newest words and the live caret in view.
 - **Resume** on a saved note is a centered pill pinned to the bottom of the screen, clear of the
   scrolling note body.
+
+## Modern on-device speech engine (spec 0002)
+
+Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires
+iOS 26.
+
+- **Explicit paragraph boundaries.** The transcriber reports in-progress (volatile) text for the live
+  caret and finalized, immutable results for committed paragraphs - each with a precise audio time
+  range. The app no longer guesses where an utterance ends, so the whole class of reset / duplicate /
+  self-correction bugs (feedback 0005-0009) cannot occur.
+- **Still fully on-device.** Transcription runs on the phone; audio never leaves it. The language
+  model installs once (a one-time download), then works offline.
+- **Same everywhere else.** Notes, storage, iCloud, Mira commands, CarPlay, recording + playback, and
+  editing/resume are unchanged - the swap sits behind the existing capture protocol.

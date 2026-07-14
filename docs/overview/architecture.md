@@ -4,8 +4,9 @@ How the system is built and why.
 
 ## App project
 
-- **SwiftUI, iPhone only, min iOS 17.0, Swift 5 language mode.** Swift 5 mode avoids strict
-  concurrency friction for the shell; revisit when concurrency-heavy features land.
+- **SwiftUI, iPhone only, min iOS 26.0, Swift 5 language mode.** iOS 26 is required for the
+  on-device `SpeechAnalyzer` capture engine (spec 0002). Swift 5 mode avoids strict concurrency
+  friction for the shell; revisit when concurrency-heavy features land.
 - **XcodeGen.** The project is generated from `ios/project.yml`; the `.xcodeproj` is gitignored
   so it never drifts or conflicts. Contributors run `xcodegen generate`. See README.
 - **Bundle id** `com.rogueoak.thoughtstream`, display name "Thought Stream", publisher Rogue Oak.
@@ -88,32 +89,35 @@ How the system is built and why.
     XcodeGen writes `ThoughtStream/ThoughtStream.entitlements` and `ThoughtStream/Info.plist`
     (both committed). The Simulator config disables code signing so the unsigned, teamless build
     stays green.
-- `Speech/` - `SpeechDictationService` owns the `AVAudioEngine`, `SFSpeechRecognizer`, and the
-  current `SFSpeechRecognitionTask`. On-device only. Emits events (partial, finalized, level,
-  failure). Auto-restarts a finished task on the same audio to keep dictation continuous. On device a
-  task ACCUMULATES the whole passage into one growing transcription and finalizes only on end (a
-  clean final OR an error, which can carry a NIL result); the service tracks the current task's latest
-  partial (`lastPartialText`) and on ANY end commits the best available text - the result when
-  non-empty, else the tracked partial - via the pure, unit-tested `resolveEnd(resultText:lastPartial:)`
-  (feedback 0006), so a nil-result pause end never loses the in-progress words and a clean final does
-  not double-commit. Also holds the Mira control-word pieces: `MiraCommandParser` (pure segment ->
+- `Speech/` - `SpeechAnalyzerService` owns the `AVAudioEngine` and the iOS 26 `SpeechAnalyzer` +
+  `SpeechTranscriber` (spec 0002). On-device only. Emits events (partial, finalized, level, failure)
+  behind the unchanged `SpeechCaptureService` protocol, so the view model and its tests did not
+  change. The transcriber reports VOLATILE results (in-progress, mapped to `.partial`) and FINALIZED
+  results (stable, immutable, each mapped to a `.finalizedSegment` with its audio `CMTimeRange`), so
+  there is NO utterance-boundary guessing: one finalized result is one paragraph. The old heuristic
+  layer it replaced (`isReset`, `strippingCommittedPrefix`, `committedThisTask`, `resolveEnd`,
+  `resolveTaskEndCommit`, task restart) is gone. The mic is tapped so buffers can be teed to the
+  recording writer and level meter and converted into the analyzer's format for an
+  `AsyncStream<AnalyzerInput>`. Pause finalizes the analyzer so the in-progress utterance commits;
+  stop stops emitting and lets the view model fold the last live partial. The on-device model is
+  installed once via `AssetInventory` during authorization (a model download, not audio leaving the
+  device). Also holds the Mira control-word pieces: `MiraCommandParser` (pure segment ->
   `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST control word found anywhere),
   `MiraTextProcessor` (the `TextProcessor` that splits at commands), `SentenceTokenizer`
   (`NLTokenizer`-backed, for "remove the last sentence"), and `Speaker`/`SystemSpeaker`
   (`AVSpeechSynthesizer` text to speech for "read that back").
-  - **Dual capture (spec 0007).** The single input tap tees each buffer to THREE sinks: the
-    recognizer (as before), the waveform level, and - when recording is armed via
+  - **Dual capture (spec 0007).** The single input tap tees each buffer to THREE sinks: the analyzer
+    (converted to its format), the waveform level, and - when recording is armed via
     `setRecordingEnabled(true)` before `start()` - a `RecordingWriter`. The writer is an off-main,
     lock-guarded (`@unchecked Sendable`) helper that appends buffers to a compressed AAC `.m4a`;
-    it is created ONCE per session and kept across recognizer-task restarts AND pause/resume, so one
-    continuous file spans the whole note (finalized only at `stop()`). The tap tees to the writer
-    BEFORE the recognizer so a restart's offset is not under-counted. `finalizedSegment` events now
-    carry a `ParagraphTiming?`: the service tracks a per-request audio offset (elapsed frames /
-    sample rate, read at each restart) and adds it to the segment's request-relative timestamp so a
-    paragraph maps to an ABSOLUTE range in the recording even though the request clock resets each
-    restart. The offset math lives in the pure, unit-tested `RecordingTiming` (segments have no
-    public initializer, so the service extracts their numbers and delegates). `recordingURL()`
-    exposes the temp file for adoption and is documented as finalized only after `stop()`;
+    it is created ONCE per session and kept across pause/resume, so one continuous file spans the
+    whole note (finalized only at `stop()`). The tap tees to the writer BEFORE the analyzer so a
+    resume offset is not under-counted. `finalizedSegment` events carry a `ParagraphTiming?`: a
+    finalized result's audio `CMTimeRange` is relative to the analysis start, so the service adds an
+    offset (recording seconds elapsed at analysis start, captured at each resume) via the pure,
+    unit-tested `RecordingTiming.absolute` to map a paragraph to an ABSOLUTE range in the one
+    continuous recording. `recordingURL()` exposes the temp file for adoption and is documented as
+    finalized only after `stop()`;
     `discardRecording()` removes an orphan (even a zero-frame one).
   - **Playback (spec 0007, extended in 0008).** `AudioNotePlayer` (production `SystemAudioNotePlayer`,
     `AVAudioPlayer`) plays a recording seeked to a range (`play(url:from:duration:)`, a nil duration
