@@ -249,3 +249,20 @@ recognizer's revisions, and a non-matching lead means the recognizer already dro
 stripped. Generalizes: when two independent commit paths consume one accumulating stream, give them a
 shared high-water marker so neither re-commits what the other did; reconciling after the fact by
 content is what breaks on messy, non-monotonic input.
+
+## A character prefix is the wrong similarity metric for revision-vs-new-utterance (feedback 0009)
+
+Deciding whether a new recognizer partial REVISES the current utterance or STARTS a new one drove the
+duplicate paragraphs both times. The first metric (character-level common prefix) broke on any
+revision that edits the START: collapsing spacing into a URL ("I'm saying the" -> "I'msayingthe.com")
+or dropping a leading word ("What kind of games" -> "Kind of games") diverges at character zero, so
+the prefix ratio read a same-utterance rewrite as a brand-new one and committed the stale version as
+its own paragraph. Two fixes fall out. First: normalize away the exact thing the recognizer keeps
+rewriting - lowercase and strip whitespace and punctuation - before comparing, so spacing/URL/case
+churn is invisible to the decision. Second: a revision can edit EITHER end, so test containment (one
+compact string inside the other) plus overlap at the start OR the end, not just the front. The
+residual risk flips direction (it could now merge a genuinely new utterance that is a substring of the
+prior), but that trades a frequent, visible bug (duplicate paragraphs) for a rare, less-bad one (an
+occasional missed paragraph break), and unrelated-utterance tests guard the common case. Generalizes:
+when matching noisy machine output against itself, normalize on the dimension the machine is unstable
+on and compare on the invariant that survives its edits, not on raw position.

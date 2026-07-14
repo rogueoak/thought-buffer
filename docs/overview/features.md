@@ -251,3 +251,13 @@ Fixes and refinements from a round of on-device testing:
   notes that have a kept recording (previously browsable only on CarPlay).
 - **Debug panel removed** - the on-record DEBUG diagnostic scaffolding is gone now that capture is
   verified on device.
+
+## On-device round 2 (feedback 0009)
+
+- **No duplicate from self-correction** - a recognizer revision that collapses spacing ("I'm saying
+  the" -> "I'msayingthe.com") or drops a leading word ("What kind of games" -> "Kind of games") now
+  updates in place instead of splitting into two paragraphs. Reset detection compares on normalized
+  text (spacing/punctuation removed) and treats containment or start/end overlap as a revision.
+- **Transcript auto-scrolls** while recording, keeping the newest words and the live caret in view.
+- **Resume** on a saved note is a centered pill pinned to the bottom of the screen, clear of the
+  scrolling note body.
