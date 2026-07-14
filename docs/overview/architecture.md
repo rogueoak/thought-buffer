@@ -4,8 +4,9 @@ How the system is built and why.
 
 ## App project
 
-- **SwiftUI, iPhone only, min iOS 17.0, Swift 5 language mode.** Swift 5 mode avoids strict
-  concurrency friction for the shell; revisit when concurrency-heavy features land.
+- **SwiftUI, iPhone only, min iOS 26.0, Swift 5 language mode.** iOS 26 is required for the
+  on-device `SpeechAnalyzer` capture engine (spec 0002). Swift 5 mode avoids strict concurrency
+  friction for the shell; revisit when concurrency-heavy features land.
 - **XcodeGen.** The project is generated from `ios/project.yml`; the `.xcodeproj` is gitignored
   so it never drifts or conflicts. Contributors run `xcodegen generate`. See README.
 - **Bundle id** `com.rogueoak.thoughtstream`, display name "Thought Stream", publisher Rogue Oak.
