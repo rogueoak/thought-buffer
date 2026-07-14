@@ -551,6 +551,31 @@ final class UtteranceResetTests: XCTestCase {
             previous: "the product team is built a thing and there is",
             current: "the product team is built a thing and there's making a bunch"))
     }
+
+    // Feedback 0008 round 2 (screenshot duplicates): revisions that collapse spacing or drop a leading
+    // word must NOT read as a new utterance - a plain prefix comparison split these into two paragraphs.
+    func testSpaceCollapsingUrlRevisionIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(
+            previous: "I'm saying the", current: "I'msayingthe.com"))
+    }
+
+    func testLeadingWordDroppedRevisionIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(
+            previous: "What kind of games", current: "Kind of games"))
+    }
+
+    func testTrailingRevisionKeepingStartIsNotReset() {
+        XCTAssertFalse(SpeechDictationService.isReset(
+            previous: "baked potato or baked", current: "baked potato or baked potato"))
+    }
+
+    func testUnrelatedNewUtteranceIsStillReset() {
+        // The improved logic must not START merging genuinely separate utterances.
+        XCTAssertTrue(SpeechDictationService.isReset(
+            previous: "I don't understand that", current: "Baked potato or baked potato"))
+        XCTAssertTrue(SpeechDictationService.isReset(
+            previous: "Aren't a good price", current: "OK"))
+    }
 }
 
 /// Feedback 0008: a paragraph doubled when a Mira command followed it. A reset commits the paragraph,

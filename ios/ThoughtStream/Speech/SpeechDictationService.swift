@@ -334,12 +334,31 @@ final class SpeechDictationService: SpeechCaptureService {
     /// the character-level common prefix so small word edits do not count as a reset. Pure and
     /// nonisolated, so it is unit-testable off the main actor.
     nonisolated static func isReset(previous: String, current: String) -> Bool {
-        let prev = previous.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let curr = current.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !prev.isEmpty else { return false }
-        let common = zip(prev, curr).prefix { $0.0 == $0.1 }.count
-        // A reset keeps less than ~60% of the previous text at the new text's start.
-        return Double(common) < Double(prev.count) * 0.6
+        let prev = normalizedForReset(previous)
+        let curr = normalizedForReset(current)
+        guard !prev.isEmpty, !curr.isEmpty else { return false }
+        // A revision or extension: one string CONTAINS the other once spacing and punctuation are
+        // ignored. This catches the corrections a plain prefix comparison misses (feedback 0008 round
+        // 2): "I'm saying the" -> "I'msayingthe.com" (spaces collapsed into a URL) and
+        // "What kind of games" -> "Kind of games" (a leading word dropped) both have one compact
+        // string inside the other, so they are the SAME utterance being rewritten, not a new one.
+        if curr.contains(prev) || prev.contains(curr) { return false }
+        // Otherwise measure how much of the SHORTER string lines up at the start OR the end: a
+        // revision keeps most of it (the recognizer edits one end while re-hearing), while a genuinely
+        // new utterance after a pause shares little at either end.
+        let shorter = min(prev.count, curr.count)
+        let commonPrefix = zip(prev, curr).prefix { $0.0 == $0.1 }.count
+        let commonSuffix = zip(prev.reversed(), curr.reversed()).prefix { $0.0 == $0.1 }.count
+        let overlap = max(commonPrefix, commonSuffix)
+        return Double(overlap) < Double(shorter) * 0.6
+    }
+
+    /// Normalize text for reset comparison: lowercase, with all whitespace and punctuation removed, so
+    /// the recognizer's spacing and punctuation revisions ("there is" -> "there's", "I'm saying the"
+    /// -> "I'msayingthe.com") do not read as new utterances. Nonisolated and pure.
+    nonisolated static func normalizedForReset(_ text: String) -> String {
+        String(text.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }
+            .map(Character.init))
     }
 
     /// Remove the `committed` utterance from the FRONT of a task-end transcription so it is not

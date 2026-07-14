@@ -177,11 +177,22 @@ struct DictationView: View {
                     .scrollContentBackground(.hidden)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                ScrollView {
-                    transcript
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                // Auto-scroll to the newest text as it streams in (feedback 0008): the transcript
+                // follows the live caret so the most recent words stay in view while recording.
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        transcript
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        // A zero-height anchor pinned below the text; scrolling to it keeps the bottom
+                        // (the live partial) visible as content grows.
+                        Color.clear
+                            .frame(height: 1)
+                            .id(Self.transcriptBottomID)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onChange(of: model.partial) { _, _ in scrollToBottom(proxy) }
+                    .onChange(of: model.paragraphs.count) { _, _ in scrollToBottom(proxy) }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(CanopySpacing.x5)
@@ -312,6 +323,16 @@ struct DictationView: View {
         .padding(CanopySpacing.x6)
         .frame(maxWidth: .infinity)
         .padding(.horizontal, CanopySpacing.x4)
+    }
+
+    /// The id of the zero-height anchor at the bottom of the transcript, used to auto-scroll.
+    private static let transcriptBottomID = "transcript-bottom"
+
+    /// Keep the newest text in view as it streams in.
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            proxy.scrollTo(Self.transcriptBottomID, anchor: .bottom)
+        }
     }
 
     /// Enter transcript edit mode, seeding the editor with the current transcript text.

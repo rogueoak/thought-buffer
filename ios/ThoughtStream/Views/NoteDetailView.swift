@@ -65,10 +65,6 @@ struct NoteDetailView: View {
                         playButton
                     }
 
-                    if !isEditing, onResume != nil || onCommitEdit != nil {
-                        actionRow
-                    }
-
                     if isEditing {
                         TextEditor(text: $draft)
                             .focused($editorFocused)
@@ -96,6 +92,14 @@ struct NoteDetailView: View {
                         .stroke(CanopyColor.border, lineWidth: 1)
                 )
                 .padding(CanopySpacing.x4)
+            }
+        }
+        // Resume sits centered at the bottom of the screen (feedback 0008), clear of the scrolling
+        // note body. Hidden while editing text, and only when a call site can reopen a session.
+        .safeAreaInset(edge: .bottom) {
+            if let onResume, !isEditing {
+                resumeButton { onResume(currentNote) }
+                    .padding(.bottom, CanopySpacing.x4)
             }
         }
         .navigationTitle(currentNote.title)
@@ -131,28 +135,23 @@ struct NoteDetailView: View {
         )
     }
 
-    /// Resume (reopen into a recording session) sits beside the play control. Only shown when a call
-    /// site provided `onResume`.
-    @ViewBuilder
-    private var actionRow: some View {
-        if let onResume {
-            Button {
-                onResume(currentNote)
-            } label: {
-                HStack(spacing: CanopySpacing.x2) {
-                    Image(systemName: "mic.fill")
-                    Text("Resume")
-                        .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
-                }
-                .foregroundStyle(CanopyColor.primary)
-                .padding(.horizontal, CanopySpacing.x4)
-                .padding(.vertical, CanopySpacing.x2)
-                .overlay(
-                    Capsule().stroke(CanopyColor.primary, lineWidth: 1)
-                )
+    /// The Resume control (reopen the note into a recording session), styled as a prominent pill for
+    /// the bottom bar.
+    private func resumeButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: CanopySpacing.x2) {
+                Image(systemName: "mic.fill")
+                Text("Resume")
+                    .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
             }
-            .accessibilityLabel("Resume dictating this note")
+            .foregroundStyle(CanopyColor.primaryForeground)
+            .padding(.horizontal, CanopySpacing.x6)
+            .padding(.vertical, CanopySpacing.x3)
+            .background(CanopyColor.primary)
+            .clipShape(Capsule())
+            .shadow(color: CanopyColor.overlay.opacity(0.25), radius: 12, y: 6)
         }
+        .accessibilityLabel("Resume dictating this note")
     }
 
     /// The simple play / stop control for the note's recording. Play / stop only - no scrubbing or
