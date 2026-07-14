@@ -11,6 +11,11 @@ in the Stream list, all on device with no network.
 Who it is for: the first on-device testers, who need to prove capture-to-save works before the
 voice-editing, CarPlay, and sync milestones build on top of it.
 
+Capture is built on Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. An earlier build used
+`SFSpeechRecognizer` + an `AVAudioEngine` tap and grew a set of utterance-boundary heuristics to
+work around that API (accumulation, resets, duplicate paragraphs); the current implementation
+deletes those heuristics at the source. This spec describes dictation as it stands.
+
 ## Outcome
 
 - Tapping Record (or the mic) opens the dictation screen and, after permission is granted,
@@ -28,8 +33,13 @@ voice-editing, CarPlay, and sync milestones build on top of it.
 ## Scope
 
 In:
-- On-device speech-to-text via `SFSpeechRecognizer` with `requiresOnDeviceRecognition = true`.
-- Live transcript: finalized segments as paragraphs, current partial as live caret text.
+- On-device speech-to-text via iOS 26 `SpeechAnalyzer` + `SpeechTranscriber`, which reports
+  explicit VOLATILE (in-progress) and FINALIZED (stable, immutable) results with precise audio
+  time ranges. Minimum deployment target is iOS 26; there is no dual path.
+- On first run (or a new locale) the transcriber's on-device model asset is installed via
+  `AssetInventory`; a "preparing on-device speech" state is surfaced while it downloads.
+- Live transcript: each FINALIZED result is one committed paragraph, the current VOLATILE result
+  is live caret text. No reset guessing, no task-restart heuristics.
 - Start / stop / pause / resume of capture.
 - Real microphone level driving the waveform (RMS of the audio buffer).
 - `NoteStore` that saves and loads notes as Markdown files in `Documents/ThoughtStream/`.
@@ -48,31 +58,56 @@ Out (left for later milestones, model kept extensible for them):
 
 ### Speech capture
 
-- `SpeechDictationService` owns an `AVAudioEngine`, an `SFSpeechRecognizer`, and the current
-  `SFSpeechRecognitionTask`. It exposes an async stream of events (partial text, finalized
-  segment, audio level, error) that the view model consumes.
-- Recognition request is `SFSpeechAudioBufferRecognitionRequest` with
-  `requiresOnDeviceRecognition = true` and `shouldReportPartialResults = true`. The service
-  checks `supportsOnDeviceRecognition` up front and surfaces an unavailable state if false.
-- The input node tap appends buffers to the request and computes RMS for the waveform level.
+- `SpeechAnalyzerService` (conforming to the `SpeechCaptureService` protocol - the seam the view
+  model and its tests depend on) exposes an async stream of `SpeechCaptureEvent` values (partial
+  text, finalized segment with a time range, audio level, failure) that the view model consumes.
+- It is built on `SpeechTranscriber(locale:transcriptionOptions:reportingOptions:attributeOptions:)`
+  configured for volatile-result reporting and audio-time-range attributes, driving a
+  `SpeechAnalyzer(modules: [transcriber])` fed an `AsyncStream` of analyzer inputs.
+- The mic is still tapped via `AVAudioEngine`: one tap, three sinks - it computes RMS for the
+  waveform level, forwards converted buffers to the analyzer input stream, and leaves room for the
+  recording writer that a later milestone tees in. Any needed `AVAudioPCMBuffer` format conversion
+  into the analyzer's input format happens on the tap.
 - `AVAudioSession` is configured `.record` and activated on start, deactivated on stop/pause.
 - Locale is the device locale, falling back to `en-US`.
 
-### Continuous feed (task restart)
+Event mapping (protocol unchanged):
 
-`SFSpeechRecognitionTask` has practical duration limits and ends on its own (a final result, a
-timeout, or an error) even while the user is still talking. To keep dictation continuous, when a
-task finishes while the engine is still running, the service tears down that task and starts a
-fresh one against the same live audio, without stopping the engine or losing text already in the
-note. Each finalized result is appended to the note as a paragraph before the restart, so no
-committed text is lost across the seam. This restart is invisible to the user: they see one
-continuous stream.
+- transcriber VOLATILE result -> `.partial(text)` (drives the live caret; replaced by the next).
+- transcriber FINALIZED result -> `.finalizedSegment(text, range:)`, where `range` is the result's
+  audio `CMTimeRange` mapped to a paragraph timing (start/duration in seconds, offset to recording
+  start) via a pure, unit-tested `CMTimeRange -> ParagraphTiming` conversion. One finalized result
+  is one committed paragraph.
+- mic level -> `.level(Float)`; setup / stream failure -> `.failure(SpeechCaptureError)`.
+
+### Continuous, boundary-driven finalization
+
+The analyzer runs continuously and reports its own stable boundaries, so there is no task-restart
+loop and no boundary heuristic. Because finalized results are stable and non-overlapping, each is a
+clean paragraph the view model commits directly, and the live volatile result is shown as the
+partial. This removes the whole class of accumulation / reset / duplicate-paragraph problems the
+earlier `SFSpeechRecognizer`-based build had to guess around (`isReset`, `normalizedForReset`,
+`strippingCommittedPrefix`, `committedThisTask`, `resolveEnd`, `restartTaskIfCapturing`, and the
+tests that guarded them are gone).
+
+### Model asset installation
+
+`SpeechTranscriber` needs the locale's on-device model asset. If it is installed, capture starts
+immediately; if not, the service kicks off installation via `AssetInventory` / the transcriber's
+installation request and surfaces a "preparing on-device speech" state (the same denied /
+unavailable card path, extended) until it is ready. An unsupported locale or an offline install
+failure maps to a clear `SpeechCaptureError`. The one-time model download is provisioning only -
+transcription runs fully on device and no audio or text leaves the phone.
 
 ### Pause / resume
 
-Pause stops the engine and the current task and ends the recognition request, but keeps the note
-and its paragraphs in memory. Resume reconfigures the session, restarts the engine, and begins a
-new task appending to the same note.
+Pause stops the engine and finishes the analyzer input, but keeps the note and its paragraphs in
+memory. Resume reconfigures the session, restarts the engine, and feeds a fresh analyzer input
+stream that appends to the same note.
+
+Speech + microphone authorization is unchanged (`SFSpeechRecognizer.requestAuthorization` /
+`AVAudioApplication.requestRecordPermission`); the Speech authorization gate still governs
+`SpeechTranscriber`.
 
 ### Storage
 
@@ -100,10 +135,15 @@ new task appending to the same note.
 
 ## Acceptance
 
-- [ ] `cd ios && xcodegen generate` and build for `iPhone 17` simulator succeeds.
+- [ ] `ios/project.yml` sets `deploymentTarget` 26.0; `cd ios && xcodegen generate` and build for
+      the `iPhone 17` simulator succeeds.
 - [ ] App launches; first Record tap requests microphone and speech permission.
-- [ ] With permission granted, capture starts; partial text shows live, finalized text becomes
-      paragraphs; the waveform moves with input level.
+- [ ] With permission granted, capture starts; the volatile result shows live and each finalized
+      result becomes one paragraph (no duplicates / resets); the waveform moves with input level.
+- [ ] The pure mappers pass in CI: `CMTimeRange -> ParagraphTiming` conversion,
+      volatile/finalized -> event mapping, and asset-state -> `SpeechCaptureError` mapping.
+- [ ] On first run (or a new locale) the model asset installs and a "preparing on-device speech"
+      state shows until it is ready; an unsupported locale / offline failure shows a clear message.
 - [ ] Pause halts capture and keeps the note; resume continues the same note.
 - [ ] Stop saves a `.md` file under `Documents/ThoughtStream/` and returns to the Stream list
       with the new note at the top; reopening it shows the saved paragraphs.
@@ -111,4 +151,5 @@ new task appending to the same note.
 - [ ] `NoteStore` unit tests (save/load round-trip, paragraph split/join, sorting, frontmatter
       parse) pass.
 - [ ] Screenshot of the live dictation screen committed under `design/screenshots/`.
-- [ ] README notes granting mic/speech permission on first run.
+- [ ] README notes granting mic/speech permission on first run and that the on-device language
+      model may download once (provisioning only; transcription stays on device).
