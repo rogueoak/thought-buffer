@@ -326,20 +326,51 @@ final class SpeechDictationService: SpeechCaptureService {
     /// True when `current` is a NEW utterance rather than a continuation/revision of `previous` - i.e.
     /// the on-device recognizer reset its transcription within a task.
     ///
-    /// The recognizer REVISES earlier words as it gains context ("it" -> "it's", "there is" ->
-    /// "there's"), so a word-exact prefix comparison spuriously fires on every revision and re-commits
-    /// growing prefixes of the SAME sentence (the duplicate-paragraph bug). Instead compare how much of
-    /// the PREVIOUS text `current` still reproduces at its start: a continuation keeps most of it (even
-    /// with revisions and extensions), while a genuinely new sentence shares little or none of it. Uses
-    /// the character-level common prefix so small word edits do not count as a reset. Pure and
-    /// nonisolated, so it is unit-testable off the main actor.
+    /// The recognizer both EXTENDS the current utterance and REVISES earlier words as it gains context,
+    /// including revisions that collapse spacing ("I'm saying the" -> "I'msayingthe.com") or drop a
+    /// leading word ("What kind of games" -> "Kind of games"). A raw character-prefix comparison read
+    /// those as new utterances and split them into duplicate paragraphs (feedback 0008/0009). So the
+    /// comparison runs on NORMALIZED text (spacing and punctuation removed) and is direction-aware:
+    ///
+    /// - `current` contains `previous`: the utterance is still GROWING - never a reset.
+    /// - `previous` contains `current`: a shortened form. A revision only when `current` keeps MOST of
+    ///   `previous` (a dropped word); a small fragment is a genuinely new short utterance that merely
+    ///   appears inside the previous ("no" after "I know"), which MUST reset so the previous is not
+    ///   lost.
+    /// - neither contains the other: measure how much of the shorter string lines up at the START; a
+    ///   front-preserving revision keeps most of it (the recognizer revises the latest word while the
+    ///   accumulated lead stands), a new utterance shares little. A shared END is deliberately NOT
+    ///   treated as a revision - distinct sentences share endings far more than one speaker revises the
+    ///   front ("please call the doctor" vs "do not call the doctor"), so an end-overlap rule wrongly
+    ///   merges them; the only front-editing revision worth catching (a dropped leading word) already
+    ///   falls under the `previous` contains `current` branch above.
+    ///
+    /// Pure and nonisolated, so it is unit-testable off the main actor.
     nonisolated static func isReset(previous: String, current: String) -> Bool {
-        let prev = previous.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let curr = current.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !prev.isEmpty else { return false }
-        let common = zip(prev, curr).prefix { $0.0 == $0.1 }.count
-        // A reset keeps less than ~60% of the previous text at the new text's start.
-        return Double(common) < Double(prev.count) * 0.6
+        let prev = normalizedForReset(previous)
+        let curr = normalizedForReset(current)
+        guard !prev.isEmpty, !curr.isEmpty else { return false }
+        // Growth: the recognizer is still building the same utterance - never a reset, whatever the
+        // length gap.
+        if curr.contains(prev) { return false }
+        // Shortened form: a revision (dropped leading/trailing word) only when `current` is still MOST
+        // of `previous`. A small fragment that happens to sit inside the previous is a new short
+        // utterance and must reset, or the previous words are lost ("no" after "I know").
+        if prev.contains(curr) {
+            return Double(curr.count) < Double(prev.count) * 0.6
+        }
+        // Neither contains the other: how much of the SHORTER string lines up at the START.
+        let shorter = min(prev.count, curr.count)
+        let commonPrefix = zip(prev, curr).prefix { $0.0 == $0.1 }.count
+        return Double(commonPrefix) < Double(shorter) * 0.6
+    }
+
+    /// Normalize text for reset comparison: lowercase, with all whitespace and punctuation removed, so
+    /// the recognizer's spacing and punctuation revisions ("there is" -> "there's", "I'm saying the"
+    /// -> "I'msayingthe.com") do not read as new utterances. Nonisolated and pure.
+    nonisolated static func normalizedForReset(_ text: String) -> String {
+        String(text.lowercased().unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }
+            .map(Character.init))
     }
 
     /// Remove the `committed` utterance from the FRONT of a task-end transcription so it is not
