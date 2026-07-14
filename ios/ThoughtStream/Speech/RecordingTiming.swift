@@ -2,7 +2,7 @@ import Foundation
 
 /// Pure timing math for mapping a finalized segment to its range in the recording (spec 0007).
 ///
-/// Split out from `SpeechDictationService` so it is unit-testable without an `SFTranscriptionSegment`
+/// Split out from the speech service so it is unit-testable without an `SFTranscriptionSegment`
 /// (which has no public initializer): the service pulls the raw `timestamp`/`duration` numbers off
 /// the segments and calls these, so the restart-offset logic - the part that actually broke if it
 /// regressed - is provable with plain doubles.

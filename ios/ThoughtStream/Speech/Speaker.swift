@@ -23,7 +23,7 @@ protocol Speaker: AnyObject {
 /// `AVSpeechSynthesizer`-backed speaker.
 ///
 /// Sets the audio session to `.playback` for the utterance so the record session (see
-/// `SpeechDictationService`) is out of the way while Mira speaks, and reports completion through
+/// the speech service) is out of the way while Mira speaks, and reports completion through
 /// `onFinish` so the view model can restore capture cleanly.
 @MainActor
 final class SystemSpeaker: NSObject, Speaker, AVSpeechSynthesizerDelegate {
