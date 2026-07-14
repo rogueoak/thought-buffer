@@ -576,6 +576,31 @@ final class UtteranceResetTests: XCTestCase {
         XCTAssertTrue(SpeechDictationService.isReset(
             previous: "Aren't a good price", current: "OK"))
     }
+
+    // Wrongful-merge guards (engineer + tester review): the revision-tolerant logic must NOT swallow a
+    // genuinely new utterance just because it sits inside the previous or shares an ending. Losing a
+    // paragraph is worse than a duplicate, so these MUST reset.
+    func testShortNewUtteranceThatIsSubstringOfPreviousIsReset() {
+        XCTAssertTrue(SpeechDictationService.isReset(previous: "I know", current: "No"))
+        XCTAssertTrue(SpeechDictationService.isReset(
+            previous: "I went to the store", current: "store"))
+        XCTAssertTrue(SpeechDictationService.isReset(
+            previous: "that looks ok now", current: "ok"))
+    }
+
+    func testDistinctUtterancesSharingAnEndingAreReset() {
+        XCTAssertTrue(SpeechDictationService.isReset(
+            previous: "please call the doctor", current: "do not call the doctor"))
+        XCTAssertTrue(SpeechDictationService.isReset(
+            previous: "we are going home", current: "they are going home"))
+    }
+
+    func testPunctuationOnlyNormalizesToEmptyAndIsNotReset() {
+        XCTAssertEqual(SpeechDictationService.normalizedForReset("...!!!"), "")
+        // An empty compact string on either side is not a reset (nothing to commit / adopt).
+        XCTAssertFalse(SpeechDictationService.isReset(previous: "Hello there", current: "!!!"))
+        XCTAssertFalse(SpeechDictationService.isReset(previous: "***", current: "Hello there"))
+    }
 }
 
 /// Feedback 0008: a paragraph doubled when a Mira command followed it. A reset commits the paragraph,
