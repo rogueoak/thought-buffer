@@ -131,4 +131,43 @@ final class NoteAudioSerializationTests: XCTestCase {
         XCTAssertNotNil(note.timing(forParagraphAt: 0))
         XCTAssertNil(note.timing(forParagraphAt: 5))
     }
+
+    // MARK: - Duration + meta stat (feedback 0010)
+
+    func testDurationLabelFormatsMinutesSecondsAndHours() {
+        XCTAssertEqual(Note.durationLabel(0), "0:00")
+        XCTAssertEqual(Note.durationLabel(9), "0:09")
+        XCTAssertEqual(Note.durationLabel(84), "1:24")
+        XCTAssertEqual(Note.durationLabel(3_723), "1:02:03")
+        // A negative or NaN duration clamps to "0:00" rather than rendering garbage.
+        XCTAssertEqual(Note.durationLabel(-5), "0:00")
+        XCTAssertEqual(Note.durationLabel(.nan), "0:00")
+    }
+
+    func testMetaStatLabelIsRecordingDurationWhenNoteHasAudio() {
+        let id = UUID()
+        let note = Note(
+            title: "Recorded",
+            paragraphs: ["One two three four five."],
+            createdAt: Date(),
+            audioFileName: "\(id.uuidString).m4a",
+            timings: [ParagraphTiming(start: 0, duration: 84)]
+        )
+        XCTAssertTrue(note.hasAudio)
+        XCTAssertEqual(note.recordingDurationLabel, "1:24")
+        // With audio, the at-a-glance stat is the duration, not the word count.
+        XCTAssertEqual(note.metaStatLabel, "1:24")
+    }
+
+    func testMetaStatLabelFallsBackToWordCountWhenNoRecording() {
+        let note = Note(
+            title: "Text only",
+            paragraphs: ["One two three four five."],
+            createdAt: Date()
+        )
+        XCTAssertFalse(note.hasAudio)
+        // No recording -> the stat falls back to the word count so it is never blank.
+        XCTAssertEqual(note.metaStatLabel, note.wordCountLabel)
+        XCTAssertEqual(note.metaStatLabel, "5 words")
+    }
 }

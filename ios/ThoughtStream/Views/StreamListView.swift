@@ -168,12 +168,17 @@ struct StreamListView: View {
             }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    // Toggle the recordings-only filter (feedback 0008): the phone-side way to find
-                    // voice recordings. Filled/tinted while active so its state is obvious.
+                    // Toggle the recordings-only filter (feedback 0008). A lone waveform icon read as
+                    // "record" (feedback 0010), so the control is labeled "Recordings" - the record
+                    // affordances are the top-right mic and the bottom pill. Filled/tinted while active.
                     Button {
                         showRecordingsOnly.toggle()
                     } label: {
-                        Image(systemName: showRecordingsOnly ? "waveform.circle.fill" : "waveform.circle")
+                        Label(
+                            "Recordings",
+                            systemImage: showRecordingsOnly ? "waveform.circle.fill" : "waveform.circle"
+                        )
+                        .labelStyle(.titleAndIcon)
                     }
                     .tint(showRecordingsOnly ? CanopyColor.primary : CanopyColor.textMuted)
                     .accessibilityLabel(showRecordingsOnly ? "Show all notes" : "Show recordings only")
