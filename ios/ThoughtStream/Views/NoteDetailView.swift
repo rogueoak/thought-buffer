@@ -56,7 +56,8 @@ struct NoteDetailView: View {
                         Image(systemName: "clock")
                         Text(RelativeTime.label(for: note.createdAt))
                         Text("-")
-                        Text(currentNote.wordCountLabel)
+                        // Recording duration for a recorded note, else word count (feedback 0010).
+                        Text(currentNote.metaStatLabel)
                     }
                     .font(.system(size: CanopyFont.sizeXs))
                     .foregroundStyle(CanopyColor.textSubtle)
@@ -74,13 +75,23 @@ struct NoteDetailView: View {
                             .frame(minHeight: 240)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                            Text(paragraph)
-                                .font(.system(size: CanopyFont.sizeBase))
-                                .foregroundStyle(CanopyColor.text)
-                                .lineSpacing(4)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                        // Tap the text to edit (feedback 0010): the note body IS the edit affordance,
+                        // so the separate Edit button is gone. Only tappable where the call site can
+                        // persist the result (`onCommitEdit` supplied); a bare/preview note stays read
+                        // only. `contentShape` makes the whole column - gaps included - the tap target.
+                        VStack(alignment: .leading, spacing: CanopySpacing.x4) {
+                            ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
+                                Text(paragraph)
+                                    .font(.system(size: CanopyFont.sizeBase))
+                                    .foregroundStyle(CanopyColor.text)
+                                    .lineSpacing(4)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
+                        .contentShape(Rectangle())
+                        .onTapGesture { if onCommitEdit != nil { beginEdit() } }
+                        .accessibilityAddTraits(onCommitEdit != nil ? .isButton : [])
+                        .accessibilityHint(onCommitEdit != nil ? "Double tap to edit" : "")
                     }
                 }
                 .padding(CanopySpacing.x5)
@@ -105,14 +116,13 @@ struct NoteDetailView: View {
         .navigationTitle(currentNote.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            // Editing is a keyboard affordance (feedback 0008); only shown when the call site can
-            // persist the result (`onCommitEdit` supplied).
-            if onCommitEdit != nil {
+            // Editing starts by tapping the note text (feedback 0010), so there is no read-mode Edit
+            // button; the toolbar shows only a Done button WHILE editing to commit. Gated on the call
+            // site being able to persist the result (`onCommitEdit` supplied).
+            if onCommitEdit != nil, isEditing {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(isEditing ? "Done" : "Edit") {
-                        if isEditing { commitEdit() } else { beginEdit() }
-                    }
-                    .tint(CanopyColor.primary)
+                    Button("Done") { commitEdit() }
+                        .tint(CanopyColor.primary)
                 }
             }
         }

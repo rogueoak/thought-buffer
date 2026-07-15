@@ -72,6 +72,35 @@ struct Note: Identifiable, Hashable {
         return "\(count) " + (count == 1 ? "word" : "words")
     }
 
+    /// The recording's length formatted as "m:ss" (or "h:mm:ss" past an hour), e.g. "1:24".
+    var recordingDurationLabel: String {
+        Note.durationLabel(recordingDuration)
+    }
+
+    /// The at-a-glance stat shown beside the timestamp on the card and detail header (feedback 0010):
+    /// the recording duration for a note that has audio, falling back to the word count for a
+    /// text-only note (transcript-only retention, resumed/edited notes, older files) so it is never
+    /// blank. The caller chooses the icon (a duration reads better with a timer glyph than the word
+    /// glyph), so both this and `hasAudio` are exposed.
+    var metaStatLabel: String {
+        hasAudio ? recordingDurationLabel : wordCountLabel
+    }
+
+    /// Format a duration in seconds as "m:ss" (or "h:mm:ss" past an hour). A negative or NaN duration
+    /// clamps to "0:00" so a timing slip never renders garbage. Single source of truth for the app's
+    /// duration formatting - the recordings browser (`RecordingsListModel`) delegates here.
+    static func durationLabel(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let total = Int(seconds.rounded())
+        let s = total % 60
+        let m = (total / 60) % 60
+        let h = total / 3600
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, s)
+        }
+        return String(format: "%d:%02d", m, s)
+    }
+
     /// A short preview drawn from the first paragraph.
     var snippet: String {
         paragraphs.first ?? ""

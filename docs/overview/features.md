@@ -262,6 +262,21 @@ Fixes and refinements from a round of on-device testing:
 - **Resume** on a saved note is a centered pill pinned to the bottom of the screen, clear of the
   scrolling note body.
 
+## Home and note UX polish (feedback 0010)
+
+Three UI-clarity refinements from using the app (no capture or storage change):
+
+- **Labeled recordings filter** - the Thoughts toolbar's leading control keeps its waveform icon but
+  now reads "Recordings", so it no longer looks like a record button. Recording still starts from the
+  top-right mic or the bottom Record pill.
+- **Duration instead of word count** - a note's at-a-glance stat is its recording duration ("1:24")
+  when it has audio, falling back to the word count for a text-only note (transcript-only retention,
+  resumed/edited notes, older files). Shown on the note card and the detail header. The duration
+  formatter lives on `Note` as the single source of truth; the CarPlay recordings browser reuses it.
+- **Tap to edit** - the saved-note page has no Edit button; tapping the note's text starts editing and
+  a Done button (shown only while editing) commits. The record-screen paused-Edit affordance is
+  unchanged.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires
