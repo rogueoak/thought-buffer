@@ -1,6 +1,16 @@
 {
+  "extraKnownMarketplaces": {
+    "trellis": {
+      "source": { "source": "github", "repo": "rogueoak/trellis" },
+      "autoUpdate": true
+    },
+    "spectra": {
+      "source": { "source": "github", "repo": "rogueoak/spectra" },
+      "autoUpdate": true
+    }
+  },
   "enabledPlugins": {
-    "spectra@spectra": true,
-    "trellis@trellis": true
+    "trellis@trellis": true,
+    "spectra@spectra": true
   }
 }
