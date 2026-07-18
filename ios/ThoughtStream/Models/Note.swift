@@ -174,6 +174,21 @@ extension Note {
         return "Note " + Note.fallbackDateFormatter.string(from: createdAt)
     }
 
+    /// The `(title, isCustom)` a title-edit commit resolves to (spec 0009): a blank entry resets to
+    /// the derived first sentence and clears the custom flag; anything else (trimmed) is a user title.
+    /// Pure so the reset/set rule is unit-testable rather than trapped in the view's commit handler.
+    static func resolveTitleEdit(
+        rawTitle: String,
+        paragraphs: [String],
+        createdAt: Date
+    ) -> (title: String, isCustom: Bool) {
+        let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return (deriveTitle(paragraphs: paragraphs, createdAt: createdAt), false)
+        }
+        return (trimmed, true)
+    }
+
     private static let fallbackDateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")

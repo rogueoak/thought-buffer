@@ -60,10 +60,12 @@ final class DictationViewModelTests: XCTestCase {
     }
 
     func testResumingDerivedTitleNoteReDerivesFromFirstSentence() throws {
-        // A non-custom resumed note keeps deriving its title from the first sentence.
+        // A non-custom resumed note DERIVES its title from the body, ignoring the stored title. Seed a
+        // stored title that differs from what the body derives to, so this proves re-derivation rather
+        // than passing whether the code re-derives or carries the original title over (tester review).
         let original = Note(
-            title: "Old first sentence",
-            paragraphs: ["Old first sentence. More detail here."],
+            title: "A stale stored title",
+            paragraphs: ["The real opening sentence. More detail here."],
             createdAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
         let model = DictationViewModel(store: store, resuming: original)
@@ -71,7 +73,8 @@ final class DictationViewModelTests: XCTestCase {
 
         let saved = try XCTUnwrap(try model.finish())
         XCTAssertFalse(saved.hasCustomTitle)
-        XCTAssertEqual(saved.title, "Old first sentence")
+        XCTAssertEqual(saved.title, "The real opening sentence",
+                       "a non-custom note must re-derive, not carry over the stored title")
     }
 
     func testFinishWithNothingCapturedSavesNothing() throws {

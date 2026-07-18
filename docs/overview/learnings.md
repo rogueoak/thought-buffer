@@ -298,3 +298,20 @@ function of the current time - relative timestamps, countdowns, "expires in", el
 time source (a `TimelineView` or a ticking reference), or it drifts silently on any screen that stays
 put; and when two screens share the same time-derived code but disagree, suspect render lifetime
 (one is rebuilt, one is not) before suspecting the data.
+
+## Two concurrent edit modes over one model must be mutually exclusive (spec 0009)
+
+The note page grew a second inline editor (title) beside the existing one (body). Each had its own
+`isEditing*` flag, they were independent, and a single Done button branched on which was set. Nothing
+stopped BOTH being active at once: with the body editor open you could still tap the title, and Done
+then committed the title through `currentNote` - which is rebuilt from the committed `paragraphs`, not
+the body editor's in-flight `draft` - silently dropping everything freshly typed in the body. The
+symptom only appears when a user does the unusual thing (edit one, tap the other), so happy-path use
+and happy-path tests never surface it. Two rules generalize. First: when a view hosts more than one
+editor committing into the SAME model, the modes must be mutually exclusive - gate each editor's
+"begin edit" on the other not being active (or commit/exit the active one first), so there is always
+exactly one in-flight buffer. Second: a commit must read from the ACTIVE editor's buffer, never from
+the model's already-committed fields; a derived-from-model snapshot (`currentNote`) is safe to persist
+only once every open editor has folded its buffer back into the model. Extracting the pure commit
+decision (here `Note.resolveTitleEdit`) also lifts the rule out of view state so it can be unit-tested
+instead of only device-verified. Generalizes to any screen with multiple simultaneous editors.

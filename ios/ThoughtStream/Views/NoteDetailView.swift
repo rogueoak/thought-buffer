@@ -120,9 +120,11 @@ struct NoteDetailView: View {
                             }
                         }
                         .contentShape(Rectangle())
-                        .onTapGesture { if onCommitEdit != nil { beginEdit() } }
-                        .accessibilityAddTraits(onCommitEdit != nil ? .isButton : [])
-                        .accessibilityHint(onCommitEdit != nil ? "Double tap to edit" : "")
+                        // Symmetric to the title gate: the body is only tappable-to-edit when not
+                        // already editing the title, so the two edit modes never overlap.
+                        .onTapGesture { if onCommitEdit != nil, !isEditingTitle { beginEdit() } }
+                        .accessibilityAddTraits(onCommitEdit != nil && !isEditingTitle ? .isButton : [])
+                        .accessibilityHint(onCommitEdit != nil && !isEditingTitle ? "Double tap to edit" : "")
                     }
                 }
                 .padding(CanopySpacing.x5)
@@ -228,9 +230,13 @@ struct NoteDetailView: View {
                 .foregroundStyle(CanopyColor.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .onTapGesture { if onCommitEdit != nil { beginEditTitle() } }
-                .accessibilityAddTraits(onCommitEdit != nil ? .isButton : [])
-                .accessibilityHint(onCommitEdit != nil ? "Double tap to edit the title" : "")
+                // Title and body editing are MUTUALLY EXCLUSIVE (engineer review): entering title
+                // edit while the body editor is open would commit via `currentNote` (built from
+                // `paragraphs`, not the in-flight `draft`) and drop freshly typed body text. So the
+                // title is only tappable when not already editing the body; Done exits one first.
+                .onTapGesture { if onCommitEdit != nil, !isEditing { beginEditTitle() } }
+                .accessibilityAddTraits(onCommitEdit != nil && !isEditing ? .isButton : [])
+                .accessibilityHint(onCommitEdit != nil && !isEditing ? "Double tap to edit the title" : "")
         }
     }
 
@@ -287,15 +293,15 @@ struct NoteDetailView: View {
     }
 
     private func commitTitle() {
-        let trimmed = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty {
-            // Clearing the title resets it to the auto-derived first sentence (spec 0009), a clean
-            // way to undo a custom title.
-            hasCustomTitle = false
-        } else {
-            customTitleText = trimmed
-            hasCustomTitle = true
-        }
+        // The reset/set rule lives in a pure, tested model helper (spec 0009): a blank entry resets to
+        // the derived first sentence (non-custom), anything else is a custom title.
+        let resolved = Note.resolveTitleEdit(
+            rawTitle: titleDraft,
+            paragraphs: paragraphs,
+            createdAt: note.createdAt
+        )
+        customTitleText = resolved.title
+        hasCustomTitle = resolved.isCustom
         isEditingTitle = false
         titleFocused = false
         onCommitEdit?(currentNote)
