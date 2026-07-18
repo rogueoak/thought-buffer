@@ -41,6 +41,27 @@ protocol NoteStoring: Sendable {
     /// answer is not raced against the sync daemon. Callers use it to decide whether to offer
     /// playback without reaching into the file system themselves.
     func audioExists(for id: UUID) -> Bool
+
+    // MARK: - Folders (spec 0010)
+
+    /// The child folder names directly under `path` (empty `path` = the top level), sorted A-Z. A
+    /// folder is a real subdirectory on disk. Returns `[]` for a store that keeps no folders.
+    func folders(at path: [String]) -> [String]
+
+    /// Create a folder named `name` under `path`, returning the sanitized name actually used, or nil
+    /// when the name sanitizes to empty. Creating an existing folder is a no-op (idempotent).
+    @discardableResult
+    func createFolder(named name: String, at path: [String]) throws -> String?
+
+    /// Rename the folder at `path` (its last component) to `newName`, keeping every note, recording,
+    /// and subfolder inside it (they live in the directory, which is moved). Returns the sanitized new
+    /// name, or nil when it sanitizes to empty.
+    @discardableResult
+    func renameFolder(at path: [String], to newName: String) throws -> String?
+
+    /// Delete the folder at `path` and everything inside it - notes, their recordings, and subfolders
+    /// (a recursive cascade). No-op if the folder does not exist.
+    func deleteFolder(at path: [String]) throws
 }
 
 extension NoteStoring {
@@ -70,4 +91,21 @@ extension NoteStoring {
     /// Default: a store with no on-disk audio never has a recording. The file-backed stores override
     /// this with a real (coordinated, on iCloud) existence check.
     func audioExists(for id: UUID) -> Bool { false }
+
+    // MARK: - Folder defaults
+
+    /// Default: a store without a real directory tree (an in-memory test stub) has no folders. The
+    /// file-backed stores override this.
+    func folders(at path: [String]) -> [String] { [] }
+
+    /// Default no-op for stores without a directory tree. The file-backed stores override this.
+    @discardableResult
+    func createFolder(named name: String, at path: [String]) throws -> String? { nil }
+
+    /// Default no-op for stores without a directory tree. The file-backed stores override this.
+    @discardableResult
+    func renameFolder(at path: [String], to newName: String) throws -> String? { nil }
+
+    /// Default no-op for stores without a directory tree. The file-backed stores override this.
+    func deleteFolder(at path: [String]) throws {}
 }

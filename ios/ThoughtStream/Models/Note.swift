@@ -40,6 +40,14 @@ struct Note: Identifiable, Hashable {
     /// but shorter than `paragraphs` (e.g. a paragraph edited in without audio), the extra
     /// paragraphs simply have no timing and fall back to text-to-speech on playback.
     let timings: [ParagraphTiming]
+    /// The ordered folder names containing this note, empty for a top-level note (spec 0010). This is
+    /// a STORAGE LOCATION, not note content: it is derived on load from the relative directory the
+    /// file sits in, and consumed on save to place the file under `directory/<folderPath>/<id>.md`.
+    /// It is NEVER serialized into the Markdown - a note's folder is where its file lives, not a
+    /// frontmatter key - so a foldered note and a top-level note produce byte-identical `.md` output
+    /// and old files (and other apps) are unaffected. Names are sanitized (see `sanitizedFolderName`)
+    /// so a folder can never contain a path separator and escape the tree.
+    let folderPath: [String]
 
     init(
         id: UUID = UUID(),
@@ -48,7 +56,8 @@ struct Note: Identifiable, Hashable {
         createdAt: Date,
         hasCustomTitle: Bool = false,
         audioFileName: String? = nil,
-        timings: [ParagraphTiming] = []
+        timings: [ParagraphTiming] = [],
+        folderPath: [String] = []
     ) {
         self.id = id
         self.title = title
@@ -57,6 +66,7 @@ struct Note: Identifiable, Hashable {
         self.hasCustomTitle = hasCustomTitle
         self.audioFileName = audioFileName
         self.timings = timings
+        self.folderPath = folderPath
     }
 
     /// The number of paragraphs in the note.
@@ -197,6 +207,46 @@ extension Note {
     }()
 }
 
+// MARK: - Folders (spec 0010)
+
+extension Note {
+    /// Sanitize a user-entered folder name so it cannot escape the note tree. Strips any path
+    /// separator (`/`, `\`) and leading dots (so a name can never be `.`, `..`, or a hidden entry),
+    /// then trims surrounding whitespace. Returns an empty string when nothing usable remains, which
+    /// callers treat as "not a valid folder name" (a create is rejected, not silently rooted).
+    ///
+    /// This is the single guard the storage layer relies on: because a sanitized name has no
+    /// separator and no leading dot, joining `directory` with a chain of sanitized names can only
+    /// ever descend into a real subdirectory of the tree - never `..` up and out, never an absolute
+    /// path, never a hidden file.
+    static func sanitizedFolderName(_ raw: String) -> String {
+        var name = raw
+            .replacingOccurrences(of: "/", with: "")
+            .replacingOccurrences(of: "\\", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Drop leading dots so a name cannot become "." / ".." (parent escape) or a hidden entry.
+        while name.hasPrefix(".") {
+            name.removeFirst()
+        }
+        return name.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// A copy of this note relocated to `folderPath`. The store uses it on load to tag a note with
+    /// the folder its file was found in; keeping this a pure copy keeps `folderPath` a `let`.
+    func withFolderPath(_ folderPath: [String]) -> Note {
+        Note(
+            id: id,
+            title: title,
+            paragraphs: paragraphs,
+            createdAt: createdAt,
+            hasCustomTitle: hasCustomTitle,
+            audioFileName: audioFileName,
+            timings: timings,
+            folderPath: folderPath
+        )
+    }
+}
+
 // MARK: - Markdown serialization
 
 extension Note {
@@ -308,6 +358,9 @@ extension Note {
         self.id = id
         self.paragraphs = paragraphs
         self.createdAt = createdAt
+        // A parsed note carries no folder: the folder is the file's LOCATION, tagged by the store on
+        // load from the relative directory, never read from the Markdown. A fresh parse is top-level.
+        self.folderPath = []
         // Only keep a recording reference when both halves are present; a stray key alone is not a
         // real recording, so treat it as a text-only note (backward compatible).
         if let audioFileName, !timings.isEmpty {

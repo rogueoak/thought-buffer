@@ -79,6 +79,27 @@ How the system is built and why.
     the note file. `NoteStoring` carries these with default no-ops so an in-memory test stub needs no
     audio. `AudioRetentionSweeper` deletes recordings older than the auto-delete window at launch
     (off the main actor), keeping the note text.
+  - Both stores are FOLDER-AWARE (spec 0010, PR A). A note can live in nested folders: it is a real
+    subdirectory on disk (visible in Files / iCloud Drive), and a note in it lives at
+    `directory/<folderPath>/<id>.md` with its `<id>.m4a` beside it. `Note.folderPath: [String]` is a
+    LOCATION, not content - derived on load from the file's relative directory, consumed on save to
+    place the file, and NEVER serialized into the Markdown, so a foldered note's `.md` is byte-
+    identical to a top-level note's (old files and other apps are unaffected). Folder names are
+    sanitized (`Note.sanitizedFolderName`: strip separators + leading dots, trim) so a name can never
+    escape the tree. `loadAll` walks the tree recursively tagging each note's `folderPath`; the id-only
+    operations (`delete`, `audioURL`, `saveAudio`, `deleteAudio`, `audioExists`) find a note's file by
+    scanning the tree (`locateFile(id:)`), so the `NoteStoring` audio surface stays id-only and nothing
+    downstream (the resolver, playback, recordings browser) changed. `save(note)` writes under
+    `folderPath` creating dirs, and RELOCATES an existing `.md` + `.m4a` when the folder changed - a
+    save with a new `folderPath` IS the move, and it leaves nothing behind. Folder ops
+    (`folders(at:)`, `createFolder`, `renameFolder`, `deleteFolder` - a recursive cascade over notes +
+    recordings + subfolders) round out the surface. `ICloudNoteStore` wraps every tree walk, move,
+    cascade, and dir-create in `NSFileCoordinator` exactly as the file IO. `NoteStoring` defaults the
+    folder methods to no-ops (like the audio methods) so stubs keep compiling. `NoteSortOrder`
+    (newest/oldest/titleAZ/titleZA) is a pure, stable sort over `[Note]` (PR B wires the persisted
+    toolbar menu). `DictationViewModel` saves the note FILE before adopting its recording, so the
+    `.m4a` lands beside the `.md` in the note's folder; a fresh note is created at the top level and
+    filed afterward, a resumed note re-saves in the folder it already lives in.
   - `NoteStoreFactory` is the single decision point: it resolves the ubiquity container via
     `UbiquityContainerProviding` (off the main actor - the lookup can block) and returns a
     `NoteStoreSelection` (store + `NoteStoreKind` .iCloud/.local + an observer for iCloud). The

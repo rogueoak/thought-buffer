@@ -132,4 +132,96 @@ final class ICloudNoteStoreTests: XCTestCase {
         XCTAssertEqual(containerStore.directory.lastPathComponent, "ThoughtStream")
         XCTAssertEqual(containerStore.directory.deletingLastPathComponent().lastPathComponent, "Documents")
     }
+
+    // MARK: - Folders (spec 0010), coordinated
+
+    /// A note saved with a folderPath through the coordinated store writes into that subdirectory and
+    /// loads back with the same folderPath.
+    func testCoordinatedFolderRoundTrip() throws {
+        let note = Note(title: "Filed", paragraphs: ["In a folder."], createdAt: Date(),
+                        folderPath: ["Work", "Q3"])
+        let url = try store.save(note)
+        XCTAssertEqual(url.deletingLastPathComponent().lastPathComponent, "Q3")
+
+        let loaded = try XCTUnwrap(store.load(id: note.id))
+        XCTAssertEqual(loaded.folderPath, ["Work", "Q3"])
+        XCTAssertEqual(store.loadAll().first?.folderPath, ["Work", "Q3"])
+    }
+
+    /// Saving through the coordinated store with a changed folderPath moves the `.md` and `.m4a` and
+    /// leaves nothing behind - the same move invariant as the local store, coordinated.
+    func testCoordinatedMoveRelocatesMarkdownAndAudioLeavingNothing() throws {
+        let id = UUID()
+        let original = Note(id: id, title: "Move me", paragraphs: ["Body."], createdAt: Date(),
+                            audioFileName: "\(id.uuidString).m4a",
+                            timings: [ParagraphTiming(start: 0, duration: 1)],
+                            folderPath: ["Inbox"])
+        let firstURL = try store.save(original)
+        try store.saveAudio(from: makeTempRecording(), for: id)
+        let oldAudio = firstURL.deletingLastPathComponent().appendingPathComponent("\(id.uuidString).m4a")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: oldAudio.path))
+
+        let newURL = try store.save(original.withFolderPath(["Archive"]))
+        let newAudio = newURL.deletingLastPathComponent().appendingPathComponent("\(id.uuidString).m4a")
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: newAudio.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: firstURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: oldAudio.path))
+        XCTAssertEqual(store.load(id: id)?.folderPath, ["Archive"])
+    }
+
+    /// deleteFolder cascades through the coordinated store: notes, recordings, subfolders.
+    func testCoordinatedDeleteFolderCascades() throws {
+        let n1 = Note(title: "a", paragraphs: ["x"], createdAt: Date(), folderPath: ["Doomed"])
+        let n2 = Note(title: "b", paragraphs: ["y"], createdAt: Date(), folderPath: ["Doomed", "Sub"])
+        try store.save(n1)
+        try store.save(n2)
+        try store.saveAudio(from: makeTempRecording(), for: n1.id)
+        let survivor = Note(title: "safe", paragraphs: ["z"], createdAt: Date())
+        try store.save(survivor)
+
+        try store.deleteFolder(at: ["Doomed"])
+
+        XCTAssertNil(store.load(id: n1.id))
+        XCTAssertNil(store.load(id: n2.id))
+        XCTAssertFalse(store.audioExists(for: n1.id))
+        XCTAssertFalse(store.folders(at: []).contains("Doomed"))
+        XCTAssertNotNil(store.load(id: survivor.id))
+    }
+
+    /// renameFolder keeps the notes inside it, coordinated.
+    func testCoordinatedRenameFolderKeepsNotes() throws {
+        let note = Note(title: "kept", paragraphs: ["Body."], createdAt: Date(), folderPath: ["Old"])
+        try store.save(note)
+
+        XCTAssertEqual(try store.renameFolder(at: ["Old"], to: "New"), "New")
+        XCTAssertEqual(store.folders(at: []), ["New"])
+        XCTAssertEqual(store.loadAll().first?.folderPath, ["New"])
+    }
+
+    /// folders(at:) lists child folders sorted A-Z through the coordinated read.
+    func testCoordinatedFoldersLists() throws {
+        try store.createFolder(named: "Work", at: [])
+        try store.createFolder(named: "Archive", at: [])
+        XCTAssertEqual(store.folders(at: []), ["Archive", "Work"])
+    }
+
+    /// A folder created by the local store is visible to the iCloud store and vice versa (shared tree).
+    func testFolderTreeSharedBetweenBackends() throws {
+        let local = NoteStore(directory: tempDir)
+        try local.createFolder(named: "Shared", at: [])
+        XCTAssertTrue(store.folders(at: []).contains("Shared"))
+
+        try store.createFolder(named: "AlsoShared", at: [])
+        XCTAssertTrue(local.folders(at: []).contains("AlsoShared"))
+    }
+
+    /// Write a stand-in recording to a temp file the store will move into place.
+    private func makeTempRecording(content: String = "audio-bytes") throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rec-\(UUID().uuidString).m4a")
+        try Data(content.utf8).write(to: url)
+        return url
+    }
 }
