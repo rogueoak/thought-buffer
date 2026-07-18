@@ -42,13 +42,97 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(note.bodyMarkdown, "Real.\n\nAlso real.")
     }
 
-    func testTitleDerivedFromFirstLine() {
+    func testTitleDerivedFromFirstSentence() {
         let title = Note.deriveTitle(
             paragraphs: ["Call the supplier before noon.", "And then email."],
             createdAt: Date()
         )
-        // Trailing period dropped.
+        // Trailing period dropped; a single-sentence first paragraph is used whole.
         XCTAssertEqual(title, "Call the supplier before noon")
+    }
+
+    func testTitleIsOnlyTheFirstSentenceOfTheFirstParagraph() {
+        // Spec 0009: the title is the first sentence (up to the first pause), not the whole first
+        // line, so a multi-sentence opening paragraph yields just its opening sentence.
+        let title = Note.deriveTitle(
+            paragraphs: ["Hello there. This part should not be in the title.", "More."],
+            createdAt: Date()
+        )
+        XCTAssertEqual(title, "Hello there")
+    }
+
+    func testCustomTitleRoundTrips() {
+        let note = Note(
+            title: "Q3 planning offsite",
+            paragraphs: ["We talked about the roadmap and hiring."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            hasCustomTitle: true
+        )
+        XCTAssertTrue(note.markdown.contains("titleCustom: true"))
+        let parsed = Note(markdown: note.markdown)
+        XCTAssertTrue(parsed.hasCustomTitle)
+        XCTAssertEqual(parsed.title, "Q3 planning offsite")
+    }
+
+    func testDerivedTitleWritesNoCustomFlag() {
+        // A non-custom note serializes exactly as before - no titleCustom key - and parses back to
+        // false, so old files (which never had the key) load as non-custom.
+        let note = Note(
+            title: "Anything",
+            paragraphs: ["A body."],
+            createdAt: Date()
+        )
+        XCTAssertFalse(note.markdown.contains("titleCustom"))
+        XCTAssertFalse(Note(markdown: note.markdown).hasCustomTitle)
+    }
+
+    func testCustomTitleWithColonRoundTripsWithFlag() {
+        // A user title with YAML-tricky characters must round-trip together with titleCustom (the
+        // acceptance pairs escaping with the custom flag; the existing colon test is non-custom).
+        let note = Note(
+            title: "Meeting: Q3 \"offsite\"",
+            paragraphs: ["Notes body."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            hasCustomTitle: true
+        )
+        let parsed = Note(markdown: note.markdown)
+        XCTAssertTrue(parsed.hasCustomTitle)
+        XCTAssertEqual(parsed.title, "Meeting: Q3 \"offsite\"")
+    }
+
+    func testResolveTitleEditEmptyResetsToDerived() {
+        let resolved = Note.resolveTitleEdit(
+            rawTitle: "   ",
+            paragraphs: ["The first sentence. And more."],
+            createdAt: Date()
+        )
+        XCTAssertFalse(resolved.isCustom)
+        XCTAssertEqual(resolved.title, "The first sentence")
+    }
+
+    func testResolveTitleEditNonEmptySetsCustom() {
+        let resolved = Note.resolveTitleEdit(
+            rawTitle: "  My chosen title  ",
+            paragraphs: ["Body sentence."],
+            createdAt: Date()
+        )
+        XCTAssertTrue(resolved.isCustom)
+        XCTAssertEqual(resolved.title, "My chosen title")
+    }
+
+    func testStrayCustomFlagWithoutStoredTitleIsNotCustom() {
+        // Guard: titleCustom only owns a STORED title. With no title line, the note derives and stays
+        // non-custom so a half-written/future file never marks a derived title as user-set.
+        let text = """
+        ---
+        titleCustom: true
+        ---
+
+        Derived body sentence.
+        """
+        let note = Note(markdown: text)
+        XCTAssertFalse(note.hasCustomTitle)
+        XCTAssertEqual(note.title, "Derived body sentence")
     }
 
     func testTitleFallbackWhenEmpty() {

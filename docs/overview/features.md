@@ -293,6 +293,20 @@ Three more refinements from using the app (no capture or storage change):
   current time has no wall-clock dependency to refresh on. It is now wrapped in a `TimelineView` that
   recomputes every minute against a live reference, and sits tighter to its clock glyph.
 
+## Editable note titles (spec 0009)
+
+Notes get a real, editable title instead of an always-derived one.
+
+- **First-sentence default.** A new note's title is its first sentence - what you said before your
+  first pause - not the whole first line. Derived through the existing `SentenceTokenizer`, capped and
+  tidied; a single-sentence opening is unchanged.
+- **Edit the title, separate from the body.** On a saved note's page the title is a prominent header
+  you tap to edit (matching the body's tap-to-edit). A custom title sticks: later body edits no longer
+  overwrite it. Clearing the title to empty resets it to the derived first sentence.
+- **Persistence.** A user title is marked with a `titleCustom: true` frontmatter key, written only for
+  a custom title so a derived-title note (and every existing file) serializes and loads exactly as
+  before. Resuming a titled note keeps its title rather than re-deriving it.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires

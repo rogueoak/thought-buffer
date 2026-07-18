@@ -29,6 +29,11 @@ struct Note: Identifiable, Hashable {
     let title: String
     let paragraphs: [String]
     let createdAt: Date
+    /// Whether `title` is a title the USER set, as opposed to one auto-derived from the first sentence
+    /// (spec 0009). It governs edit-time behavior: a non-custom note re-derives its title when the body
+    /// changes; a custom note keeps the user's title. Persisted as `titleCustom: true` in frontmatter,
+    /// written ONLY when true so a derived-title note serializes byte-for-byte as before.
+    let hasCustomTitle: Bool
     /// The name of the sibling audio file (`<id>.m4a`), or nil when the note has no recording.
     let audioFileName: String?
     /// One timing per paragraph, in order, or empty when the note has no recording. When present
@@ -41,6 +46,7 @@ struct Note: Identifiable, Hashable {
         title: String,
         paragraphs: [String],
         createdAt: Date,
+        hasCustomTitle: Bool = false,
         audioFileName: String? = nil,
         timings: [ParagraphTiming] = []
     ) {
@@ -48,6 +54,7 @@ struct Note: Identifiable, Hashable {
         self.title = title
         self.paragraphs = paragraphs
         self.createdAt = createdAt
+        self.hasCustomTitle = hasCustomTitle
         self.audioFileName = audioFileName
         self.timings = timings
     }
@@ -145,15 +152,17 @@ extension Note {
     private static let titleCap = 60
 
     /// Derive a human title from the note's paragraphs, or a dated fallback when empty.
-    /// The first non-empty line wins, trimmed and capped; a trailing period is dropped.
+    /// The FIRST SENTENCE of the first non-empty paragraph wins (spec 0009: the natural title is
+    /// what you said before your first pause, not the whole first line), trimmed and capped; a
+    /// trailing period is dropped. A first paragraph with no terminal punctuation is one sentence,
+    /// so it is used whole.
     static func deriveTitle(paragraphs: [String], createdAt: Date) -> String {
-        let firstLine = paragraphs
-            .flatMap { $0.split(separator: "\n", omittingEmptySubsequences: true) }
-            .map { $0.trimmingCharacters(in: .whitespaces) }
+        let firstParagraph = paragraphs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .first(where: { !$0.isEmpty })
 
-        if let line = firstLine, !line.isEmpty {
-            var title = line
+        if let paragraph = firstParagraph, !paragraph.isEmpty {
+            var title = SentenceTokenizer.sentences(in: paragraph).first ?? paragraph
             if title.count > titleCap {
                 title = String(title.prefix(titleCap)).trimmingCharacters(in: .whitespaces) + "..."
             }
@@ -163,6 +172,21 @@ extension Note {
             return title
         }
         return "Note " + Note.fallbackDateFormatter.string(from: createdAt)
+    }
+
+    /// The `(title, isCustom)` a title-edit commit resolves to (spec 0009): a blank entry resets to
+    /// the derived first sentence and clears the custom flag; anything else (trimmed) is a user title.
+    /// Pure so the reset/set rule is unit-testable rather than trapped in the view's commit handler.
+    static func resolveTitleEdit(
+        rawTitle: String,
+        paragraphs: [String],
+        createdAt: Date
+    ) -> (title: String, isCustom: Bool) {
+        let trimmed = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return (deriveTitle(paragraphs: paragraphs, createdAt: createdAt), false)
+        }
+        return (trimmed, true)
     }
 
     private static let fallbackDateFormatter: DateFormatter = {
@@ -204,6 +228,10 @@ extension Note {
             "title: \(Note.escapeYAML(title))",
             "created: \(created)",
         ]
+        // Only mark a USER-set title, so a derived-title note serializes exactly as before (spec 0009).
+        if hasCustomTitle {
+            lines.append("titleCustom: true")
+        }
         if let audioFileName {
             lines.append("audio: \(Note.escapeYAML(audioFileName))")
         }
@@ -247,6 +275,7 @@ extension Note {
         var id = fallbackID
         var title: String?
         var createdAt = fallbackDate
+        var hasCustomTitle = false
         var audioFileName: String?
         var timings: [ParagraphTiming] = []
         var body = text
@@ -260,6 +289,8 @@ extension Note {
                 case "title":
                     let unescaped = Note.unescapeYAML(value)
                     if !unescaped.isEmpty { title = unescaped }
+                case "titleCustom":
+                    hasCustomTitle = (value == "true")
                 case "created":
                     if let parsed = Note.iso8601.date(from: value) { createdAt = parsed }
                 case "audio":
@@ -286,7 +317,16 @@ extension Note {
             self.audioFileName = nil
             self.timings = []
         }
-        self.title = title ?? Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
+        // Prefer a stored title (every existing file keeps its title byte-for-byte); the custom flag
+        // only counts when there IS a stored title to own. With no stored title, derive and stay
+        // non-custom so a stray `titleCustom` key never marks a derived title as user-set.
+        if let title {
+            self.title = title
+            self.hasCustomTitle = hasCustomTitle
+        } else {
+            self.title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
+            self.hasCustomTitle = false
+        }
     }
 
     /// Split a Markdown body into paragraphs on blank lines, trimming and dropping empties.

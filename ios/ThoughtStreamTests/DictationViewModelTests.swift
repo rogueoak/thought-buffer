@@ -42,6 +42,41 @@ final class DictationViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.first?.paragraphs, note.paragraphs)
     }
 
+    func testResumingCustomTitledNotePreservesTitle() throws {
+        // Spec 0009: resuming a note the user titled must keep that title, not re-derive it from the
+        // (now longer) body.
+        let original = Note(
+            title: "My chosen title",
+            paragraphs: ["Original body sentence."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            hasCustomTitle: true
+        )
+        let model = DictationViewModel(store: store, resuming: original)
+        model.injectFinalized("Appended thought.")
+
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertTrue(saved.hasCustomTitle)
+        XCTAssertEqual(saved.title, "My chosen title", "resume must not re-derive over a user title")
+    }
+
+    func testResumingDerivedTitleNoteReDerivesFromFirstSentence() throws {
+        // A non-custom resumed note DERIVES its title from the body, ignoring the stored title. Seed a
+        // stored title that differs from what the body derives to, so this proves re-derivation rather
+        // than passing whether the code re-derives or carries the original title over (tester review).
+        let original = Note(
+            title: "A stale stored title",
+            paragraphs: ["The real opening sentence. More detail here."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let model = DictationViewModel(store: store, resuming: original)
+        model.injectFinalized("Appended.")
+
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertFalse(saved.hasCustomTitle)
+        XCTAssertEqual(saved.title, "The real opening sentence",
+                       "a non-custom note must re-derive, not carry over the stored title")
+    }
+
     func testFinishWithNothingCapturedSavesNothing() throws {
         let model = DictationViewModel(store: store)
         XCTAssertNil(try model.finish())

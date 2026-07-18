@@ -137,6 +137,12 @@ final class DictationViewModel: ObservableObject {
     private var createdAt = Date()
     private var noteID = UUID()
 
+    /// A user-set title carried over when RESUMING a note (spec 0009). A fresh session always
+    /// auto-derives its title, but resuming a note the user titled must keep that title rather than
+    /// re-deriving it from the (now longer) body. Nil / false for a fresh session.
+    private var hasCustomTitle = false
+    private var customTitle: String?
+
     /// The recording filename carried over when RESUMING an existing note (feedback 0008): a resumed
     /// session does not record new audio, so the note keeps its original recording. Nil for a fresh
     /// session, where any recording comes from the live capture instead.
@@ -188,6 +194,11 @@ final class DictationViewModel: ObservableObject {
             paragraphs = resuming.paragraphs
             paragraphTimings = Self.seedTimings(for: resuming)
             existingAudioFileName = resuming.audioFileName
+            // Keep a user-set title through the resume (spec 0009); a derived title re-derives normally.
+            if resuming.hasCustomTitle {
+                hasCustomTitle = true
+                customTitle = resuming.title
+            }
         }
         // Tell the capture service whether to tee audio to a file for this session, before it starts.
         self.service.setRecordingEnabled(recordsAudio)
@@ -298,7 +309,11 @@ final class DictationViewModel: ObservableObject {
     /// lost for the sake of the recording). Without a recording, the note saves exactly as before.
     @discardableResult
     private func saveCurrentNote(adoptingRecording: Bool) throws -> Note {
-        let title = Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
+        // A resumed note the user titled keeps that title (spec 0009); everything else derives from
+        // the first sentence.
+        let title = hasCustomTitle
+            ? (customTitle ?? Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt))
+            : Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
 
         // Only the FINAL note (Stop) adopts the recording: mid-session "new note" saves text-only,
         // because the one continuous session file is not finalized until Stop. Never discard the
@@ -325,6 +340,7 @@ final class DictationViewModel: ObservableObject {
             title: title,
             paragraphs: paragraphs,
             createdAt: createdAt,
+            hasCustomTitle: hasCustomTitle,
             audioFileName: audioFileName,
             timings: timings
         )
