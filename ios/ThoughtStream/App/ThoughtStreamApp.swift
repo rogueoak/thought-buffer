@@ -8,13 +8,54 @@ struct ThoughtStreamApp: App {
     /// themed background, then roots to the Stream list.
     @State private var dependencies: AppDependencies?
 
+    /// Whether the animated launch cover (spec 0012) is still up. Shown once per cold launch on
+    /// normal launches only; a `.task` holds it for `launchCoverHold` then cross-fades it out, and a
+    /// tap skips it early. Screenshot (`-uiScreen`) launches never show it (see `content`).
+    @State private var showLaunchCover = true
+
+    /// Minimum time the launch cover stays up before it auto-dismisses. Dependency resolution is fast
+    /// and the cover sits above the pre-resolution themed background, so a plain minimum hold is
+    /// enough - the cover covers the whole storage-resolution flash. A named constant so it is easy
+    /// to tune.
+    private static let launchCoverHold: Duration = .milliseconds(2500)
+
+    /// True for screenshot / tooling launches, which must render with NO cover so automated captures
+    /// are unaffected.
+    private var isScreenshotLaunch: Bool {
+        CommandLine.arguments.contains("-uiScreen")
+    }
+
     var body: some Scene {
         WindowGroup {
-            content
-                .task {
-                    guard dependencies == nil else { return }
-                    dependencies = await AppDependencies.resolve()
+            ZStack {
+                content
+                    .task {
+                        guard dependencies == nil else { return }
+                        dependencies = await AppDependencies.resolve()
+                    }
+
+                // The cover overlays everything (including the `dependencies == nil` themed-background
+                // state) on normal launches, so there is no visible flash/pop before it. Skipped for
+                // screenshot launches.
+                if showLaunchCover && !isScreenshotLaunch {
+                    LaunchCoverView(onSkip: dismissLaunchCover)
+                        .transition(.opacity)
+                        .zIndex(1)
+                        .task {
+                            try? await Task.sleep(for: Self.launchCoverHold)
+                            dismissLaunchCover()
+                        }
                 }
+            }
+        }
+    }
+
+    /// Cross-fade the launch cover away. Safe to call more than once (tap-to-skip plus the hold
+    /// timer): once `showLaunchCover` is false, subsequent calls are no-ops.
+    private func dismissLaunchCover() {
+        guard showLaunchCover else { return }
+        withAnimation(.easeOut(duration: 0.4)) {
+            showLaunchCover = false
         }
     }
 
