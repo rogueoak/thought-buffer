@@ -79,8 +79,14 @@ struct LaunchCoverView: View {
     /// Map a normalized 0...1 height to a point height within the bar row, keeping a visible floor so
     /// no bar collapses to nothing.
     private func barHeight(normalized: Double) -> CGFloat {
+        LaunchCoverView.barPointHeight(normalized: normalized, floor: minBarHeight, rowHeight: barRowHeight)
+    }
+
+    /// The pure, testable normalized-to-point mapping (tester review): clamps to 0...1 and keeps a
+    /// `floor` so no bar collapses to nothing. Static so the clamp + floor guarantee is unit-testable.
+    static func barPointHeight(normalized: Double, floor: CGFloat, rowHeight: CGFloat) -> CGFloat {
         let clamped = min(1, max(0, normalized))
-        return minBarHeight + (barRowHeight - minBarHeight) * CGFloat(clamped)
+        return floor + (rowHeight - floor) * CGFloat(clamped)
     }
 
     /// The pure, testable bar-height math: a normalized 0...1 height for `bar` (of `count` bars) at

@@ -9,6 +9,21 @@ import XCTest
 final class LaunchCoverViewTests: XCTestCase {
     private let count = LaunchCoverView.barCount
 
+    func testBarPointHeightFloorsAndClamps() {
+        let floor: CGFloat = 8
+        let rowHeight: CGFloat = 64
+        // A normalized 0 maps to the floor (no bar collapses to nothing); 1 maps to the full height.
+        XCTAssertEqual(LaunchCoverView.barPointHeight(normalized: 0, floor: floor, rowHeight: rowHeight), floor)
+        XCTAssertEqual(LaunchCoverView.barPointHeight(normalized: 1, floor: floor, rowHeight: rowHeight), rowHeight)
+        // Out-of-range input clamps rather than overflowing the row.
+        XCTAssertEqual(LaunchCoverView.barPointHeight(normalized: -0.5, floor: floor, rowHeight: rowHeight), floor)
+        XCTAssertEqual(LaunchCoverView.barPointHeight(normalized: 2, floor: floor, rowHeight: rowHeight), rowHeight)
+        // Monotonic between the endpoints.
+        let mid = LaunchCoverView.barPointHeight(normalized: 0.5, floor: floor, rowHeight: rowHeight)
+        XCTAssertGreaterThan(mid, floor)
+        XCTAssertLessThan(mid, rowHeight)
+    }
+
     func testHeightsStayWithinUnitInterval() {
         // Sample every bar across a spread of times; a height outside 0...1 would map to a negative or
         // overflowing frame.
