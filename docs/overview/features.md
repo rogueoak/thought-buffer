@@ -307,6 +307,28 @@ Notes get a real, editable title instead of an always-derived one.
   a custom title so a derived-title note (and every existing file) serializes and loads exactly as
   before. Resuming a titled note keeps its title rather than re-deriving it.
 
+## Animated launch cover (spec 0012)
+
+A branded launch moment: on a normal cold launch the app shows a full-screen cover on the River Mist
+background before the Thoughts list.
+
+- **Icon over a waveform.** The app icon (rounded, with a subtle shadow) is centered, with a row of
+  eight equalizer bars in the primary token beneath it that rise and fall as if reacting to a voice.
+- **Speech-like animation.** The bars are driven by a `TimelineView(.animation)`; each bar's height
+  is a phase-shifted sum of two sines of the timeline date, so the row ripples like speech rather than
+  sweeping as one wave. The pure math lives in the testable `LaunchCoverView.barHeight(bar:of:at:)`.
+- **Short hold, then cross-fade.** The cover holds for ~2.5s (a named constant) and cross-fades into
+  the Thoughts list. It sits above the brief storage-resolution themed background, so the open is one
+  smooth moment rather than background -> pop -> list. Tapping the cover skips it immediately.
+- **Reduce Motion.** With Reduce Motion on, the bars hold static (varied, sampled once) instead of
+  animating, and the cover still auto-dismisses.
+- **Screenshot-safe.** `-uiScreen` tooling launches show no cover, so automated captures are
+  unaffected.
+
+The icon art is a `LaunchIcon` image set (a copy of the 1024 app-icon PNG), because SwiftUI's
+`Image("AppIcon")` cannot load the app-icon asset directly. Nothing about storage, capture, or
+navigation changes.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires

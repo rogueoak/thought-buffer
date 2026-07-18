@@ -15,7 +15,12 @@ How the system is built and why.
 
 - `App/` - `ThoughtStreamApp` entry point. Roots to `StreamListView`; a `-uiScreen dictation`
   launch argument roots to `DictationView` and a `-uiScreen settings` argument roots to a seeded
-  `SettingsView`, both used only for screenshot tooling. Also the
+  `SettingsView`, both used only for screenshot tooling. On normal (non-`-uiScreen`) launches the
+  root wraps `content` in a `ZStack` and overlays `LaunchCoverView` (spec 0012), gated by
+  `@State showLaunchCover`; a `.task` holds it for a named minimum (`launchCoverHold`, ~2.5s) then
+  cross-fades it out with `withAnimation(.easeOut)`, and a tap skips it early. The cover sits above
+  the `dependencies == nil` themed-background state so there is no pre-resolution flash, and is
+  skipped entirely for `-uiScreen` launches so screenshot tooling is unaffected. Also the
   hands-free session-start seam and its entry points:
   - `SessionStarter` (protocol, one method `startNewSession()`) and `PendingSessionRoute` (its
     concrete `@MainActor ObservableObject`) are the single "start a new dictation session" seam. The

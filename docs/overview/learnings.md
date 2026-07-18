@@ -315,3 +315,16 @@ the model's already-committed fields; a derived-from-model snapshot (`currentNot
 only once every open editor has folded its buffer back into the model. Extracting the pure commit
 decision (here `Note.resolveTitleEdit`) also lifts the rule out of view state so it can be unit-tested
 instead of only device-verified. Generalizes to any screen with multiple simultaneous editors.
+
+## The app-icon asset cannot be loaded by name in SwiftUI (spec 0012)
+
+The launch cover (spec 0012) wanted to show the app icon. `Image("AppIcon")` does not work: an
+`AppIcon.appiconset` is a special icon set the system consumes to render the home-screen icon, and it
+is not addressable as a normal named image at runtime - so the code compiles and simply shows nothing.
+The fix is a plain `.imageset` (`LaunchIcon`) whose file is a copy of the same 1024 PNG already in the
+icon set, loaded with `Image("LaunchIcon")`. Generalizes: to display the app's own icon inside the UI,
+add a normal image set - do not reach for the `AppIcon` asset name. A second, smaller gotcha: a helper
+that returns `some View` and is called from inside a `TimelineView`/`@ViewBuilder` closure captures its
+closure parameters escapingly (the `ForEach` inside holds them), so a bar-height closure passed to such
+a helper must be marked `@escaping` or the build fails with "escaping closure captures non-escaping
+parameter".
