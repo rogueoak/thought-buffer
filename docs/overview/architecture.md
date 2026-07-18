@@ -58,7 +58,13 @@ How the system is built and why.
   (`ParagraphTiming` = start + duration), persisted as `audio:` and a compact `timings:` JSON array
   in frontmatter and written ONLY when a recording is present, so a text-only note serializes and
   parses byte-for-byte as before. Both are dropped on parse unless BOTH are present (a stray key is
-  not a recording), keeping the tolerant-parse contract.
+  not a recording), keeping the tolerant-parse contract. Spec 0009 makes the title editable:
+  `deriveTitle` now returns the first SENTENCE of the first paragraph (via `SentenceTokenizer`), and a
+  `hasCustomTitle` flag (frontmatter `titleCustom: true`, written only when true) distinguishes a
+  user-set title from a derived one. Parsing still prefers a stored `title:` (files keep their title),
+  and the flag only counts when a title is stored; it governs edit-time behavior - a non-custom note
+  re-derives its title on a body edit, a custom note keeps it. `NoteDetailView` edits the title as a
+  tappable header and `DictationViewModel` preserves a resumed note's custom title.
 - `Storage/` - two `NoteStoring` backends behind one seam, chosen at startup:
   - `NoteStore` persists each note as `Documents/ThoughtStream/<id>.md` (YAML frontmatter + body).
     Thin and cache-free: the files are the source of truth. `loadAll` returns notes newest first.
