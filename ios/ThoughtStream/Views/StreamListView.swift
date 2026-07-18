@@ -26,9 +26,6 @@ struct StreamListView: View {
     /// Record button starts a session through the same seam every other entry point uses.
     @ObservedObject private var sessionRoute: PendingSessionRoute
     @State private var showSettings = false
-    /// When on, the list shows only notes that have a voice recording (feedback 0008): the phone-side
-    /// way to find recordings, which previously only existed on CarPlay. Off shows every note.
-    @State private var showRecordingsOnly = false
     /// Navigation stack path. Pushing a `Note` opens its detail page; used to land the user on the
     /// note they just recorded when a session ends (feedback 0007).
     @State private var path: [Note] = []
@@ -68,16 +65,10 @@ struct StreamListView: View {
         _feed = StateObject(wrappedValue: StreamFeed(store: store, observer: noteObserver))
     }
 
-    /// The notes shown in the list: every note, or only those with a recording when the recordings
-    /// filter is on (feedback 0008).
-    private var displayedNotes: [Note] {
-        showRecordingsOnly ? feed.notes.filter { $0.hasAudio } : feed.notes
-    }
-
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if displayedNotes.isEmpty && feed.didLoad {
+                if feed.notes.isEmpty && feed.didLoad {
                     // Center in the frame that REMAINS after the record button's safe-area inset, so
                     // the help text can never sit under the button (feedback 0005).
                     emptyState
@@ -88,7 +79,7 @@ struct StreamListView: View {
                     // background shows through (clear row/list backgrounds), separators are hidden,
                     // and each row keeps the NoteCard's own surface/border via inset row spacing.
                     List {
-                        ForEach(displayedNotes) { note in
+                        ForEach(feed.notes) { note in
                             // A plain Button (not a NavigationLink) so the row carries NO trailing
                             // disclosure chevron and the whole card is the tap target (feedback 0008).
                             // Navigation is driven by appending to the stack path, the same seam the
@@ -154,6 +145,12 @@ struct StreamListView: View {
                     note: note,
                     resolver: StoreAudioURLResolver(store: store),
                     controller: playbackController,
+                    // Mic + gear on the note page (feedback 0011) so a new thought is one tap from
+                    // anywhere: the mic requests a session through the same shared route the list uses
+                    // (the fullScreenCover on this stack then presents over the pushed note), and the
+                    // gear opens the same Settings sheet.
+                    onNewThought: { sessionRoute.startNewSession() },
+                    onOpenSettings: { showSettings = true },
                     onResume: { current in resumeNote = current },
                     onCommitEdit: { edited in
                         // Persist the keyboard edit and refresh the feed so the list reflects it. A
@@ -167,22 +164,6 @@ struct StreamListView: View {
                 )
             }
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    // Toggle the recordings-only filter (feedback 0008). A lone waveform icon read as
-                    // "record" (feedback 0010), so the control is labeled "Recordings" - the record
-                    // affordances are the top-right mic and the bottom pill. Filled/tinted while active.
-                    Button {
-                        showRecordingsOnly.toggle()
-                    } label: {
-                        Label(
-                            "Recordings",
-                            systemImage: showRecordingsOnly ? "waveform.circle.fill" : "waveform.circle"
-                        )
-                        .labelStyle(.titleAndIcon)
-                    }
-                    .tint(showRecordingsOnly ? CanopyColor.primary : CanopyColor.textMuted)
-                    .accessibilityLabel(showRecordingsOnly ? "Show all notes" : "Show recordings only")
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         sessionRoute.startNewSession()
@@ -265,12 +246,10 @@ struct StreamListView: View {
             Image(systemName: "waveform")
                 .font(.system(size: CanopyFont.sizeX4xl, weight: .semibold))
                 .foregroundStyle(CanopyColor.primary)
-            Text(showRecordingsOnly ? "No recordings yet" : "No notes yet")
+            Text("No notes yet")
                 .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
                 .foregroundStyle(CanopyColor.text)
-            Text(showRecordingsOnly
-                ? "Notes you record with audio kept show up here. Tap the waveform to see all notes."
-                : "Tap Record and start talking. Your words land here as a note.")
+            Text("Tap Record and start talking. Your words land here as a note.")
                 .font(.system(size: CanopyFont.sizeSm))
                 .foregroundStyle(CanopyColor.textMuted)
                 .multilineTextAlignment(.center)
