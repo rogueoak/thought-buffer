@@ -58,4 +58,27 @@ final class NoteSortOrderTests: XCTestCase {
     func testDefaultIsNewest() {
         XCTAssertEqual(NoteSortOrder.default, .newest)
     }
+
+    /// The shared `areInIncreasingOrder` comparator orders two `SortKey`s correctly for each order.
+    /// This is the seam PR B reuses to sort folders among notes by the same key.
+    func testSortKeyComparatorOrdersEachOrder() {
+        let older = NoteSortOrder.SortKey(title: "apple", date: Date(timeIntervalSince1970: 1_000), tieBreak: "1")
+        let newer = NoteSortOrder.SortKey(title: "banana", date: Date(timeIntervalSince1970: 2_000), tieBreak: "2")
+
+        // Newest first: newer before older.
+        XCTAssertTrue(NoteSortOrder.newest.areInIncreasingOrder(newer, older))
+        XCTAssertFalse(NoteSortOrder.newest.areInIncreasingOrder(older, newer))
+
+        // Oldest first: older before newer.
+        XCTAssertTrue(NoteSortOrder.oldest.areInIncreasingOrder(older, newer))
+        XCTAssertFalse(NoteSortOrder.oldest.areInIncreasingOrder(newer, older))
+
+        // Title A-Z: "apple" before "banana".
+        XCTAssertTrue(NoteSortOrder.titleAZ.areInIncreasingOrder(older, newer))
+        XCTAssertFalse(NoteSortOrder.titleAZ.areInIncreasingOrder(newer, older))
+
+        // Title Z-A: "banana" before "apple".
+        XCTAssertTrue(NoteSortOrder.titleZA.areInIncreasingOrder(newer, older))
+        XCTAssertFalse(NoteSortOrder.titleZA.areInIncreasingOrder(older, newer))
+    }
 }

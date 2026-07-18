@@ -333,6 +333,23 @@ a file exist at the path", with no check on WHOSE file it is. Generalizes to any
 that writes to a user-chosen name: distinguish "overwrite my own prior version" from "collide with
 someone else's", and only the former may delete.
 
+## Sanitize an untrusted name by rejection, not stripping - and guard the resolved path too (spec 0010)
+
+Folder names are user input that becomes a real filesystem path feeding recursive DELETE/move. The
+first sanitizer STRIPPED unsafe bits (leading dots, then trimmed whitespace) - and stripping can
+SYNTHESIZE the very thing it removes: `"..\t.."` stripped down to `".."`, a live parent-directory
+traversal out of the app container. A subtractive filter over a set of "bad" fragments is a trap,
+because a residue of two bad fragments can be a third. Sanitize by REJECTION instead: define what a
+valid single path component is (non-empty, not `.`/`..`, no leading dot, no separator `/`\`:`, no
+control/newline) and return "rejected" for anything else - never try to launder a bad name into a
+good one. Then, because even a correct name-sanitizer returns "" for a rejected component and the
+join can SKIP it and collapse a crafted path (`[".."]`) back to the ROOT, add a second, independent
+guard at the destructive op: resolve the final URL and refuse it unless it is strictly BELOW the root
+(`dir != root && dir.path.hasPrefix(root.path + "/")`), so `deleteFolder`/`renameFolder` can never
+target the whole tree or anything outside it. Two layers: reject bad names at the source, and gate the
+resolved path at every recursive delete/move. Generalizes to any untrusted string that becomes a path,
+a key, or a query fed to a destructive or escaping operation.
+
 ## Two concurrent edit modes over one model must be mutually exclusive (spec 0009)
 
 The note page grew a second inline editor (title) beside the existing one (body). Each had its own

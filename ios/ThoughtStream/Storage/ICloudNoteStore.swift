@@ -131,17 +131,15 @@ struct ICloudNoteStore: NoteStoring {
         try ensureDirectory(at: destinationDir)
         let destination = destinationDir.appendingPathComponent("\(note.id.uuidString).md", isDirectory: false)
 
-        // A note being re-filed: if its file lives in a different directory, this save is a move -
-        // relocate the sibling recording (coordinated) and remove the old `.md` (coordinated).
-        if let existing = locateFile(id: note.id),
-           existing.deletingLastPathComponent().standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL {
-            let audioName = "\(note.id.uuidString).\(Self.audioFileExtension)"
-            let oldAudio = existing.deletingLastPathComponent().appendingPathComponent(audioName, isDirectory: false)
-            let newAudio = destinationDir.appendingPathComponent(audioName, isDirectory: false)
-            try coordinatedMoveIfExists(from: oldAudio, to: newAudio)
-            try coordinatedDelete(at: existing)
-        }
+        // Capture where the note's file lives NOW, before writing anything: a re-file is a move only
+        // when an existing file sits in a different directory than the destination.
+        let existing = locateFile(id: note.id)
+        let isMove = existing.map {
+            $0.deletingLastPathComponent().standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL
+        } ?? false
 
+        // Write the new `.md` FIRST (coordinated), so the note is never without a `.md`: a partial
+        // failure below leaves the note readable at its new home rather than stranded.
         let data = Data(note.markdown.utf8)
         var coordinationError: NSError?
         var thrown: Error?
@@ -159,6 +157,17 @@ struct ICloudNoteStore: NoteStoring {
         }
         if let coordinationError { throw coordinationError }
         if let thrown { throw thrown }
+
+        // Only after the new `.md` exists do we complete a move: relocate the sibling recording
+        // (coordinated) then remove the old `.md` LAST (coordinated). A failure at any earlier point
+        // never orphans audio or strands the note with no `.md`.
+        if isMove, let existing {
+            let audioName = "\(note.id.uuidString).\(Self.audioFileExtension)"
+            let oldAudio = existing.deletingLastPathComponent().appendingPathComponent(audioName, isDirectory: false)
+            let newAudio = destinationDir.appendingPathComponent(audioName, isDirectory: false)
+            try coordinatedMoveIfExists(from: oldAudio, to: newAudio)
+            try coordinatedDelete(at: existing)
+        }
         return destination
     }
 
@@ -365,28 +374,60 @@ struct ICloudNoteStore: NoteStoring {
         return safe
     }
 
+    /// Resolve `path` to a folder directory that is STRICTLY BELOW the root, or nil when the path is
+    /// empty, invalid, collapsing, or escaping. Same root-collapse guard as the local store: because
+    /// rejected name components sanitize to `""` and are skipped in `directoryURL(for:)`, a path like
+    /// `[".."]`, `["."]`, or `["/"]` would collapse to the ROOT, so a destructive op keyed off it
+    /// could wipe or move the whole tree. Returning nil unless the resolved directory sits strictly
+    /// under the root turns those into safe no-ops.
+    private func resolvedFolderDirectory(for path: [String]) -> URL? {
+        let dir = directoryURL(for: path).standardizedFileURL
+        let root = directory.standardizedFileURL
+        guard dir != root, dir.path.hasPrefix(root.path + "/") else { return nil }
+        return dir
+    }
+
+    /// A coordinated existence check: reports whether an item exists at `url`, coordinating the read
+    /// so it does not race the sync daemon. Keeps the "every op coordinated" invariant for the
+    /// rename clobber guard, which must not read the destination through a bare FileManager call.
+    private func coordinatedExists(at url: URL) -> Bool {
+        var exists = false
+        var coordinationError: NSError?
+        let coordinator = NSFileCoordinator()
+        coordinator.coordinate(readingItemAt: url, options: [], error: &coordinationError) { readURL in
+            exists = fileManager.fileExists(atPath: readURL.path)
+        }
+        return coordinationError == nil && exists
+    }
+
     /// Rename the folder at `path` to `newName`, keeping everything inside it (the directory moves,
     /// coordinated). Returns the sanitized new name, or nil when it sanitizes to empty or is missing.
     @discardableResult
     func renameFolder(at path: [String], to newName: String) throws -> String? {
-        guard !path.isEmpty else { return nil }
+        guard let source = resolvedFolderDirectory(for: path) else { return nil }
         let safe = Note.sanitizedFolderName(newName)
         guard !safe.isEmpty else { return nil }
-        let source = directoryURL(for: path)
         let destination = source.deletingLastPathComponent().appendingPathComponent(safe, isDirectory: true)
         guard source.standardizedFileURL != destination.standardizedFileURL else { return safe }
-        guard fileManager.fileExists(atPath: source.path) else { return nil }
-        // Never clobber an existing sibling folder: renaming onto a name that already exists would
-        // delete that folder and everything in it. Reject instead so the UI can report the conflict.
-        guard !fileManager.fileExists(atPath: destination.path) else { return nil }
+        guard coordinatedExists(at: source) else { return nil }
+        // Allow a case-only rename (e.g. "work" -> "Work"): on the case-insensitive iOS volume the
+        // source and destination are the SAME directory, so there is no other folder to clobber.
+        let caseOnly = source.standardizedFileURL.path.lowercased() == destination.standardizedFileURL.path.lowercased()
+        // Never clobber a DIFFERENT existing sibling folder: renaming onto a name already taken would
+        // delete that folder and everything in it. Reject (via a COORDINATED existence check, so the
+        // guard does not break the every-op-coordinated invariant) so the UI can report the conflict.
+        if !caseOnly {
+            guard !coordinatedExists(at: destination) else { return nil }
+        }
         try coordinatedMoveIfExists(from: source, to: destination)
         return safe
     }
 
     /// Delete the folder at `path` and everything inside it (notes, recordings, subfolders) as a
-    /// coordinated, recursive cascade. No-op if the folder does not exist.
+    /// coordinated, recursive cascade. No-op if the folder does not exist or the path does not
+    /// resolve strictly below the root (so an empty/invalid/collapsing path never deletes the tree).
     func deleteFolder(at path: [String]) throws {
-        guard !path.isEmpty else { return }
-        try coordinatedDelete(at: directoryURL(for: path))
+        guard let dir = resolvedFolderDirectory(for: path) else { return }
+        try coordinatedDelete(at: dir)
     }
 }

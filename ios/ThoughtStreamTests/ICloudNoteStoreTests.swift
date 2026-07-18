@@ -207,6 +207,72 @@ final class ICloudNoteStoreTests: XCTestCase {
         XCTAssertEqual(store.folders(at: []), ["Archive", "Work"])
     }
 
+    /// rename onto an existing sibling name is REJECTED through the coordinated store, not a clobber:
+    /// both folders and their notes survive (mirrors the local store's clobber-guard test).
+    func testRenameFolderOntoExistingNameIsRejected() throws {
+        try store.save(Note(title: "in old", paragraphs: ["A."], createdAt: Date(), folderPath: ["Old"]))
+        try store.save(Note(title: "in taken", paragraphs: ["B."], createdAt: Date(), folderPath: ["Taken"]))
+
+        XCTAssertNil(try store.renameFolder(at: ["Old"], to: "Taken"),
+                     "rename onto an existing folder must be rejected")
+
+        XCTAssertTrue(store.folders(at: []).contains("Old"))
+        XCTAssertTrue(store.folders(at: []).contains("Taken"))
+        let titles = Set(store.loadAll().map(\.title))
+        XCTAssertEqual(titles, ["in old", "in taken"])
+    }
+
+    /// A path that collapses to the ROOT ([".."], ["."], ["/"]) or is empty must never wipe or move
+    /// the whole tree through the coordinated store: delete is a no-op and rename returns nil, with a
+    /// top-level note and a real folder both surviving.
+    func testCollapsingPathsDoNotAffectWholeTree() throws {
+        let top = Note(title: "top", paragraphs: ["x"], createdAt: Date())
+        try store.save(top)
+        try store.createFolder(named: "Real", at: [])
+
+        for path in [[".."], ["."], ["/"], []] {
+            XCTAssertNoThrow(try store.deleteFolder(at: path))
+        }
+        XCTAssertNil(try store.renameFolder(at: [".."], to: "x"))
+
+        XCTAssertNotNil(store.load(id: top.id))
+        XCTAssertTrue(store.folders(at: []).contains("Real"))
+    }
+
+    /// The on-disk Markdown BYTES of a foldered note written through the iCloud store are identical
+    /// to a top-level note's (folder is a location, not a frontmatter key) - byte-compared on disk.
+    func testFolderedNoteMarkdownBytesIdenticalToTopLevel() throws {
+        let id = UUID()
+        let created = Date(timeIntervalSince1970: 1_700_000_000)
+        let top = Note(id: id, title: "Same", paragraphs: ["Body text."], createdAt: created, folderPath: [])
+        let filed = Note(id: UUID(), title: "Same", paragraphs: ["Body text."], createdAt: created,
+                         folderPath: ["Work", "Q3"])
+
+        let topURL = try store.save(top)
+        let filedURL = try store.save(filed)
+        let topBytes = try Data(contentsOf: topURL)
+        let filedBytes = try Data(contentsOf: filedURL)
+        // Same body/frontmatter modulo the id line: compare the bytes with each note's id normalized.
+        let topText = String(data: topBytes, encoding: .utf8)!
+            .replacingOccurrences(of: top.id.uuidString, with: "ID")
+        let filedText = String(data: filedBytes, encoding: .utf8)!
+            .replacingOccurrences(of: filed.id.uuidString, with: "ID")
+        XCTAssertEqual(topText, filedText, "folder is a location, not a frontmatter key")
+    }
+
+    /// A recorded note filed into a subfolder reports audioExists == true via the coordinated tree
+    /// walk (audioURL scans the tree, audioExists checks coordinated - not a bare FileManager check).
+    func testRecordedNoteInSubfolderAudioExistsViaCoordinatedWalk() throws {
+        let id = UUID()
+        let note = Note(id: id, title: "Rec", paragraphs: ["Body."], createdAt: Date(), folderPath: ["Voice"])
+        try store.save(note)
+        try store.saveAudio(from: makeTempRecording(), for: id)
+
+        let resolved = try XCTUnwrap(store.audioURL(for: id))
+        XCTAssertEqual(resolved.deletingLastPathComponent().lastPathComponent, "Voice")
+        XCTAssertTrue(store.audioExists(for: id))
+    }
+
     /// A folder created by the local store is visible to the iCloud store and vice versa (shared tree).
     func testFolderTreeSharedBetweenBackends() throws {
         let local = NoteStore(directory: tempDir)

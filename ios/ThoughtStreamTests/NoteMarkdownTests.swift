@@ -165,6 +165,50 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(note.paragraphs, ["Body text."])
     }
 
+    // MARK: - Folder name sanitizer (spec 0010, reject-not-strip)
+
+    /// The sanitizer REJECTS unsafe names whole rather than stripping characters out of them, so it
+    /// can never synthesize a traversal from otherwise-inert input (e.g. "..\t.." would collapse to
+    /// ".." under a stripping sanitizer). Each adversarial input returns "" (rejected).
+    func testSanitizedFolderNameRejectsAdversarialInputs() {
+        let rejected = [
+            "..\t..",       // tab between dots: a stripper would collapse to ".."
+            ". .",          // dots with a space
+            ". . .",
+            "..",           // parent escape
+            ".",            // self
+            "/",            // bare separator
+            "a/b",          // embedded forward separator
+            "a\\b",         // embedded backslash
+            ".hidden",      // leading dot -> hidden dir, undiscoverable by loadAll
+            "a:b",          // drive/volume separator
+            "\u{0007}bell", // control character
+            "   ",          // whitespace only -> empty after trim
+            "",             // empty
+        ]
+        for input in rejected {
+            XCTAssertEqual(Note.sanitizedFolderName(input), "",
+                           "expected \(input.debugDescription) to be rejected")
+        }
+    }
+
+    /// A control character embedded anywhere in the name (not just leading) is rejected.
+    func testSanitizedFolderNameRejectsEmbeddedControlCharacter() {
+        XCTAssertEqual(Note.sanitizedFolderName("Wo\u{0000}rk"), "")
+        XCTAssertEqual(Note.sanitizedFolderName("Line\nBreak"), "")
+    }
+
+    /// A normal name is accepted UNCHANGED (only surrounding whitespace is trimmed) and round-trips.
+    func testSanitizedFolderNameAcceptsNormalNamesUnchanged() {
+        XCTAssertEqual(Note.sanitizedFolderName("Work"), "Work")
+        XCTAssertEqual(Note.sanitizedFolderName("Book ideas"), "Book ideas")
+        // Surrounding whitespace is trimmed but the interior is preserved verbatim.
+        XCTAssertEqual(Note.sanitizedFolderName("  Book ideas  "), "Book ideas")
+        // Round-trip: an accepted name sanitizes to itself.
+        let accepted = "Book ideas"
+        XCTAssertEqual(Note.sanitizedFolderName(accepted), accepted)
+    }
+
     func testTitleWithColonIsQuotedAndRestored() throws {
         let note = Note(
             title: "Idea: travel tin",

@@ -210,12 +210,14 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(store.folders(at: ["Work"]), ["Q3"])
     }
 
-    /// createFolder sanitizes the name and rejects one that sanitizes to empty.
-    func testCreateFolderSanitizesAndRejectsEmpty() throws {
-        let name = try XCTUnwrap(try store.createFolder(named: " ../evil/name ", at: []))
-        XCTAssertEqual(name, "evilname", "separators and leading dots stripped")
-        XCTAssertTrue(store.folders(at: []).contains("evilname"))
-        // A name that is only dots/separators sanitizes to empty and is rejected.
+    /// createFolder accepts a valid trimmed name and rejects any unsafe one (reject-not-strip): a
+    /// name containing a separator or traversal is refused whole, never silently rewritten.
+    func testCreateFolderAcceptsValidRejectsUnsafe() throws {
+        let name = try XCTUnwrap(try store.createFolder(named: "  Work  ", at: []))
+        XCTAssertEqual(name, "Work", "surrounding whitespace trimmed, name kept unchanged")
+        XCTAssertTrue(store.folders(at: []).contains("Work"))
+        // A name that contains a separator or is a traversal is REJECTED, not stripped.
+        XCTAssertNil(try store.createFolder(named: " ../evil/name ", at: []))
         XCTAssertNil(try store.createFolder(named: "..", at: []))
     }
 
@@ -276,6 +278,50 @@ final class NoteStoreTests: XCTestCase {
 
     func testDeleteFolderMissingIsNoOp() {
         XCTAssertNoThrow(try store.deleteFolder(at: ["Nope"]))
+    }
+
+    /// A path that sanitizes/collapses to the ROOT ([".."], ["."], ["/"]) or is empty must NEVER wipe
+    /// the whole tree: deleteFolder is a safe no-op and both a top-level note and a real folder
+    /// survive.
+    func testDeleteFolderCollapsingPathsAreNoOps() throws {
+        let top = Note(title: "top", paragraphs: ["x"], createdAt: Date())
+        try store.save(top)
+        try store.createFolder(named: "Real", at: [])
+
+        for path in [[".."], ["."], ["/"], []] {
+            XCTAssertNoThrow(try store.deleteFolder(at: path))
+        }
+
+        // The whole tree is intact.
+        XCTAssertNotNil(store.load(id: top.id))
+        XCTAssertTrue(store.folders(at: []).contains("Real"))
+    }
+
+    /// A rename keyed off a collapsing path ([".."]) returns nil and never moves the whole tree.
+    func testRenameFolderCollapsingPathReturnsNilAndTreeIntact() throws {
+        let top = Note(title: "top", paragraphs: ["x"], createdAt: Date())
+        try store.save(top)
+        try store.createFolder(named: "Real", at: [])
+
+        XCTAssertNil(try store.renameFolder(at: [".."], to: "x"))
+
+        XCTAssertNotNil(store.load(id: top.id))
+        XCTAssertTrue(store.folders(at: []).contains("Real"))
+    }
+
+    /// A case-only rename ("work" -> "Work") succeeds on the case-insensitive volume and preserves
+    /// the note inside, rather than being falsely rejected by the clobber guard.
+    func testCaseOnlyFolderRenameSucceeds() throws {
+        let note = Note(title: "kept", paragraphs: ["Body."], createdAt: Date(), folderPath: ["work"])
+        try store.save(note)
+
+        let newName = try XCTUnwrap(try store.renameFolder(at: ["work"], to: "Work"))
+        XCTAssertEqual(newName, "Work")
+
+        let all = store.loadAll()
+        XCTAssertEqual(all.count, 1)
+        XCTAssertEqual(all.first?.title, "kept")
+        XCTAssertEqual(all.first?.folderPath.map { $0.lowercased() }, ["work"])
     }
 
     /// Write a stand-in recording to a temp file the store will move into place.

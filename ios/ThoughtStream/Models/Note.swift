@@ -210,25 +210,35 @@ extension Note {
 // MARK: - Folders (spec 0010)
 
 extension Note {
-    /// Sanitize a user-entered folder name so it cannot escape the note tree. Strips any path
-    /// separator (`/`, `\`) and leading dots (so a name can never be `.`, `..`, or a hidden entry),
-    /// then trims surrounding whitespace. Returns an empty string when nothing usable remains, which
-    /// callers treat as "not a valid folder name" (a create is rejected, not silently rooted).
+    /// Sanitize a user-entered folder name so it cannot escape the note tree. This REJECTS unsafe
+    /// names rather than STRIPPING characters out of them: a stripping sanitizer can synthesize a
+    /// traversal from otherwise-inert input (e.g. `"..\t.."` would collapse to `".."`), so instead
+    /// we trim surrounding whitespace/newlines and then return the trimmed name UNCHANGED, or `""`
+    /// (rejected) when the trimmed name is unsafe in any way. Callers treat `""` as "not a valid
+    /// folder name" (a create is rejected, not silently rooted).
     ///
-    /// This is the single guard the storage layer relies on: because a sanitized name has no
-    /// separator and no leading dot, joining `directory` with a chain of sanitized names can only
-    /// ever descend into a real subdirectory of the tree - never `..` up and out, never an absolute
-    /// path, never a hidden file.
+    /// A trimmed name is rejected when it: is empty; equals `.` or `..` (parent/self escape);
+    /// startsWith `.` (a hidden dir is skipped by `loadAll`'s `.skipsHiddenFiles` and would be
+    /// undiscoverable); or contains a path separator (`/`, `\`), a drive/volume separator (`:`), or
+    /// any control character or newline.
+    ///
+    /// This is the single guard the storage layer relies on: because an accepted name has no
+    /// separator, no leading dot, and is not `.`/`..`, joining `directory` with a chain of accepted
+    /// names can only ever descend into a real subdirectory of the tree - never `..` up and out,
+    /// never an absolute path, never a hidden file.
     static func sanitizedFolderName(_ raw: String) -> String {
-        var name = raw
-            .replacingOccurrences(of: "/", with: "")
-            .replacingOccurrences(of: "\\", with: "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        // Drop leading dots so a name cannot become "." / ".." (parent escape) or a hidden entry.
-        while name.hasPrefix(".") {
-            name.removeFirst()
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "" }
+        if name == "." || name == ".." { return "" }
+        if name.hasPrefix(".") { return "" }
+        let forbidden: Set<Character> = ["/", "\\", ":"]
+        for character in name.unicodeScalars {
+            if forbidden.contains(Character(character)) { return "" }
+            // Reject any control character (includes newline, tab, and other C0/C1 controls) so a
+            // name can never smuggle in a separator-like or invisible character.
+            if character.properties.generalCategory == .control { return "" }
         }
-        return name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name
     }
 
     /// A copy of this note relocated to `folderPath`. The store uses it on load to tag a note with

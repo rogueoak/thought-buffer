@@ -93,11 +93,27 @@ struct NoteStore: NoteStoring {
         try ensureDirectory(at: destinationDir)
         let destination = destinationDir.appendingPathComponent("\(note.id.uuidString).md", isDirectory: false)
 
-        // A note being re-filed: find where its file lives now. When that is a DIFFERENT directory
-        // than the destination, this save is a move - relocate the sibling recording and remove the
-        // old `.md`, so nothing stale is left behind.
-        if let existing = locateFile(id: note.id),
-           existing.deletingLastPathComponent().standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL {
+        // Capture where the note's file lives NOW, before writing anything: a re-file is a move only
+        // when an existing file sits in a different directory than the destination.
+        let existing = locateFile(id: note.id)
+        let isMove = existing.map {
+            $0.deletingLastPathComponent().standardizedFileURL != destination.deletingLastPathComponent().standardizedFileURL
+        } ?? false
+
+        // Write the new `.md` to the destination FIRST, so the note is never without a `.md`: a
+        // partial failure below leaves the note readable at its new home rather than stranded.
+        try note.markdown.write(to: destination, atomically: true, encoding: .utf8)
+        // Protect the note at rest: encrypted when the device is locked, but readable while the
+        // file is already open (so a session that spans a lock is not cut off).
+        try fm.setAttributes(
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
+            ofItemAtPath: destination.path
+        )
+
+        // Only after the new `.md` exists do we complete a move: relocate the sibling recording from
+        // the old directory to the new one, then remove the old `.md` LAST. A failure at any earlier
+        // point never orphans audio or strands the note with no `.md`.
+        if isMove, let existing {
             let existingDir = existing.deletingLastPathComponent()
             let audioName = "\(note.id.uuidString).\(Self.audioFileExtension)"
             let oldAudio = existingDir.appendingPathComponent(audioName, isDirectory: false)
@@ -108,14 +124,6 @@ struct NoteStore: NoteStoring {
             }
             try fm.removeItem(at: existing)
         }
-
-        try note.markdown.write(to: destination, atomically: true, encoding: .utf8)
-        // Protect the note at rest: encrypted when the device is locked, but readable while the
-        // file is already open (so a session that spans a lock is not cut off).
-        try fm.setAttributes(
-            [.protectionKey: FileProtectionType.completeUnlessOpen],
-            ofItemAtPath: destination.path
-        )
         return destination
     }
 
@@ -259,29 +267,47 @@ struct NoteStore: NoteStoring {
         return safe
     }
 
+    /// Resolve `path` to a folder directory that is STRICTLY BELOW the root, or nil when the path is
+    /// empty, invalid, collapsing, or escaping. This is the guard that keeps a destructive folder op
+    /// from ever operating on the whole tree: because rejected name components sanitize to `""` and
+    /// are skipped in `directoryURL(for:)`, a path like `[".."]`, `["."]`, or `["/"]` would collapse
+    /// to the ROOT - so a delete/rename keyed off it could wipe or move everything. Returning nil
+    /// unless the resolved directory sits strictly under the root turns those into safe no-ops.
+    private func resolvedFolderDirectory(for path: [String]) -> URL? {
+        let dir = directoryURL(for: path).standardizedFileURL
+        let root = directory.standardizedFileURL
+        guard dir != root, dir.path.hasPrefix(root.path + "/") else { return nil }
+        return dir
+    }
+
     /// Rename the folder at `path` to `newName`, keeping everything inside it (the directory moves).
     @discardableResult
     func renameFolder(at path: [String], to newName: String) throws -> String? {
-        guard !path.isEmpty else { return nil }
+        guard let source = resolvedFolderDirectory(for: path) else { return nil }
         let safe = Note.sanitizedFolderName(newName)
         guard !safe.isEmpty else { return nil }
-        let source = directoryURL(for: path)
         let destination = source.deletingLastPathComponent().appendingPathComponent(safe, isDirectory: true)
         guard source.standardizedFileURL != destination.standardizedFileURL else { return safe }
         let fm = FileManager.default
         guard fm.fileExists(atPath: source.path) else { return nil }
-        // Never clobber an existing sibling folder: renaming onto a name that already exists would
+        // Allow a case-only rename (e.g. "work" -> "Work"): on the case-insensitive iOS volume the
+        // source and destination are the SAME directory, so there is no other folder to clobber.
+        let caseOnly = source.standardizedFileURL.path.lowercased() == destination.standardizedFileURL.path.lowercased()
+        // Never clobber a DIFFERENT existing sibling folder: renaming onto a name already taken would
         // delete that folder and everything in it. Reject instead so the UI can report the conflict.
-        guard !fm.fileExists(atPath: destination.path) else { return nil }
+        if !caseOnly {
+            guard !fm.fileExists(atPath: destination.path) else { return nil }
+        }
         try fm.moveItem(at: source, to: destination)
         return safe
     }
 
     /// Delete the folder at `path` and everything inside it (notes, recordings, subfolders). No-op if
-    /// the folder does not exist. `removeItem` on the directory cascades to its whole subtree.
+    /// the folder does not exist or the path does not resolve strictly below the root (so an
+    /// empty/invalid/collapsing path never deletes the whole tree). `removeItem` on the directory
+    /// cascades to its whole subtree.
     func deleteFolder(at path: [String]) throws {
-        guard !path.isEmpty else { return }
-        let dir = directoryURL(for: path)
+        guard let dir = resolvedFolderDirectory(for: path) else { return }
         if FileManager.default.fileExists(atPath: dir.path) {
             try FileManager.default.removeItem(at: dir)
         }
