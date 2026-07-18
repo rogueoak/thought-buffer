@@ -136,6 +136,11 @@ final class DictationViewModel: ObservableObject {
     let controlWord: String
     private var createdAt = Date()
     private var noteID = UUID()
+    /// The folder the note is saved into (spec 0010). A fresh session is created at the TOP LEVEL
+    /// (empty) - notes are filed into folders afterward via PR B's move action. A RESUMED note keeps
+    /// the folder it already lives in, so continuing it re-saves it in place rather than yanking it
+    /// back to the root. Reset to top level when "new note" starts a fresh note mid-session.
+    private var folderPath: [String] = []
 
     /// A user-set title carried over when RESUMING a note (spec 0009). A fresh session always
     /// auto-derives its title, but resuming a note the user titled must keep that title rather than
@@ -194,6 +199,9 @@ final class DictationViewModel: ObservableObject {
             paragraphs = resuming.paragraphs
             paragraphTimings = Self.seedTimings(for: resuming)
             existingAudioFileName = resuming.audioFileName
+            // Keep the resumed note in the folder it already lives in, so continuing it re-saves in
+            // place rather than relocating it to the top level.
+            folderPath = resuming.folderPath
             // Keep a user-set title through the resume (spec 0009); a derived title re-derives normally.
             if resuming.hasCustomTitle {
                 hasCustomTitle = true
@@ -315,6 +323,24 @@ final class DictationViewModel: ObservableObject {
             ? (customTitle ?? Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt))
             : Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
 
+        // Save the note FILE FIRST, before adopting any recording (spec 0010). The store places the
+        // recording BESIDE the note's `.md` (it locates the note file to find the folder), so the
+        // `.md` must exist in its folder before the `.m4a` is moved in - otherwise, with subfolders,
+        // the recording would land at the root instead of beside its note. A text-only note is written
+        // now; if a recording is then adopted, the note is re-saved with its audio metadata. The file
+        // is already in the note's `folderPath`, so the re-save is an in-place overwrite, not a move.
+        let textOnlyNote = Note(
+            id: noteID,
+            title: title,
+            paragraphs: paragraphs,
+            createdAt: createdAt,
+            hasCustomTitle: hasCustomTitle,
+            audioFileName: nil,
+            timings: [],
+            folderPath: folderPath
+        )
+        try store.save(textOnlyNote)
+
         // Only the FINAL note (Stop) adopts the recording: mid-session "new note" saves text-only,
         // because the one continuous session file is not finalized until Stop. Never discard the
         // recording here - the writer may still be live for a following note; `finish()` owns
@@ -335,6 +361,10 @@ final class DictationViewModel: ObservableObject {
             timings = resolvedTimings()
         }
 
+        // No recording to attach: the text-only note already on disk is the final note.
+        guard audioFileName != nil else { return textOnlyNote }
+
+        // Re-save with the recording metadata now that the `.m4a` sits beside the `.md`.
         let note = Note(
             id: noteID,
             title: title,
@@ -342,7 +372,8 @@ final class DictationViewModel: ObservableObject {
             createdAt: createdAt,
             hasCustomTitle: hasCustomTitle,
             audioFileName: audioFileName,
-            timings: timings
+            timings: timings,
+            folderPath: folderPath
         )
         try store.save(note)
         return note
@@ -597,6 +628,8 @@ final class DictationViewModel: ObservableObject {
         partial = ""
         noteID = UUID()
         createdAt = Date()
+        // A fresh note is created at the top level; it is filed into a folder afterward (spec 0010).
+        folderPath = []
         // Clear the resumed note's recording reference too: the just-saved note kept it, but the fresh
         // note is a NEW recording (or none). Leaving it set would attach the original recording to the
         // new note on Stop, so two notes would point at the same file (engineer review, feedback 0008).

@@ -77,6 +77,29 @@ final class DictationViewModelTests: XCTestCase {
                        "a non-custom note must re-derive, not carry over the stored title")
     }
 
+    func testResumingFolderedNoteReSavesInSameFolder() throws {
+        // Spec 0010: continuing a note that lives in a folder must re-save it in place, not yank it
+        // back to the top level.
+        let original = Note(
+            title: "In work",
+            paragraphs: ["Original."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            folderPath: ["Work"]
+        )
+        try store.save(original)
+
+        let model = DictationViewModel(store: store, resuming: original)
+        model.injectFinalized("Appended.")
+        let saved = try XCTUnwrap(try model.finish())
+
+        // The reloaded note is still in Work, with the appended paragraph.
+        let reloaded = try XCTUnwrap(store.load(id: saved.id))
+        XCTAssertEqual(reloaded.folderPath, ["Work"])
+        XCTAssertEqual(reloaded.paragraphs, ["Original.", "Appended."])
+        // And only one file exists (no stale copy at the root).
+        XCTAssertEqual(store.loadAll().count, 1)
+    }
+
     func testFinishWithNothingCapturedSavesNothing() throws {
         let model = DictationViewModel(store: store)
         XCTAssertNil(try model.finish())

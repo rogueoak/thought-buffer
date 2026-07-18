@@ -299,6 +299,57 @@ time source (a `TimelineView` or a ticking reference), or it drifts silently on 
 put; and when two screens share the same time-derived code but disagree, suspect render lifetime
 (one is rebuilt, one is not) before suspecting the data.
 
+## Make a location positional, not a serialized field, and let a re-save be the move (spec 0010)
+
+Grouping notes into folders is a STORAGE LOCATION, so it belongs in WHERE the file sits, not in the
+file's bytes. Modeling `Note.folderPath` as a positional directory (derived on load from the relative
+path, consumed on save to place the file) - never a frontmatter key - keeps the Markdown byte-identical
+between a top-level and a foldered note, so every existing file, other app, and the cross-backend
+"either store reads either file" invariant is untouched (proved with a bytes-equal test). Two shape
+choices made the rest cheap and non-rippling. First: a note being re-filed is just a `save` with a new
+`folderPath`; `save` detects the change (its file is located in a different directory than the
+destination) and relocates BOTH the `.md` and the sibling `.m4a`, deleting the old copies, so the move
+leaves nothing behind - there is no separate "move" API to keep in sync. Second: keep the id-only audio
+surface (`audioURL`/`saveAudio`/`deleteAudio`/`audioExists`) id-only by having them SCAN the tree for
+`<id>.md` (`locateFile`), so the folder feature does not widen the `NoteStoring` seam and nothing
+downstream (the `AudioURLResolving` resolver, playback controller, recordings browser) changes or even
+recompiles differently. A consequence for the writer ordering: because audio now lands BESIDE the
+located note file, the note `.md` must be written to its folder BEFORE its recording is adopted -
+otherwise, with subfolders, `locateFile` finds nothing and the recording falls back to the root. And
+mirror every new tree walk / move / cascade / dir-create through `NSFileCoordinator` on the iCloud
+path, exactly as the existing file IO, or a folder op races the sync daemon. Generalizes: when a
+feature is really "where does this artifact live", encode it as position and let the existing
+save/scan operations carry it, rather than adding a field, a second API, and a wider seam.
+
+## A rename/move onto an occupied name must reject, not overwrite (spec 0010)
+
+The first `renameFolder` did `if destination exists { removeItem(destination) }` before moving - so
+renaming folder "A" to "B" when "B" already existed silently DELETED B and everything in it. A
+"replace" is the right primitive when the destination is the SAME logical object (overwriting a note's
+own `<id>.m4a` on a re-save), but WRONG when it is a different one (a sibling folder that happens to
+share the target name): there the safe answer is to reject the operation and let the UI report the
+conflict, never to cascade-delete a bystander. The tell is destructive teardown guarded only by "does
+a file exist at the path", with no check on WHOSE file it is. Generalizes to any move/rename/import
+that writes to a user-chosen name: distinguish "overwrite my own prior version" from "collide with
+someone else's", and only the former may delete.
+
+## Sanitize an untrusted name by rejection, not stripping - and guard the resolved path too (spec 0010)
+
+Folder names are user input that becomes a real filesystem path feeding recursive DELETE/move. The
+first sanitizer STRIPPED unsafe bits (leading dots, then trimmed whitespace) - and stripping can
+SYNTHESIZE the very thing it removes: `"..\t.."` stripped down to `".."`, a live parent-directory
+traversal out of the app container. A subtractive filter over a set of "bad" fragments is a trap,
+because a residue of two bad fragments can be a third. Sanitize by REJECTION instead: define what a
+valid single path component is (non-empty, not `.`/`..`, no leading dot, no separator `/`\`:`, no
+control/newline) and return "rejected" for anything else - never try to launder a bad name into a
+good one. Then, because even a correct name-sanitizer returns "" for a rejected component and the
+join can SKIP it and collapse a crafted path (`[".."]`) back to the ROOT, add a second, independent
+guard at the destructive op: resolve the final URL and refuse it unless it is strictly BELOW the root
+(`dir != root && dir.path.hasPrefix(root.path + "/")`), so `deleteFolder`/`renameFolder` can never
+target the whole tree or anything outside it. Two layers: reject bad names at the source, and gate the
+resolved path at every recursive delete/move. Generalizes to any untrusted string that becomes a path,
+a key, or a query fed to a destructive or escaping operation.
+
 ## Two concurrent edit modes over one model must be mutually exclusive (spec 0009)
 
 The note page grew a second inline editor (title) beside the existing one (body). Each had its own
