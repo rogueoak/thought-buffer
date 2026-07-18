@@ -45,7 +45,10 @@ Three refinements from using the app on device. No capture or storage change.
 3. Refresh the card's relative-time label over time and against a live reference: wrap it in a
    `TimelineView(.periodic(by: 60))` and pass `context.date` as the `relativeTo` reference, so the
    label recomputes every minute and is never frozen. Tighten the clock glyph against its text with a
-   small custom icon+text pairing (spacing `x1`) instead of the default `Label` gap.
+   small custom icon+text pairing (spacing `x1`) instead of the default `Label` gap. Apply the same
+   `TimelineView` fix to `NoteDetailView`'s timestamp (engineer review): it shared the identical defect
+   and only looked correct because the detail page is rebuilt on each navigation - it would freeze if
+   the page stayed open.
 
 ## Learning
 

@@ -65,7 +65,12 @@ struct NoteDetailView: View {
                 VStack(alignment: .leading, spacing: CanopySpacing.x4) {
                     HStack(spacing: CanopySpacing.x2) {
                         Image(systemName: "clock")
-                        Text(RelativeTime.label(for: note.createdAt))
+                        // Same live-reference fix as the note card (feedback 0011): without a
+                        // TimelineView this label freezes at render and only looked correct because the
+                        // detail page is rebuilt on each navigation - it would go stale if left open.
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            Text(RelativeTime.label(for: note.createdAt, relativeTo: context.date))
+                        }
                         Text("-")
                         // Recording duration for a recorded note, else word count (feedback 0010).
                         Text(currentNote.metaStatLabel)
