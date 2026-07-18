@@ -27,7 +27,17 @@ struct NoteCard: View {
                 .multilineTextAlignment(.leading)
 
             HStack(spacing: CanopySpacing.x3) {
-                Label(RelativeTime.label(for: note.createdAt), systemImage: "clock")
+                // Relative time must carry a time dependency or it FREEZES at render (feedback 0011):
+                // SwiftUI has no wall-clock trigger, so a "3 min ago" written just after save stayed
+                // "3 min ago" (which read as the note's own length). A `TimelineView` re-evaluates the
+                // label every minute against a live `context.date`, so the list never goes stale. The
+                // glyph is paired tight (`x1`) with its text instead of the default Label gap.
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    HStack(spacing: CanopySpacing.x1) {
+                        Image(systemName: "clock")
+                        Text(RelativeTime.label(for: note.createdAt, relativeTo: context.date))
+                    }
+                }
                 // Duration for a recorded note (timer glyph), word count otherwise (feedback 0010).
                 Label(note.metaStatLabel, systemImage: note.hasAudio ? "timer" : "text.alignleft")
                 // A small play affordance so a note with a recording is discoverable at a glance

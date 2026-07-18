@@ -277,6 +277,22 @@ Three UI-clarity refinements from using the app (no capture or storage change):
   a Done button (shown only while editing) commits. The record-screen paused-Edit affordance is
   unchanged.
 
+## Home and note UX polish, round 2 (feedback 0011)
+
+Three more refinements from using the app (no capture or storage change):
+
+- **Recordings filter removed** - the Thoughts toolbar no longer carries the recordings-only toggle
+  (added feedback 0008, labeled feedback 0010); it was a rarely-used mode switch on the home screen.
+  Recorded notes are still obvious inline (each shows its play affordance and duration), and the
+  CarPlay recordings browser is unchanged.
+- **Mic + gear on the note page** - a note's detail page now has the same mic (start a new thought)
+  and gear (Settings) as the Stream list, so a new thought is one tap from anywhere. The mic requests
+  a session through the shared route the list uses; both are hidden while editing text.
+- **Timestamp no longer goes stale** - the note card's "x mins ago" used to freeze at render (it read
+  roughly the note's own recording length right after saving) because a SwiftUI label built from the
+  current time has no wall-clock dependency to refresh on. It is now wrapped in a `TimelineView` that
+  recomputes every minute against a live reference, and sits tighter to its clock glyph.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires

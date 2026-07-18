@@ -282,3 +282,19 @@ and the design was pinned in a spec while the exact new-API signatures were veri
 installed SDK's `.swiftinterface` before writing code, not guessed. Generalizes: isolate volatile
 platform dependencies behind a seam with consumer-side tests, and periodically ask whether a hard
 problem is inherent or just an artifact of an API that predates a better one.
+
+## A SwiftUI label built from "now" is frozen at render, not live (feedback 0011)
+
+The note card's "x mins ago" read the note's own recording length and never updated, while the same
+code in the detail view looked correct. There was no data difference: `RelativeTime.label(for:)`
+defaults its reference to `Date()` and is evaluated ONCE when the view body is built. SwiftUI has no
+wall-clock dependency to invalidate on, so the string freezes - and the list most recently rendered
+right after a save, when time-since-`createdAt` (captured at session start) is about the recording's
+duration. The detail view only looked right because it is reconstructed on each navigation, so it
+recomputes against a fresh now - which MASKED the bug (the buggy screen was the long-lived one, the
+"correct" screen was just freshly built). The fix gives the label an explicit time dependency: a
+`TimelineView(.periodic(by: 60))` re-evaluating against `context.date`. Generalizes: any UI that is a
+function of the current time - relative timestamps, countdowns, "expires in", elapsed - must carry a
+time source (a `TimelineView` or a ticking reference), or it drifts silently on any screen that stays
+put; and when two screens share the same time-derived code but disagree, suspect render lifetime
+(one is rebuilt, one is not) before suspecting the data.

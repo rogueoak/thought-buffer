@@ -8,6 +8,13 @@ struct NoteDetailView: View {
     let note: Note
     @StateObject private var playback: NotePlaybackModel
 
+    /// Called when the user taps the toolbar mic to start a fresh thought (feedback 0011), so the
+    /// composition root requests a new session through the same route the list uses. Nil at
+    /// bare/preview call sites (no mic shown).
+    private let onNewThought: (() -> Void)?
+    /// Called when the user taps the toolbar gear (feedback 0011), so the composition root opens
+    /// Settings. Nil at bare/preview call sites (no gear shown).
+    private let onOpenSettings: (() -> Void)?
     /// Called with the current note when the user taps Resume, so the composition root can reopen a
     /// recording session seeded with it. Nil at bare/preview call sites (no Resume affordance shown).
     private let onResume: ((Note) -> Void)?
@@ -33,10 +40,14 @@ struct NoteDetailView: View {
         resolver: AudioURLResolving,
         player: AudioNotePlayer? = nil,
         controller: NotePlaybackController? = nil,
+        onNewThought: (() -> Void)? = nil,
+        onOpenSettings: (() -> Void)? = nil,
         onResume: ((Note) -> Void)? = nil,
         onCommitEdit: ((Note) -> Void)? = nil
     ) {
         self.note = note
+        self.onNewThought = onNewThought
+        self.onOpenSettings = onOpenSettings
         self.onResume = onResume
         self.onCommitEdit = onCommitEdit
         _paragraphs = State(initialValue: note.paragraphs)
@@ -54,7 +65,12 @@ struct NoteDetailView: View {
                 VStack(alignment: .leading, spacing: CanopySpacing.x4) {
                     HStack(spacing: CanopySpacing.x2) {
                         Image(systemName: "clock")
-                        Text(RelativeTime.label(for: note.createdAt))
+                        // Same live-reference fix as the note card (feedback 0011): without a
+                        // TimelineView this label freezes at render and only looked correct because the
+                        // detail page is rebuilt on each navigation - it would go stale if left open.
+                        TimelineView(.periodic(from: .now, by: 60)) { context in
+                            Text(RelativeTime.label(for: note.createdAt, relativeTo: context.date))
+                        }
                         Text("-")
                         // Recording duration for a recorded note, else word count (feedback 0010).
                         Text(currentNote.metaStatLabel)
@@ -123,6 +139,29 @@ struct NoteDetailView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") { commitEdit() }
                         .tint(CanopyColor.primary)
+                }
+            }
+            // Mic + gear on the note page (feedback 0011): start a new thought or open Settings in one
+            // tap, mirroring the Stream toolbar. Hidden while editing (Done owns the trailing slot then)
+            // and only where the call site can act on them.
+            if !isEditing {
+                if let onNewThought {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: onNewThought) {
+                            Image(systemName: "mic.fill")
+                        }
+                        .tint(CanopyColor.primary)
+                        .accessibilityLabel("Start a new thought")
+                    }
+                }
+                if let onOpenSettings {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: onOpenSettings) {
+                            Image(systemName: "gearshape")
+                        }
+                        .tint(CanopyColor.primary)
+                        .accessibilityLabel("Settings")
+                    }
                 }
             }
         }
