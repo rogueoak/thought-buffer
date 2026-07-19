@@ -137,18 +137,23 @@ struct FolderThoughtsView: View {
     /// 0026); the search-results list drops the title (the query is the context there).
     private func thoughtList(_ rows: [Thought], showTitle: Bool) -> some View {
         List {
+            // The title sits ABOVE the unified card (Notes-app style), as its own chrome-free header row so
+            // the grouped container below holds ONLY the thought rows (feedback 0025).
             if showTitle {
                 StreamListTitleRow(title: subject.title)
             }
-            if showTitle, rows.isEmpty {
-                EmptyFolderRow(subject: subject)
-            }
-            ForEach(rows) { thought in
-                thoughtRow(thought: thought)
+            // The thoughts (or the inline empty-folder message) form ONE unified inset card: surface + border
+            // + rounded corners wrap the whole section, rows separated by hairline dividers (feedback 0025).
+            Section {
+                if showTitle, rows.isEmpty {
+                    EmptyFolderRow(subject: subject)
+                }
+                ForEach(rows) { thought in
+                    thoughtRow(thought: thought)
+                }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        .unifiedList()
     }
 
     private func thoughtRow(thought: Thought) -> some View {
@@ -213,6 +218,7 @@ private struct EmptyFolderRow: View {
             .font(.system(size: CanopyFont.sizeSm))
             .foregroundStyle(CanopyColor.textMuted)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .tightRowInsets()
+            .padding(CanopySpacing.x4)
+            .unifiedRow()
     }
 }

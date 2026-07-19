@@ -1,9 +1,11 @@
 import SwiftUI
 
 /// A single folder row in the Thoughts list (spec 0010), styled to match `ThoughtCard`: the same
-/// surface, border, radius, and padding, with a folder glyph, the folder name, a descendant-thought
-/// count, and a trailing chevron (the row navigates into the folder, so a chevron is the right
-/// affordance here).
+/// padding, with a folder glyph, the folder name, a descendant-thought count, and a trailing chevron
+/// (the row navigates into the folder, so a chevron is the right affordance here).
+///
+/// Feedback 0025 (unified list): the surface / border / rounded-corner chrome moved off this row onto the
+/// whole list container (Notes-app-style grouped list), so only the row CONTENT lives here now.
 ///
 /// The count label is a flattened thought count (e.g. "3 thoughts"), computed and pluralized in
 /// `TopLevelFolders` by the view that already holds the thoughts - the row stays a pure render.
@@ -36,11 +38,5 @@ struct FolderRow: View {
         }
         .padding(CanopySpacing.x4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(CanopyColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
-                .stroke(CanopyColor.border, lineWidth: 1)
-        )
     }
 }

@@ -1,8 +1,12 @@
 import SwiftUI
 
-/// A single thought card in the Stream list: title, two-line snippet, timestamp, the thought's stat
-/// (recording duration when it has audio, else word count - feedback 0010), a play affordance when
-/// the thought has audio, and a small primary accent dot.
+/// A single thought ROW in the Stream list (feedback 0025): title, two-line snippet, timestamp, the
+/// thought's stat (recording duration when it has audio, else word count - feedback 0010), a play
+/// affordance when the thought has audio, and a small primary accent dot.
+///
+/// Feedback 0025 (unified list): the surface / border / rounded-corner CHROME moved off this row and onto
+/// the whole list container (Notes-app-style grouped list), so rows are separated by hairline dividers
+/// inside one inset card rather than each floating as its own card. Only the row CONTENT lives here now.
 struct ThoughtCard: View {
     let thought: Thought
 
@@ -45,11 +49,5 @@ struct ThoughtCard: View {
         }
         .padding(CanopySpacing.x4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(CanopyColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
-                .stroke(CanopyColor.border, lineWidth: 1)
-        )
     }
 }
