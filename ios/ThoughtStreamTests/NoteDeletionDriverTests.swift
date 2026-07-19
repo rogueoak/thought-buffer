@@ -36,16 +36,22 @@ final class NoteDeletionDriverTests: XCTestCase {
         await feed.reload()
         XCTAssertEqual(feed.notes.count, 1)
 
+        let genBeforeDelete = feed.reloadGeneration
         let deleted = await feed.delete(id: id)
         let token = try XCTUnwrap(deleted)
         XCTAssertEqual(token.formerFolderPath, ["Work"])
         XCTAssertEqual(feed.notes.count, 0, "delete removes the note from the list")
         XCTAssertFalse(feed.deleteFailed)
+        XCTAssertGreaterThan(feed.reloadGeneration, genBeforeDelete,
+                             "delete republishes the list, bumping the change token")
 
+        let genBeforeRestore = feed.reloadGeneration
         await feed.restore(token)
         XCTAssertEqual(feed.notes.count, 1, "restore re-inserts the note")
         XCTAssertEqual(feed.notes.first?.folderPath, ["Work"])
         XCTAssertTrue(store.audioExists(for: id), "restore brings the audio back too")
+        XCTAssertGreaterThan(feed.reloadGeneration, genBeforeRestore,
+                             "restore republishes the list, bumping the change token")
     }
 
     /// Purging a deleted note's token removes it permanently: after purge, restore recovers nothing and

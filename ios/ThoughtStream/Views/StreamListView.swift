@@ -41,6 +41,11 @@ struct StreamListView: View {
     /// gesture offers "Undo Delete". SwiftUI provides it through the environment; keeping
     /// `applicationSupportsShakeToEdit` at its default (true) is what makes the shake surface it.
     @Environment(\.undoManager) private var undoManager
+    /// The scene phase, watched so a pending delete is COMMITTED when the app backgrounds (spec 0020):
+    /// the undo window is a wall-clock affordance, and leaving a delete un-committed across a
+    /// background/resume would keep trash around indefinitely (the timer is view-lifecycle-tied, not a
+    /// background task). Committing on background makes "the window elapsed" cover backgrounding too.
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var sessionRoute: PendingSessionRoute
     @State private var showSettings = false
     /// The navigation stack path, a list of `StreamRoute`. A finished recording / resume sets this to
@@ -221,6 +226,11 @@ struct StreamListView: View {
         // on the list even for a delete initiated from the note detail. Tapping Undo restores; letting
         // the ~5s window elapse commits the delete (purges the trashed files). Lifecycle-tied like the
         // copied-confirmation chip (no detached timer). Pinned near the bottom, clear of the toolbar.
+        //
+        // SPEC 0021 FOLLOW-UP: this overlay is pinned `.bottom` with a hardcoded `CanopySpacing.x8`
+        // clearance (in `UndoDeleteAffordanceModifier`). When spec 0021 adds the persistent bottom bar,
+        // this must be reconciled with that bar / now-playing safe-area inset so the chip does not
+        // collide with or hide behind it - move the clearance onto the shared bottom inset then.
         .undoDeleteAffordance(
             trigger: deletion.deleteTrigger,
             isPending: deletion.pending != nil,
@@ -232,6 +242,13 @@ struct StreamListView: View {
         // Synced on appear and whenever SwiftUI swaps it in (it can be nil before the scene is ready).
         .onAppear { deletion.undoManager = undoManager }
         .onChange(of: undoManager == nil) { _, _ in deletion.undoManager = undoManager }
+        // Commit any pending delete when the app leaves the foreground (spec 0020): the undo window is a
+        // wall-clock affordance whose timer is view-lifecycle-tied, so backgrounding must close it rather
+        // than leave the note un-committed in trash across a resume. Idempotent - a no-op with nothing
+        // pending.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active { Task { await deletion.commitWindow() } }
+        }
         // Persist the sort choice whenever it changes, so it survives a launch (spec 0010).
         .onChange(of: sortOrder) { _, newValue in settingsStore.noteSortOrder = newValue }
         .task {

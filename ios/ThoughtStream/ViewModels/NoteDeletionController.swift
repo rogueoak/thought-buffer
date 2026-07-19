@@ -33,12 +33,14 @@ final class NoteDeletionController: ObservableObject {
     /// visible beyond the delete when the store returned no token (nothing trashed, or the delete failed
     /// - the feed surfaces that separately via `deleteFailed`).
     func delete(id: UUID) async {
-        // Committing any previously pending delete first: a new delete starts a fresh undo window, so the
-        // prior one is past its chance to be undone in-app. (Shake could still target it until the
-        // UndoManager coalesces, but the in-app single-step affordance only tracks the latest.)
+        // CAPTURE-AND-CLEAR the previous pending SYNCHRONOUSLY, before any await: a new delete starts a
+        // fresh undo window, so the prior one is committed. Reading `pending` and only clearing it after
+        // the `await feed.purge` returned would let a rapid second delete read the same stale token and
+        // strand the loser's trash with no in-app undo and no timer to purge it (same shape as undo()/
+        // commitWindow()). Clearing first makes the two deletes commit distinct tokens.
         if let previous = pending {
-            await feed.purge(previous)
             pending = nil
+            await feed.purge(previous)
         }
         guard let token = await feed.delete(id: id) else { return }
         registerUndo(for: token)
@@ -46,22 +48,30 @@ final class NoteDeletionController: ObservableObject {
         deleteTrigger &+= 1
     }
 
-    /// Undo the pending delete: restore the note (to root if its folder is gone) and clear the pending
-    /// window so its timer no longer purges. Called by the in-app Undo button and by the UndoManager on a
-    /// shake. Registers the inverse (a redo that re-deletes) so shake redo works too.
+    /// Undo the pending delete (the in-app Undo button). Routes through the `UndoManager` so its stack
+    /// pops in lockstep with the in-app channel - a later shake then has nothing stale to re-run. When no
+    /// manager is present (a scene without one, or a test) it restores directly instead. Either way the
+    /// pending window is captured-and-cleared synchronously so its timer no longer purges.
     func undo() async {
         guard let token = pending else { return }
+        if let undoManager, undoManager.canUndo {
+            // The manager's undo runs `undoDelete(token)`, which clears `pending` and restores. Going
+            // through it keeps the shake channel and the in-app channel on ONE undo stack.
+            undoManager.undo()
+            return
+        }
         pending = nil
         await feed.restore(token)
-        registerRedo(for: token)
     }
 
     /// Close the undo window: PURGE the pending trashed files permanently (commit the delete) and clear
-    /// the pending state. Called when the in-app affordance's timer elapses. Idempotent - a no-op once
-    /// the window has already been closed (by an undo or a following delete).
+    /// the pending state. Called when the in-app affordance's timer elapses AND when the app backgrounds.
+    /// Idempotent - a no-op once the window has already been closed (by an undo or a following delete).
+    /// Also drops the settled undo action from the manager so a later shake cannot re-run a stale closure.
     func commitWindow() async {
         guard let token = pending else { return }
         pending = nil
+        undoManager?.removeAllActions(withTarget: self)
         await feed.purge(token)
     }
 
@@ -77,8 +87,13 @@ final class NoteDeletionController: ObservableObject {
     /// Register the delete with the system UndoManager so Shake to Undo offers "Undo Delete". The undo
     /// operation restores the note; when the undo itself is registered, its inverse (a redo) re-deletes,
     /// so shake redo re-applies the delete. Named "Delete" so the system prompt reads "Undo Delete".
+    ///
+    /// Drops any prior actions against us FIRST: the in-app affordance is single-step (it only ever
+    /// tracks the latest delete), and a prior delete's undo was already committed by `delete`, so its
+    /// closure must not linger on the manager stack for a shake to re-run.
     private func registerUndo(for token: DeletedNote) {
         guard let undoManager else { return }
+        undoManager.removeAllActions(withTarget: self)
         undoManager.registerUndo(withTarget: self) { target in
             Task { @MainActor in await target.undoDelete(token) }
         }
@@ -103,12 +118,22 @@ final class NoteDeletionController: ObservableObject {
         undoManager.setActionName("Delete")
     }
 
-    /// The UndoManager's redo action: re-delete the note (soft-delete it again) and re-register the undo,
-    /// so the undo/redo pair keeps working across repeated shakes.
+    /// The UndoManager's redo action: re-delete the note (soft-delete it again). Commits any prior pending
+    /// FIRST (same leak class as `delete` - a stale token would otherwise be stranded), and re-registers
+    /// the undo against the token the RE-DELETE returned, not the original: `softDelete` is not required
+    /// to be deterministic, and a fresh delete produces a fresh trash location, so the undo must key off
+    /// the new token. A failed re-delete (nil) simply leaves nothing pending.
     private func redoDelete(_ token: DeletedNote) async {
-        _ = await feed.delete(id: token.id)
-        registerUndo(for: token)
-        pending = token
+        if let previous = pending, previous != token {
+            pending = nil
+            await feed.purge(previous)
+        }
+        guard let fresh = await feed.delete(id: token.id) else {
+            pending = nil
+            return
+        }
+        registerUndo(for: fresh)
+        pending = fresh
         deleteTrigger &+= 1
     }
 }

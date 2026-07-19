@@ -337,6 +337,43 @@ final class ICloudNoteStoreTests: XCTestCase {
         XCTAssertNil(store.load(id: note.id))
     }
 
+    /// Coordinated purge removes EXACTLY the targeted note, leaving a second trashed note restorable.
+    func testCoordinatedPurgeRemovesOnlyTheTargetedTrashedNote() throws {
+        let keep = Note(title: "Keep", paragraphs: ["Recoverable."], createdAt: Date())
+        let drop = Note(title: "Drop", paragraphs: ["Doomed."], createdAt: Date())
+        try store.save(keep)
+        try store.save(drop)
+        let keepToken = try XCTUnwrap(try store.softDelete(id: keep.id))
+        let dropToken = try XCTUnwrap(try store.softDelete(id: drop.id))
+
+        try store.purge(dropToken)
+
+        _ = try store.restore(keepToken)
+        XCTAssertNotNil(store.load(id: keep.id), "purging one note must not destroy another's trash")
+        _ = try store.restore(dropToken)
+        XCTAssertNil(store.load(id: drop.id))
+    }
+
+    /// A failing AUDIO move during coordinated soft-delete ROLLS BACK the note move: both files end up in
+    /// place, the function throws, and no token is returned - never half-in-trash-with-no-undo.
+    func testCoordinatedSoftDeleteRollsBackWhenAudioMoveFails() throws {
+        let id = UUID()
+        let note = Note(id: id, title: "Atomic", paragraphs: ["Body."], createdAt: Date())
+        let noteURL = try store.save(note)
+        let audioURL = try store.saveAudio(from: makeTempRecording(), for: id)
+
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: audioURL.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: audioURL.path) }
+
+        XCTAssertThrowsError(try store.softDelete(id: id))
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: noteURL.path),
+                      "the note file must be rolled back into place, not left in trash")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+        XCTAssertNotNil(store.load(id: id))
+        XCTAssertEqual(store.loadAll().count, 1)
+    }
+
     /// Write a stand-in recording to a temp file the store will move into place.
     private func makeTempRecording(content: String = "audio-bytes") throws -> URL {
         let url = FileManager.default.temporaryDirectory

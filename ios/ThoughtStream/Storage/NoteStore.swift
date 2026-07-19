@@ -237,14 +237,25 @@ struct NoteStore: NoteStoring {
         try ensureDirectory(at: trashDir)
 
         let noteName = noteURL.lastPathComponent
-        try fm.moveItem(at: noteURL, to: trashDir.appendingPathComponent(noteName, isDirectory: false))
+        let trashedNote = trashDir.appendingPathComponent(noteName, isDirectory: false)
+        try fm.moveItem(at: noteURL, to: trashedNote)
 
         var audioName: String?
         let audioSibling = sourceDir.appendingPathComponent(
             "\(id.uuidString).\(Self.audioFileExtension)", isDirectory: false)
         if fm.fileExists(atPath: audioSibling.path) {
             let name = audioSibling.lastPathComponent
-            try fm.moveItem(at: audioSibling, to: trashDir.appendingPathComponent(name, isDirectory: false))
+            do {
+                try fm.moveItem(at: audioSibling, to: trashDir.appendingPathComponent(name, isDirectory: false))
+            } catch {
+                // ROLL BACK the note move so a failed audio move never leaves the note half-in-trash
+                // with no token: without this, the note would vanish from the list (no `.md` in the
+                // tree), have no undo (no token returned), and be destroyed by the launch sweep. Undo the
+                // note move so the note ends up FULLY in place, then rethrow - the caller surfaces the
+                // failure and the note stays listed. The trash subdir is left (empty) for the next try.
+                try? fm.moveItem(at: trashedNote, to: noteURL)
+                throw error
+            }
             audioName = name
         }
 
@@ -275,17 +286,23 @@ struct NoteStore: NoteStoring {
         }
         try ensureDirectory(at: destinationDir)
 
+        // The restored filenames are derived from the VALIDATED UUID (`<id>.md` / `<id>.m4a`), not the
+        // token's stored filename, so the destination is structurally un-traversable regardless of the
+        // token's contents - the same id-keyed naming `softDelete`/`purge` use.
+        let noteDestName = "\(token.id.uuidString).md"
+        let audioDestName = "\(token.id.uuidString).\(Self.audioFileExtension)"
+
         // Move the note file back FIRST so a partial failure never strands audio without its note.
         let trashedNote = trashDir.appendingPathComponent(token.noteFilename, isDirectory: false)
         if fm.fileExists(atPath: trashedNote.path) {
-            let destination = destinationDir.appendingPathComponent(token.noteFilename, isDirectory: false)
+            let destination = destinationDir.appendingPathComponent(noteDestName, isDirectory: false)
             if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
             try fm.moveItem(at: trashedNote, to: destination)
         }
         if let audioName = token.audioFilename {
             let trashedAudio = trashDir.appendingPathComponent(audioName, isDirectory: false)
             if fm.fileExists(atPath: trashedAudio.path) {
-                let destination = destinationDir.appendingPathComponent(audioName, isDirectory: false)
+                let destination = destinationDir.appendingPathComponent(audioDestName, isDirectory: false)
                 if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
                 try fm.moveItem(at: trashedAudio, to: destination)
             }

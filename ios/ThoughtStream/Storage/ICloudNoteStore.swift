@@ -308,14 +308,23 @@ struct ICloudNoteStore: NoteStoring {
         try ensureDirectory(at: trashDir)
 
         let noteName = noteURL.lastPathComponent
-        try coordinatedMoveIfExists(from: noteURL, to: trashDir.appendingPathComponent(noteName, isDirectory: false))
+        let trashedNote = trashDir.appendingPathComponent(noteName, isDirectory: false)
+        try coordinatedMoveIfExists(from: noteURL, to: trashedNote)
 
         var audioName: String?
         let audioSibling = sourceDir.appendingPathComponent(
             "\(id.uuidString).\(Self.audioFileExtension)", isDirectory: false)
         if coordinatedExists(at: audioSibling) {
             let name = audioSibling.lastPathComponent
-            try coordinatedMoveIfExists(from: audioSibling, to: trashDir.appendingPathComponent(name, isDirectory: false))
+            do {
+                try coordinatedMoveIfExists(from: audioSibling, to: trashDir.appendingPathComponent(name, isDirectory: false))
+            } catch {
+                // ROLL BACK the note move so a failed audio move never leaves the note half-in-trash with
+                // no token (which would drop it from the list, give it no undo, and let the launch sweep
+                // destroy it). Move the note back so it ends up FULLY in place, then rethrow.
+                try? coordinatedMoveIfExists(from: trashedNote, to: noteURL)
+                throw error
+            }
             audioName = name
         }
 
@@ -343,16 +352,22 @@ struct ICloudNoteStore: NoteStoring {
         }
         try ensureDirectory(at: destinationDir)
 
+        // The restored filenames are derived from the VALIDATED UUID (`<id>.md` / `<id>.m4a`), not the
+        // token's stored filename, so the destination is structurally un-traversable regardless of the
+        // token's contents - the same id-keyed naming `softDelete`/`purge` use.
+        let noteDestName = "\(token.id.uuidString).md"
+        let audioDestName = "\(token.id.uuidString).\(Self.audioFileExtension)"
+
         // Move the note file back FIRST so a partial failure never strands audio without its note.
         let trashedNote = trashDir.appendingPathComponent(token.noteFilename, isDirectory: false)
         try coordinatedMoveIfExists(
             from: trashedNote,
-            to: destinationDir.appendingPathComponent(token.noteFilename, isDirectory: false))
+            to: destinationDir.appendingPathComponent(noteDestName, isDirectory: false))
         if let audioName = token.audioFilename {
             let trashedAudio = trashDir.appendingPathComponent(audioName, isDirectory: false)
             try coordinatedMoveIfExists(
                 from: trashedAudio,
-                to: destinationDir.appendingPathComponent(audioName, isDirectory: false))
+                to: destinationDir.appendingPathComponent(audioDestName, isDirectory: false))
         }
 
         if coordinatedExists(at: trashDir) { try? coordinatedDelete(at: trashDir) }

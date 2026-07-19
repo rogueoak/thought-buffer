@@ -465,6 +465,52 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertNil(try store.softDelete(id: UUID()))
     }
 
+    /// Purge removes EXACTLY the targeted note, leaving a second trashed note still restorable - so a
+    /// commit of one undo window never destroys another pending delete's trash.
+    func testPurgeRemovesOnlyTheTargetedTrashedNote() throws {
+        let keep = Note(title: "Keep trashed", paragraphs: ["Recoverable."], createdAt: Date())
+        let drop = Note(title: "Drop trashed", paragraphs: ["Doomed."], createdAt: Date())
+        try store.save(keep)
+        try store.save(drop)
+        let keepToken = try XCTUnwrap(try store.softDelete(id: keep.id))
+        let dropToken = try XCTUnwrap(try store.softDelete(id: drop.id))
+
+        try store.purge(dropToken)
+
+        // The other trashed note is untouched and still restorable.
+        let restored = try store.restore(keepToken)
+        XCTAssertFalse(restored.landedAtRoot)
+        XCTAssertNotNil(store.load(id: keep.id), "purging one note must not destroy another's trash")
+        // The purged one is gone for good.
+        _ = try store.restore(dropToken)
+        XCTAssertNil(store.load(id: drop.id))
+    }
+
+    /// A failing AUDIO move during soft-delete ROLLS BACK the note move: the note ends up fully in place
+    /// (still loadable, with its audio), the function throws, and NO token is returned - so the note is
+    /// never half-in-trash-with-no-undo where the launch sweep could destroy it.
+    func testSoftDeleteRollsBackNoteMoveWhenAudioMoveFails() throws {
+        let id = UUID()
+        let note = Note(id: id, title: "Atomic", paragraphs: ["Body."], createdAt: Date())
+        let noteURL = try store.save(note)
+        let audioURL = try store.saveAudio(from: makeTempRecording(), for: id)
+
+        // Make the audio file immutable so the store's move of it fails (EPERM), while the note file
+        // moves fine - exercising the partial-failure path.
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: audioURL.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: audioURL.path) }
+
+        XCTAssertThrowsError(try store.softDelete(id: id), "a failed audio move must surface, not swallow")
+
+        // Rolled back: both files are back in place and the note still loads with its recording.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: noteURL.path),
+                      "the note file must be rolled back into place, not left in trash")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+        XCTAssertNotNil(store.load(id: id))
+        XCTAssertEqual(store.loadAll().count, 1, "the note is still listed after a rolled-back delete")
+        XCTAssertTrue(store.audioExists(for: id))
+    }
+
     /// Write a stand-in recording to a temp file the store will move into place.
     private func makeTempRecording(content: String = "audio-bytes") throws -> URL {
         let url = FileManager.default.temporaryDirectory
