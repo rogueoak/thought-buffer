@@ -254,4 +254,99 @@ final class SettingsStoreTests: XCTestCase {
         let reopened = UserDefaultsSettingsStore(defaults: defaults)
         XCTAssertTrue(reopened.refineTranscript)
     }
+
+    // MARK: - Command-word aliases (spec 0018)
+
+    func testAliasesDefaultToTheDefaultSetOnFreshInstall() {
+        // A fresh install (key never written) reads back the default alias set, so common mishearings
+        // are tolerated out of the box.
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.controlPhraseAliases, ControlPhrase.defaultAliases)
+        XCTAssertEqual(store.controlPhraseAliases, ["mirra", "meera", "mirror"])
+    }
+
+    func testAliasesRoundTripAndPersistAcrossInstances() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.controlPhraseAliases = ["mirror", "meera"]
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(reopened.controlPhraseAliases, ["mirror", "meera"])
+    }
+
+    func testAliasesCanBeSetToEmptyAndPersistEmpty() {
+        // Once the user edits (even to empty), their choice persists - it does NOT revert to the
+        // default set (that only applies when the key was never written).
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.controlPhraseAliases = []
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(reopened.controlPhraseAliases, [])
+    }
+
+    func testAliasesRejectEmptyAndMultiWordEntries() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        // Empty / whitespace-only and multi-word entries are dropped on read; single tokens are kept.
+        store.controlPhraseAliases = ["", "   ", "hey nova", "mirror"]
+        XCTAssertEqual(store.controlPhraseAliases, ["mirror"])
+        // A punctuated single token collapses to that token.
+        store.controlPhraseAliases = ["mirror!"]
+        XCTAssertEqual(store.controlPhraseAliases, ["mirror"])
+    }
+
+    func testAliasesDeduplicateCaseInsensitively() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.controlPhraseAliases = ["mirror", "Mirror", "MIRROR", "meera"]
+        XCTAssertEqual(store.controlPhraseAliases, ["mirror", "meera"])
+    }
+
+    func testAliasesRejectPrimaryWordCollision() {
+        // An alias can never shadow the primary word (case-insensitively).
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.controlPhrase = "Mira"
+        store.controlPhraseAliases = ["mira", "MIRA", "mirror"]
+        XCTAssertEqual(store.controlPhraseAliases, ["mirror"])
+    }
+
+    func testAliasesRevalidateAgainstCurrentPrimaryWord() {
+        // Validation is against the CURRENT control phrase on read, so changing the primary word to an
+        // existing alias drops that now-colliding alias.
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.controlPhrase = "Mira"
+        store.controlPhraseAliases = ["mirror", "meera"]
+        XCTAssertEqual(store.controlPhraseAliases, ["mirror", "meera"])
+        store.controlPhrase = "mirror"
+        XCTAssertEqual(store.controlPhraseAliases, ["meera"])
+    }
+
+    func testAliasCountIsCappedOnWrite() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        let cap = UserDefaultsSettingsStore.maxAliasCount
+        store.controlPhraseAliases = (0..<(cap + 20)).map { "alias\($0)" }
+        XCTAssertEqual(store.controlPhraseAliases.count, cap)
+    }
+
+    /// The `ControlPhrase.validatedAliases` seam is pure, so the store and the UI share one rule.
+    func testValidatedAliasesSeamIsPure() {
+        let raw = ["mira", "mirror", "MIRROR", "", "two words", "meera"]
+        XCTAssertEqual(
+            ControlPhrase.validatedAliases(raw, primaryWord: "Mira"),
+            ["mirror", "meera"]
+        )
+        // Preserves the first occurrence's casing.
+        XCTAssertEqual(
+            ControlPhrase.validatedAliases(["Mirror", "mirror"], primaryWord: "Mira"),
+            ["Mirror"]
+        )
+    }
+
+    func testTriggerWordsSeamPutsPrimaryFirst() {
+        // The assembled trigger set is primary + validated aliases, primary leading and never shadowed.
+        XCTAssertEqual(
+            ControlPhrase.triggerWords(primaryWord: "Mira", aliases: ["mirror", "mira", "meera"]),
+            ["Mira", "mirror", "meera"]
+        )
+        // A blank primary word falls back to the default, still leading.
+        XCTAssertEqual(
+            ControlPhrase.triggerWords(primaryWord: "  ", aliases: ["mirror"]),
+            ["Mira", "mirror"]
+        )
+    }
 }

@@ -22,6 +22,12 @@ struct MiraTextProcessor: TextProcessor {
         self.parser = MiraCommandParser(controlWord: controlWord)
     }
 
+    /// Build from a set of trigger words (spec 0018): the primary control word plus its aliases. Any
+    /// of them switches command mode on; everything downstream is unchanged.
+    init(triggerWords: some Sequence<String>) {
+        self.parser = MiraCommandParser(triggerWords: triggerWords)
+    }
+
     func process(_ text: String) -> ProcessedSegment {
         switch parser.parse(text) {
         case .text:

@@ -159,7 +159,10 @@ How the system is built and why.
   stop stops emitting and lets the view model fold the last live partial. The on-device model is
   installed once via `AssetInventory` during authorization (a model download, not audio leaving the
   device). Also holds the Mira control-word pieces: `MiraCommandParser` (pure segment ->
-  `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST control word found anywhere),
+  `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST token matching ANY trigger
+  word found anywhere - spec 0018 makes it a `triggerWords: Set<String>` of the primary control word
+  PLUS user aliases, lowercased for a case-insensitive, token-boundary match; the `controlWord:` init
+  is kept as a one-word convenience),
   `MiraTextProcessor` (the `TextProcessor` that splits at commands), `SentenceTokenizer`
   (`NLTokenizer`-backed, for "remove the last sentence"), `FillerRemovalProcessor` (spec 0016: a pure
   `TextProcessor` that strips standalone hesitation tokens from a conservative default set - only
@@ -205,8 +208,8 @@ How the system is built and why.
   before the control word plus a command outcome - `.command` to execute or `.unrecognizedCommand` to
   drop with a chip), or `.drop` (a segment to discard with no paragraph - emitted by the filler stage
   when removal empties a segment). `PassthroughTextProcessor` always returns `.text`;
-  `MiraTextProcessor` returns `.split` when the parser finds the control word anywhere (built with the
-  configured control word); `SpellingOverrideProcessor` is text -> text, applying the user's
+  `MiraTextProcessor` returns `.split` when the parser finds any trigger word anywhere (built with the
+  full trigger set - the configured control word plus its aliases, spec 0018); `SpellingOverrideProcessor` is text -> text, applying the user's
   whole-word, case-insensitive overrides via an `NSRegularExpression` word walk (so a substring is
   never corrupted). `CompositeTextProcessor` composes them in the required order: split at the control
   word on the RAW segment FIRST (the command portion must never be spelling-mangled, filler-stripped,
@@ -216,11 +219,17 @@ How the system is built and why.
   the grouper anchor is not advanced - see below); a `.split` whose pre-text empties still runs its
   command with an empty pre-text. The composition root
   (`AppDependencies.makeTextProcessor`) builds one per session, reading the current control phrase,
+  its aliases (spec 0018, assembled into the FULL trigger set via `ControlPhrase.triggerWords`),
   overrides, and refine flag off `SettingsStoring` at build time - so edits in Settings apply to the
   next session started, not one in flight.
 - `Settings/` - `SettingsStoring` (protocol) and `UserDefaultsSettingsStore` (the local
   `UserDefaults`-backed impl, injected from the composition root) hold the control phrase
-  (validated: trimmed, non-empty, sensible max length, else falls back to "Mira"), the ordered
+  (validated: trimmed, non-empty, sensible max length, else falls back to "Mira"), its
+  `controlPhraseAliases` (spec 0018: an ordered `[String]` of extra single-token trigger words,
+  validated on read through the shared `ControlPhrase.validatedAliases` seam - each trimmed to one
+  token, de-duplicated case-insensitively, never colliding with the primary word; a fresh install
+  where the key was never written reads back `ControlPhrase.defaultAliases`, presence-checked like
+  `refineTranscript`, and the count is bounded on write), the ordered
   `SpellingOverride` list (persisted as JSON), the `AudioRetention` policy (spec 0007:
   keep / transcript-only / auto-delete after N days, persisted as a small string tag so an unknown
   value falls back to `.keep`), and `refineTranscript` (spec 0016: a `Bool` defaulting to `true` -
@@ -328,7 +337,10 @@ How the system is built and why.
   unchanged when off or when nothing merges. That pure gate is the SINGLE enforcement of "reflow on
   edit-save when refine is on, never on load" - no load path calls it, so an untouched loaded note is
   never silently rewritten (unit-tested off/on/no-op). `SettingsView` edits the injected
-  `SettingsStoring` instance directly (control-phrase field with validation hint, a "Refine transcript"
+  `SettingsStoring` instance directly (control-phrase field with validation hint, a command-aliases
+  editable list below it - spec 0018: an add field + plus button gated by the same
+  `ControlPhrase.validatedAlias` rule the store uses, so an empty/multi-word/duplicate/primary-colliding
+  entry cannot be added, plus swipe-to-delete rows - a "Refine transcript"
   toggle, add/edit/delete override rows, a read-only storage-status row from `NoteStoreKind`). The chosen `NoteSortOrder` persists through
   `SettingsStoring.noteSortOrder` (a stable string tag; unknown -> `.newest`).
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
@@ -346,7 +358,11 @@ stub store/observer through the `StreamFeed` projection, and the hands-free sess
 `PendingSessionRoute` request/consume lifecycle, both App Intents requesting a start through a stub
 `SessionStarter`, `openAppWhenRun`, and the App Shortcuts being registered), plus Settings:
 `UserDefaultsSettingsStore` persistence and control-phrase validation via an isolated defaults
-suite, `SpellingOverrideProcessor` whole-word/case/multi-override/no-substring-corruption, and
+suite, the command-word aliases (spec 0018: parser matches any trigger word / case-insensitive /
+token-boundary so "admiral" != "mira" / removed alias stops firing; store default-set-on-fresh-install,
+round-trip, empty-persists, and rejection of empty/multi-word/duplicate/primary-collision, plus the
+factory building the parser from the full alias set),
+`SpellingOverrideProcessor` whole-word/case/multi-override/no-substring-corruption, and
 `CompositeTextProcessor` ordering (a command is detected and not spelling-mangled; the configured
 control word changes matching; a normal segment gets overrides), plus the CarPlay Audio surface
 (spec 0008): the shared `NotePlaybackController` (play / pause / resume / stop / skip via a stubbed

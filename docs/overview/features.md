@@ -121,6 +121,14 @@ Reachable from the gear in the Stream toolbar. Changes apply to the next dictati
   "Nova remove the last sentence" fires the remove command while "Mira ..." no longer does; the
   command chip reads with the chosen name. Input is trimmed and validated: an empty, whitespace, or
   over-long value falls back to "Mira", so clearing the field is a valid reset.
+- **Command aliases (spec 0018).** Register extra single-word spellings that ALSO fire command mode,
+  so a recognizer mishearing of the control word ("mirror" for "Mira") still triggers a command
+  instead of being written into the note. An editable list under the control-word field adds (a field
+  + a plus button) and deletes (swipe) aliases; each alias is fully equivalent to the control word.
+  A fresh install ships a default set for "Mira" ("mirra", "meera", "mirror"). Validation keeps only
+  single tokens, de-duplicates case-insensitively, and never lets an alias shadow the primary word;
+  matching is token-based so "admiral" never matches "mira". Aliases apply to the next session, like
+  the control word.
 - **Spelling overrides.** Keep an ordered list of from -> to fixes for words the recognizer gets
   wrong (spoken "Shay" -> written "Shea"). Add, edit, and delete pairs. They apply to dictated text
   before commit: whole-word and case-insensitive, so "shay"/"Shay" both become "Shea" while "Shayla"

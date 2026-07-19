@@ -14,6 +14,17 @@ protocol SettingsStoring: AnyObject {
     /// store any string; validation happens on read so "clear the field" resets.
     var controlPhrase: String { get set }
 
+    /// The ordered list of alias trigger words (spec 0018): extra single-token spellings that also
+    /// fire command mode, so a recognizer mishearing of the control word ("mirror" for "Mira") still
+    /// triggers a command instead of being written into the note. Reads back validated through the
+    /// shared `ControlPhrase.validatedAliases` seam: each alias trimmed to a single token, empty and
+    /// multi-word entries dropped, de-duplicated case-insensitively, and never colliding with the
+    /// primary word. A fresh install (nothing ever stored) reads back `ControlPhrase.defaultAliases`
+    /// so common mishearings are tolerated out of the box; once the user edits the list (even to
+    /// empty) their choice is what persists. The setter may store any array; validation happens on
+    /// read, and validation is against the CURRENT `controlPhrase` so an alias can never shadow it.
+    var controlPhraseAliases: [String] { get set }
+
     /// The ordered list of spelling fixes applied to dictated text before commit.
     var spellingOverrides: [SpellingOverride] { get set }
 
@@ -49,6 +60,7 @@ protocol SettingsStoring: AnyObject {
 final class UserDefaultsSettingsStore: SettingsStoring {
     private enum Key {
         static let controlPhrase = "settings.controlPhrase"
+        static let controlPhraseAliases = "settings.controlPhraseAliases"
         static let spellingOverrides = "settings.spellingOverrides"
         static let audioRetention = "settings.audioRetention"
         static let lockScreenTitle = "settings.lockScreenTitle"
@@ -62,6 +74,11 @@ final class UserDefaultsSettingsStore: SettingsStoring {
     static let maxOverrideCount = 200
     static let maxOverrideFieldLength = 128
 
+    /// Bound on the persisted alias list so a stuck field cannot grow `UserDefaults` without limit
+    /// or make the per-segment trigger set expensive. Rows past the cap are dropped on write; the
+    /// per-alias length is already capped by `ControlPhrase.maxLength` on read.
+    static let maxAliasCount = 50
+
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
@@ -74,6 +91,23 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         // setter stores raw (so "clear the field" resets); the getter validates.
         get { ControlPhrase.validated(defaults.string(forKey: Key.controlPhrase) ?? "") }
         set { defaults.set(newValue, forKey: Key.controlPhrase) }
+    }
+
+    var controlPhraseAliases: [String] {
+        // A fresh install (key never written) reads back the default alias set so common mishearings
+        // are tolerated out of the box - like `refineTranscript`, presence is checked explicitly so an
+        // absent key means "default", not "empty". Once the user edits (even to an empty list) the
+        // stored array is what persists. On read, the raw list is validated against the CURRENT
+        // control phrase through the shared seam, so an alias can never shadow the primary word and a
+        // bad entry (empty, multi-word, duplicate) is dropped. The store persists the raw list (bounded)
+        // so the UI can round-trip what the user typed and re-validate against a later primary change.
+        get {
+            guard let raw = defaults.stringArray(forKey: Key.controlPhraseAliases) else {
+                return ControlPhrase.defaultAliases
+            }
+            return ControlPhrase.validatedAliases(raw, primaryWord: controlPhrase)
+        }
+        set { defaults.set(Array(newValue.prefix(Self.maxAliasCount)), forKey: Key.controlPhraseAliases) }
     }
 
     var spellingOverrides: [SpellingOverride] {

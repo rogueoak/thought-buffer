@@ -62,7 +62,14 @@ struct AppDependencies {
         // in Settings applies to the next session. Injectable for tests that want a fixed processor.
         self.makeTextProcessor = makeTextProcessor ?? {
             CompositeTextProcessor(
-                controlWord: settingsStore.controlPhrase,
+                // Spec 0018: build from the FULL trigger set - the primary control word plus its
+                // validated aliases (common mishearings) - assembled through the shared `ControlPhrase`
+                // seam so the primary word always leads and no alias can shadow it. Read at build time,
+                // so an aliases edit takes effect on the next session, like the control phrase.
+                triggerWords: ControlPhrase.triggerWords(
+                    primaryWord: settingsStore.controlPhrase,
+                    aliases: settingsStore.controlPhraseAliases
+                ),
                 overrides: settingsStore.spellingOverrides,
                 // Spec 0016: the filler-removal stage is present only when refine is on, read at build
                 // time so a Settings toggle takes effect on the next session (like the control phrase).

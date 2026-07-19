@@ -44,6 +44,32 @@ final class AppDependenciesFactoryTests: XCTestCase {
         XCTAssertEqual(processor.process("Call Shay today"), .text("Call Shea today"))
     }
 
+    /// Spec 0018: the factory builds the parser from the FULL trigger set - the primary control word
+    /// PLUS the aliases - read at call time, so an alias mishearing fires the command and an aliases
+    /// edit takes effect on the next session.
+    func testMakeTextProcessorBuildsParserFromFullAliasSet() {
+        let store = MutableSettingsStore()
+        store.controlPhrase = "Mira"
+        let deps = AppDependencies(settingsStore: store)
+
+        // Add an alias after the root exists; a processor built now must fire on it.
+        store.controlPhraseAliases = ["mirror"]
+        let processor = deps.makeTextProcessor()
+
+        // The alias fires the command and is NOT written into the note...
+        XCTAssertEqual(
+            processor.process("mirror new note"),
+            .split(preText: "", command: .command(.newNote))
+        )
+        // ...the primary word still fires...
+        XCTAssertEqual(
+            processor.process("Mira new note"),
+            .split(preText: "", command: .command(.newNote))
+        )
+        // ...and a word that is neither is ordinary text.
+        XCTAssertEqual(processor.process("meera new note"), .text("meera new note"))
+    }
+
     /// Spec 0016: the filler stage is present in the built processor only when `refineTranscript` is
     /// on, read at build time so a Settings toggle takes effect on the next session. When off, text
     /// commits verbatim; when on, standalone fillers are stripped.
@@ -75,6 +101,11 @@ private final class MutableSettingsStore: SettingsStoring {
     var controlPhrase: String {
         get { ControlPhrase.validated(rawControlPhrase) }
         set { rawControlPhrase = newValue }
+    }
+    private var rawAliases: [String] = []
+    var controlPhraseAliases: [String] {
+        get { ControlPhrase.validatedAliases(rawAliases, primaryWord: controlPhrase) }
+        set { rawAliases = newValue }
     }
     var spellingOverrides: [SpellingOverride] = []
     var audioRetention: AudioRetention = .keep
