@@ -16,6 +16,13 @@ import UIKit
 #endif
 import SwiftUI
 
+// HAND-EDIT (spec 0023) - the ONLY change to this generated file: the `Color(light:dark:)` /
+// `Color(rgb:)` extension below uses `UIColor(dynamicProvider:)`, which is API_UNAVAILABLE on watchOS,
+// so it is guarded `#if !os(watchOS)`. The watchOS build gets the SAME two inits from a hand-owned file,
+// `ThoughtStreamShared/CanopyColorWatch.swift`. On a Canopy re-sync (which overwrites this file), re-add
+// this two-line `#if !os(watchOS)` wrapper around the Color extension, or the watch target stops
+// compiling. See docs/overview/architecture.md and learnings.md.
+#if !os(watchOS)
 public extension Color {
     /// A color that resolves to `light` in light mode and `dark` in dark mode.
     /// Hexes are 0xRRGGBB. On platforms with UIKit this uses a dynamic UIColor provider so it
@@ -40,6 +47,7 @@ public extension Color {
         )
     }
 }
+#endif
 
 #if canImport(UIKit)
 private extension UIColor {

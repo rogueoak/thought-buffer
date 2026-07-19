@@ -21,6 +21,12 @@ final class StreamFeed: ObservableObject {
     /// a move between two existing folders, or an iCloud-synced empty folder).
     @Published private(set) var reloadGeneration = 0
 
+    /// Called on the main actor with the freshly-published thoughts whenever the list changes (spec 0023).
+    /// The composition root wires this to push the recent-thoughts projection to a paired Apple Watch, so
+    /// the wrist list stays fresh after a save, delete, move, or synced-in edit. Nil when no watch link is
+    /// wired (the default), so nothing about the phone-only path changes.
+    var onThoughtsChanged: (([Thought]) -> Void)?
+
     private let driver: ThoughtStoreDriver
 
     init(store: ThoughtStoring, observer: UbiquitousThoughtObserving? = nil) {
@@ -85,5 +91,6 @@ final class StreamFeed: ObservableObject {
         didLoad = driver.didLoad
         deleteFailed = driver.deleteFailed
         reloadGeneration = driver.reloadGeneration
+        onThoughtsChanged?(driver.thoughts)
     }
 }

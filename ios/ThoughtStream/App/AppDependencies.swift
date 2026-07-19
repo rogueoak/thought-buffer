@@ -41,6 +41,11 @@ struct AppDependencies {
     /// `@MainActor` because the controller is main-actor.
     let playbackController: ThoughtPlaybackController
 
+    /// The phone side of the Apple Watch link (spec 0023), or nil when no watch support is wired (tests,
+    /// screenshot tooling). Receives watch captures (ingesting each into a thought via file transcription)
+    /// and pushes the recent-thoughts projection back to the watch. Activated at launch in `resolve`.
+    let watchCoordinator: PhoneConnectivityCoordinator?
+
     /// `@MainActor` because the session route is a main-actor `ObservableObject`; the composition
     /// root is built on the main actor at launch (see `resolve`), so this is not a constraint in
     /// practice.
@@ -52,8 +57,10 @@ struct AppDependencies {
         settingsStore: SettingsStoring = UserDefaultsSettingsStore(),
         makeTextProcessor: (() -> TextProcessor)? = nil,
         sessionRoute: PendingSessionRoute? = nil,
-        playbackController: ThoughtPlaybackController? = nil
+        playbackController: ThoughtPlaybackController? = nil,
+        watchCoordinator: PhoneConnectivityCoordinator? = nil
     ) {
+        self.watchCoordinator = watchCoordinator
         self.thoughtStore = thoughtStore
         self.thoughtStoreKind = thoughtStoreKind
         self.thoughtObserver = thoughtObserver
@@ -129,6 +136,15 @@ struct AppDependencies {
             let sweeper = AudioRetentionSweeper(store: selection.store)
             _ = await Task.detached { await sweeper.sweep(retention: retention) }.value
         }
+        // The Apple Watch link (spec 0023): receive watch captures (ingest each into a thought) and push
+        // the recent-thoughts projection back. The providers capture the store (Sendable) and project /
+        // resolve on demand, so the coordinator never reaches into a view model. Activated below.
+        let store = selection.store
+        let watchCoordinator = PhoneConnectivityCoordinator(
+            ingestService: WatchCaptureIngestService(store: store),
+            recentThoughtsProvider: { RecentThoughtsProjector.project(store.loadAll()) },
+            audioURLProvider: { id in store.audioURL(for: id) }
+        )
         // No `makeTextProcessor` passed: the init's default factory builds a `CompositeTextProcessor`
         // from `settingsStore` each session, so control-phrase and override edits take effect next
         // session.
@@ -136,8 +152,12 @@ struct AppDependencies {
             thoughtStore: selection.store,
             thoughtStoreKind: selection.kind,
             thoughtObserver: selection.observer,
-            settingsStore: settingsStore
+            settingsStore: settingsStore,
+            watchCoordinator: watchCoordinator
         )
+        // Activate the session so a watch capture can arrive and the first projection is pushed. A no-op
+        // where WatchConnectivity is unavailable (an iPad), so the iOS build stays unaffected.
+        watchCoordinator.start()
         shared = dependencies
         return dependencies
     }

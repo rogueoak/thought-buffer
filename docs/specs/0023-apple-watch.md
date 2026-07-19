@@ -79,3 +79,43 @@ play).
 - The phone-side file-transcription core is factored and unit-tested (maps a decoded
   transcript to paragraphs+timings) without requiring the live mic or a real watch.
 - iOS app behavior is unchanged; the full iOS suite stays green.
+
+## What shipped
+
+A watchOS app target (`ThoughtStreamWatch`), paired with and embedded in the iOS app
+(companion bundle id `com.rogueoak.thoughtstream.watchkitapp`, watchOS 26). It shares
+the `Thought` model, timing math, paragraph grouper, and Canopy tokens with the phone
+(added to the watch target's sources), plus a new platform-neutral `ThoughtStreamShared`
+group compiled into both sides.
+
+- **Quick capture (watch):** a prominent Record control (`WatchCaptureView` +
+  `WatchRecorder`) records the watch mic to `.m4a` via `AVAudioRecorder`, with a
+  start/stop haptic and a glanceable recording state. On stop the file is queued for
+  RELIABLE background transfer (`transferFile`) so a capture survives the app closing
+  and a temporarily-unreachable phone; a "Syncing N captures" line shows while pending.
+- **WatchConnectivity (both sides):** `WatchConnectivityManager` (watch) and
+  `PhoneConnectivityCoordinator` (phone). Watch -> phone: `transferFile` the `.m4a`
+  plus a capture-metadata payload (capture id, captured-at, folder hint). Phone ->
+  watch: the recent-thoughts projection via `updateApplicationContext`, and on-demand
+  audio-file transfer for playback (a `sendMessage` request, a tagged `transferFile`
+  reply). The wire codecs are the pure, tested `WatchConnectivityCodec`.
+- **Phone-side ingest + file transcription (NEW):** `SpeechAnalyzerFileTranscriber`
+  runs `SpeechAnalyzer.analyzeSequence(from:)` over the received file; the pure
+  `FileTranscriptionMapper` maps its decoded segments to paragraphs + timings (reusing
+  `ParagraphGrouper` + `ParagraphTiming.merged`); the pure `WatchCaptureIngestor` builds
+  the thought (title, folder-hint resolution, audio-only fallback); and
+  `WatchCaptureIngestService` transcribes -> builds -> attaches audio -> saves through
+  the existing store. Transcription failure or an empty result files the thought
+  AUDIO-ONLY (recording kept, never dropped).
+- **Browse + play (watch):** `WatchBrowseView` lists the phone's recent-thoughts
+  projection (title + preview + duration); tapping opens `WatchThoughtDetailView` with
+  the text and, for a recorded thought, a Play control that fetches the audio from the
+  phone on demand and plays it (`WatchAudioPlayer`). No editing/folders/search on the
+  watch.
+
+### Deferred / device-verified
+
+Real on-watch mic recording, the live WatchConnectivity transfer end to end, and real
+file transcription are device/simulator-verifiable (the watch simulator has no mic and
+`WCSession` needs a paired device). No complications/Siri this milestone (a possible
+follow-up).

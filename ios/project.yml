@@ -24,6 +24,10 @@ targets:
     platform: iOS
     sources:
       - path: ThoughtStream
+      # Shared, PLATFORM-NEUTRAL source (spec 0023): the WatchConnectivity wire payloads/codecs and the
+      # recent-thoughts projector, compiled into BOTH the iOS app and the watchOS app so the two sides
+      # serialize identically and cannot drift.
+      - path: ThoughtStreamShared
     # iCloud Documents capability is currently DISABLED so the app provisions on a free/personal
     # Apple Developer team (personal teams cannot use the iCloud capability). The storage layer
     # falls back to local storage automatically when no iCloud container resolves, so the app is
@@ -84,6 +88,49 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         "CODE_SIGNING_ALLOWED[sdk=iphonesimulator*]": "NO"
         "CODE_SIGNING_REQUIRED[sdk=iphonesimulator*]": "NO"
+    # Embed the paired watch app so it installs alongside the phone app (spec 0023). The watch app is a
+    # companion of com.rogueoak.thoughtstream; XcodeGen wires the embed build phase from this dependency.
+    dependencies:
+      - target: ThoughtStreamWatch
+        embed: true
+
+  # The watchOS app (spec 0023): quick-capture + browse. Paired with the iOS app as a companion, its
+  # bundle id prefixed by the phone app's id (com.rogueoak.thoughtstream.watchkitapp). It records audio
+  # on the wrist and syncs it to the phone (which transcribes and files it), and browses the recent
+  # thoughts the phone pushes. It compiles the shared payload/projection source plus the specific
+  # platform-neutral model/token files it needs (Thought, timing, grouper, Canopy tokens).
+  ThoughtStreamWatch:
+    type: application
+    platform: watchOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: "ThoughtStreamWatch Watch App"
+      - path: ThoughtStreamShared
+      # Specific platform-neutral files reused from the iOS app (no UIKit-only / iOS-only dependency),
+      # so the watch shares ONE definition of the thought model, its timing math, paragraph grouping,
+      # and the Canopy tokens rather than forking them.
+      - path: ThoughtStream/Models/Thought.swift
+      - path: ThoughtStream/Speech/RecordingTiming.swift
+      - path: ThoughtStream/Speech/ParagraphGrouper.swift
+      - path: ThoughtStream/Speech/SentenceTokenizer.swift
+      - path: ThoughtStream/DesignSystem/Tokens.swift
+    info:
+      path: "ThoughtStreamWatch Watch App/Info.plist"
+      properties:
+        CFBundleDisplayName: Thought Stream
+        WKApplication: true
+        WKCompanionAppBundleIdentifier: com.rogueoak.thoughtstream
+        NSMicrophoneUsageDescription: "Thought Stream uses the microphone to record a voice thought, which syncs to your iPhone."
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rogueoak.thoughtstream.watchkitapp
+        PRODUCT_NAME: ThoughtStreamWatch
+        INFOPLIST_KEY_WKApplication: "YES"
+        "CODE_SIGNING_ALLOWED[sdk=watchsimulator*]": "NO"
+        "CODE_SIGNING_REQUIRED[sdk=watchsimulator*]": "NO"
 
   ThoughtStreamTests:
     type: bundle.unit-test
@@ -106,5 +153,12 @@ schemes:
     test:
       targets:
         - ThoughtStreamTests
+    run:
+      config: Debug
+  # The watch app scheme (spec 0023), so the watchOS target builds and runs on a paired watch simulator.
+  ThoughtStreamWatch:
+    build:
+      targets:
+        ThoughtStreamWatch: all
     run:
       config: Debug
