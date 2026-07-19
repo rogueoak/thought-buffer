@@ -81,7 +81,8 @@ How the system is built and why.
   length-changing whole-string fold would misplace the highlight; the two AGREE for length-preserving folds
   and diverge only for the rare ligature / 'sz' case, documented on `fold`); an empty/whitespace query
   yields no matches, matches within a region are left-to-right and non-overlapping, and the order is
-  title-then-paragraphs-in-order. `ThoughtFindNavigator` holds the
+  title-then-paragraphs-in-order; `firstMatch(...)` (feedback 0030) returns just the first hit for the
+  open-from-search seed. `ThoughtFindNavigator` holds the
   current-match index (starts on the first match), steps next/previous WRAPPING, and formats the "N of M"
   `countLabel`; `Region.scrollID` is the stable `ScrollViewReader` anchor. `ThoughtDetailView` is a thin
   caller: its bottom-bar search field drives this find (superseding spec 0021's "detail search routes to
@@ -493,7 +494,18 @@ How the system is built and why.
   (the pushed detail owns its own inset, so the player is repeated there and the transport works on the thought
   page) and FALSE in the iPad split view (the player is lifted above all columns, so hosting it in the detail
   column too would double-render it). A tap on the player's title routes through the detail's `onOpenThought`
-  (the same container-aware `openThought` the list uses). **Folder dialogs (feedback 0018):**
+  (the same container-aware `openThought` the list uses). **Thought-page polish (feedback 0030).** Four
+  fixes to `ThoughtDetailView`: (5) the "Play recording" affordance moved OUT of the note body and into
+  `detailBottomStack` (above the `BottomPlayer`, floating with the find/search bar), shown for an audio
+  thought that is not yet loaded and gated on the same `showsBottomPlayer` container decision, so starting
+  playback surfaces the shared `BottomPlayer` transport in the same inset and a text-only thought shows no
+  play affordance; (6) the trailing toolbar gear (Settings) is declared LAST so it is the RIGHT-most item,
+  matching the list / folder toolbars; (9) `ThoughtDetailView` takes an `initialFindQuery` the root threads
+  from the active global `searchQuery` (only where `enablesFind`), auto-activating the in-note find on appear
+  and seeking/highlighting the FIRST hit when a thought is opened from a search-result row (the pure
+  `ThoughtFind.firstMatch(title:paragraphs:query:)` seam is unit-tested); (10) the in-note "N of M" match
+  counter + prev/next chevrons now sit inside the shared `BottomBarButtonGroup` (a solid Canopy surface pill)
+  so the count is legible rather than floating over the content. **Folder dialogs (feedback 0018):**
   the New folder / Rename / Delete alerts were three STACKED `.alert`s on one node (a SwiftUI flakiness
   source that broke rename); they are now ONE `FolderDialog` enum (`@State activeDialog`) with each alert
   on its OWN hidden `Color.clear` background anchor via a per-case binding, and the name text in a

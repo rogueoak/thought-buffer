@@ -56,6 +56,15 @@ enum ThoughtFind {
         return result
     }
 
+    /// The FIRST match of `query` in the thought (title first, then paragraphs in order), or nil when there
+    /// is none (feedback 0030). This is the pure seam the detail view uses when a thought is opened FROM an
+    /// active search: it carries the query in, and the first hit is where the in-note find seeks and
+    /// highlights. Equivalent to `matches(...).first`, named so the "open from search seeks the first hit"
+    /// behavior is unit-tested rather than trapped in the view.
+    static func firstMatch(title: String, paragraphs: [String], query: String) -> Match? {
+        matches(title: title, paragraphs: paragraphs, query: query).first
+    }
+
     /// Every CHARACTER-OFFSET range in `haystack` where the folded haystack contains the already-folded
     /// `needle`, left to right, non-overlapping. `needle` must be non-empty. Both sides fold PER CHARACTER
     /// (so a fold that changes length cannot shift offsets): a folded character keeps a 1:1 map to its
