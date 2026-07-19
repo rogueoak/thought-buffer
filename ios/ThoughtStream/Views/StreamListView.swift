@@ -482,7 +482,13 @@ struct StreamListView: View {
                 onOpenThought: { openThought($0) },
                 showsBottomPlayer: showsBottomPlayer,
                 enablesFind: enablesFind,
-                resumeApplies: resumeApplies(for: thought)
+                resumeApplies: resumeApplies(for: thought),
+                // Carry the active global search query into the in-note find (feedback 0030, item 9): when a
+                // thought is opened FROM a search-results row the query is non-empty, so the detail
+                // auto-activates find with it and seeks/highlights the first hit. Only where this detail hosts
+                // its own find surface (`enablesFind`) - the split detail column defers to the lifted global
+                // bar, so it passes nothing. An empty query (a thought opened not from a search) does nothing.
+                initialFindQuery: enablesFind ? searchQuery : ""
             )
         case let .newThought(thought):
             ThoughtDetailView(

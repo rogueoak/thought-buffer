@@ -105,6 +105,39 @@ final class ThoughtFindTests: XCTestCase {
         XCTAssertEqual(matches.count, 1)
     }
 
+    // MARK: - First match (open-from-search seam, feedback 0030 item 9)
+
+    func testFirstMatchInTitleWhenTitleMatches() {
+        // A query that hits the title returns the TITLE match as the first hit (title precedes paragraphs),
+        // so opening a thought from a search whose query is in the title seeks the title.
+        let first = ThoughtFind.firstMatch(title: "The Plan", paragraphs: ["plan the trip"], query: "plan")
+        XCTAssertEqual(first?.region, .title)
+    }
+
+    func testFirstMatchIsEarliestParagraphWhenTitleDoesNotMatch() {
+        // No title hit, so the first match is the earliest matching paragraph (paragraph 1 here), which is
+        // where the in-note find seeks and highlights on open-from-search.
+        let paragraphs = ["intro", "discuss the budget", "budget again"]
+        let first = ThoughtFind.firstMatch(title: "Meeting", paragraphs: paragraphs, query: "budget")
+        XCTAssertEqual(first?.region, .paragraph(1))
+    }
+
+    func testFirstMatchNilWhenNoMatchOrEmptyQuery() {
+        // A thought opened NOT from a search (empty query) or with no hit yields nil - the detail seeds
+        // nothing and the in-note find stays inert.
+        XCTAssertNil(ThoughtFind.firstMatch(title: "Grocery", paragraphs: ["milk"], query: "xyzzy"))
+        XCTAssertNil(ThoughtFind.firstMatch(title: "Grocery", paragraphs: ["milk"], query: ""))
+        XCTAssertNil(ThoughtFind.firstMatch(title: "Grocery", paragraphs: ["milk"], query: "   "))
+    }
+
+    func testFirstMatchEqualsMatchesFirst() {
+        // The seam is exactly `matches(...).first` (documented equivalence), so the highlight the view draws
+        // for the seeded first hit is the same match `matches` produced.
+        let paragraphs = ["find me here", "and find me here too"]
+        let first = ThoughtFind.firstMatch(title: "no", paragraphs: paragraphs, query: "find")
+        XCTAssertEqual(first, ThoughtFind.matches(title: "no", paragraphs: paragraphs, query: "find").first)
+    }
+
     // MARK: - No match / empty query
 
     func testNoMatch() {

@@ -60,6 +60,13 @@ struct ThoughtDetailView: View {
     /// the retention policy records audio. Computed by the composition root and passed in so the pure
     /// decision is not re-derived in the view. When false, the bottom bar omits the resume icon.
     private let resumeApplies: Bool
+    /// The search query to carry into the in-note find when this thought is opened FROM an active search
+    /// (feedback 0030, item 9): the composition root threads the live global query through the navigation so
+    /// the detail auto-activates find with it, seeking and highlighting the FIRST hit exactly as if the user
+    /// had typed it into the in-note field. Empty when the thought is opened NOT from a search (the normal
+    /// case), where it does nothing. Applied ONCE on appear (a real find only where `enablesFind` is on), so
+    /// the user's own later edits to the query are never re-seeded.
+    private let initialFindQuery: String
     /// Whether this thought is a brand-new, not-yet-persisted thought opened straight into the editor
     /// (spec 0013). It stays true until the first non-empty commit persists real content; while true,
     /// leaving with no title and no body discards the thought via `onDiscardEmpty`.
@@ -121,6 +128,7 @@ struct ThoughtDetailView: View {
         showsBottomPlayer: Bool = true,
         enablesFind: Bool = false,
         resumeApplies: Bool = true,
+        initialFindQuery: String = "",
         startInEdit: Bool = false
     ) {
         self.thought = thought
@@ -134,6 +142,7 @@ struct ThoughtDetailView: View {
         self.showsBottomPlayer = showsBottomPlayer
         self.enablesFind = enablesFind
         self.resumeApplies = resumeApplies
+        self.initialFindQuery = initialFindQuery
         _paragraphs = State(initialValue: thought.paragraphs)
         _hasCustomTitle = State(initialValue: thought.hasCustomTitle)
         _customTitleText = State(initialValue: thought.title)
@@ -180,9 +189,10 @@ struct ThoughtDetailView: View {
                             .font(.system(size: CanopyFont.sizeXs))
                             .foregroundStyle(CanopyColor.textSubtle)
 
-                        if thought.hasAudio {
-                            playButton
-                        }
+                        // The "Play recording" affordance is NO LONGER inline in the note body (feedback 0030,
+                        // item 5): it moved to the bottom stack (`detailBottomStack`), anchored at the bottom
+                        // and floating with the find/search bar, consistent with the list screens. Starting
+                        // playback there surfaces the shared `BottomPlayer` transport in the same bottom inset.
 
                         if isEditing {
                             TextEditor(text: $draft)
@@ -267,15 +277,6 @@ struct ThoughtDetailView: View {
                         .accessibilityLabel("Start a new thought")
                     }
                 }
-                if let onOpenSettings {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: onOpenSettings) {
-                            Image(systemName: "gearshape")
-                        }
-                        .tint(CanopyColor.primary)
-                        .accessibilityLabel("Settings")
-                    }
-                }
                 // The "..." actions menu (spec 0017): Share + Copy text from the ONE shared
                 // `ThoughtActionsMenu`, on `currentThought` so both reflect any in-view edits already folded
                 // into it. Only shown in the normal (non-editing) state. `onCopied` bumps the trigger
@@ -300,11 +301,36 @@ struct ThoughtDetailView: View {
                     .tint(CanopyColor.primary)
                     .accessibilityLabel("Thought actions")
                 }
+                // The gear (Settings) is the RIGHTMOST trailing item (feedback 0030, item 6), matching the
+                // list / folder toolbars where it sits in the right-most position. `.topBarTrailing` items
+                // lay out left-to-right in declaration order, so declaring it LAST (after the "..." menu)
+                // puts it on the far right, consistent with `TopLevelFoldersView` / `FolderThoughtsView`.
+                if let onOpenSettings {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: onOpenSettings) {
+                            Image(systemName: "gearshape")
+                        }
+                        .tint(CanopyColor.primary)
+                        .accessibilityLabel("Settings")
+                    }
+                }
             }
         }
         // A brand-new thought (spec 0013) opens with the body editor focused so the user can type at once.
         // Focus is set here (not in init) because a FocusState only takes effect once the view exists.
-        .onAppear { if isUnsavedNewThought { editorFocused = true } }
+        // Opening a thought FROM an active search (feedback 0030, item 9) carries the global query in: seed
+        // the in-note find with it ONCE on appear, which drives `refreshFind` (rebuilding the navigator to the
+        // FIRST match) and, via the `currentMatch` observer, scrolls that hit into view - exactly as if the
+        // user had typed the query into the in-note field. Gated on `enablesFind` (a real find surface, not the
+        // split detail column or a preview) and a non-empty carried query; skipped for a brand-new thought,
+        // which opens straight into the editor where find is inert.
+        .onAppear {
+            if isUnsavedNewThought {
+                editorFocused = true
+            } else if enablesFind, findQuery.isEmpty, !initialFindQuery.isEmpty {
+                findQuery = initialFindQuery
+            }
+        }
         // Playback is NOT stopped on leaving the detail (spec 0027): it lives in the persistent bottom
         // player, so navigating away keeps the recording playing there (like any music app). Only finalize
         // a brand-new thought the user backed out of WITHOUT tapping Done (spec 0013): keep it if anything
@@ -434,9 +460,20 @@ struct ThoughtDetailView: View {
     /// the detail player is gated ONLY on `showsBottomPlayer` (architect review): the empty-store gate is
     /// deliberately omitted here because a thought detail is never the empty-store screen, so the two
     /// predicates are intentionally not coupled - do not re-add the store-state gate to this call site.
+    ///
+    /// The "Play recording" affordance ALSO lives here now (feedback 0030, item 5), anchored at the bottom
+    /// and floating with the find/search bar instead of inline under the title: shown ABOVE the bar for an
+    /// audio thought that is NOT yet the loaded one, it starts this thought on the shared controller, which
+    /// surfaces the full `BottomPlayer` transport (play/pause, scrubber, +/-15s) in this same inset. Once
+    /// loaded, `BottomPlayer` renders and the start affordance drops away, so the two never both show. A
+    /// text-only thought has no audio, so no play affordance appears. Gated on `showsBottomPlayer` like the
+    /// player, so the split detail column (player lifted above all columns) shows neither.
     private var detailBottomStack: some View {
         VStack(spacing: CanopySpacing.x3) {
             if showsBottomPlayer {
+                if thought.hasAudio, !isThisThoughtLoaded {
+                    playButton
+                }
                 BottomPlayer(controller: playbackController, onOpenThought: { onOpenThought($0) })
             }
             if bottomBarLayout.isVisible {
@@ -470,14 +507,20 @@ struct ThoughtDetailView: View {
         }
     }
 
-    /// The in-thought find prev/next chevrons and the "N of M" count, shown beside the search field while a
-    /// find has matches (spec 0025). Prev/next step through the matches (wrapping); the count is the pure
-    /// `ThoughtFindNavigator.countLabel`. Clearing the query hides this whole affordance (no matches).
+    /// The in-thought find "N of M" count and the prev/next chevrons, shown beside the search field while a
+    /// find has matches (spec 0025). The whole group sits on a solid Canopy surface pill (feedback 0030, item
+    /// 10, via the shared `BottomBarButtonGroup`): the count previously floated over the content with no
+    /// background and was hard to read, so it now reads as part of the find-bar GROUP with the bar's own
+    /// surface + border + capsule treatment, matching the search field's pill beside it. Prev/next step
+    /// through the matches (wrapping); the count is the pure `ThoughtFindNavigator.countLabel`. Clearing the
+    /// query hides this whole affordance (no matches).
     private var findNavigationControls: some View {
-        HStack(spacing: CanopySpacing.x2) {
+        BottomBarButtonGroup {
             Text(findNavigator.countLabel)
                 .font(.system(size: CanopyFont.sizeXs, weight: .semibold))
-                .foregroundStyle(CanopyColor.textSubtle)
+                .foregroundStyle(CanopyColor.text)
+                .monospacedDigit()
+                .padding(.leading, CanopySpacing.x1)
                 .accessibilityLabel("Match \(findNavigator.countLabel)")
             Button {
                 findNavigator.previous()
@@ -506,32 +549,37 @@ struct ThoughtDetailView: View {
         currentThought.hasAudio ? "Resume recording" : "Record audio for this thought"
     }
 
-    /// Whether this thought's recording is the one currently loaded in the shared controller, so the detail
-    /// button reads "Playing" (and stays inert) rather than offering to restart it (spec 0027). The
-    /// transport itself - play/pause, scrub, skip - lives in the bottom player, not here.
+    /// Whether this thought's recording is the one currently loaded in the shared controller. Gates whether
+    /// the bottom-anchored "Play recording" affordance shows (feedback 0030, item 5): while this thought is
+    /// loaded, `BottomPlayer` renders the full transport instead, so the start affordance drops away and the
+    /// detail never competes with the player for control.
     private var isThisThoughtLoaded: Bool { playbackController.isLoaded(thought) }
 
-    /// The "Play recording" affordance (spec 0027): tapping it starts this thought's recording in the
-    /// shared bottom player. It is NOT a transport - the thought screen no longer hosts play/pause or a
-    /// scrubber; those live in the bottom player. While this thought is already the loaded one it reads
-    /// "Playing" and is inert, so the detail never competes with the bottom player for control.
+    /// The bottom-anchored "Play recording" affordance (spec 0027, moved to the bottom stack in feedback
+    /// 0030): tapping it starts this thought's recording on the shared controller, which surfaces the full
+    /// `BottomPlayer` transport - play/pause, scrubber, +/-15s - in the SAME bottom inset. It is NOT a
+    /// transport itself; it only STARTS playback. It floats with the find/search bar at the bottom of the
+    /// thought page, consistent with the list screens, and is shown only for an audio thought that is not yet
+    /// the loaded one (see `detailBottomStack`), so it never overlaps the player.
     private var playButton: some View {
         Button {
-            if !isThisThoughtLoaded { playbackController.play(thought: thought) }
+            playbackController.play(thought: thought)
         } label: {
             HStack(spacing: CanopySpacing.x2) {
-                Image(systemName: isThisThoughtLoaded ? "waveform" : "play.fill")
-                Text(isThisThoughtLoaded ? "Playing" : "Play recording")
+                Image(systemName: "play.fill")
+                Text("Play recording")
                     .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
             }
             .foregroundStyle(CanopyColor.primaryForeground)
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, CanopySpacing.x4)
-            .padding(.vertical, CanopySpacing.x2)
+            .padding(.vertical, CanopySpacing.x3)
             .background(CanopyColor.primary)
             .clipShape(Capsule())
+            .shadow(color: CanopyColor.overlay.opacity(0.25), radius: 12, y: 6)
         }
-        .disabled(isThisThoughtLoaded)
-        .accessibilityLabel(isThisThoughtLoaded ? "Now playing in the bottom player" : "Play recording")
+        .padding(.horizontal, CanopySpacing.x4)
+        .accessibilityLabel("Play recording")
     }
 
     private func beginEdit() {
