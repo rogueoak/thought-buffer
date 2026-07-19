@@ -551,6 +551,8 @@ use:
   detail header now render one shared `NoteMetaStats` component, so their metadata line cannot drift.
 - **Inline Thoughts header (0016).** The top-level "Thoughts" title sits on the same navigation-bar
   row as the mic and gear buttons (inline title) instead of on its own large-title row below them.
+  SUPERSEDED by spec 0021: the title moved back to a large title below the toolbar, consistent with the
+  folder screens (the inline title read as cramped under the buttons).
 
 ## Undoable delete (spec 0020)
 
@@ -571,3 +573,41 @@ action to the note's actions menu:
   offers "Undo Delete" (and redo re-deletes). Nothing else about shake-to-edit changes.
 - **Purge.** When the undo window elapses the delete is committed (the trashed files are purged), and
   the trash is swept on launch so it never accumulates across app runs.
+
+## Full-text search and bottom-bar redesign (spec 0021)
+
+The bottom of every screen becomes a persistent bar with a wide search field, and search finds notes
+by their whole text, not just the title.
+
+- **Persistent bottom bar.** A shared bar across the list, folder, and note-detail screens: a SEARCH
+  FIELD filling most of the width on the left, ICON-ONLY action buttons on the right (text labels
+  dropped to make room). List/folder screens show new-note + record; the note-detail screen shows
+  resume (only when resuming applies per the audio-retention setting). The record/resume icon keeps its
+  prominent affordance without a text label, and every now-unlabeled button keeps its accessibility
+  label ("New note", "Record", "Resume recording", "Search notes"). The bar is ONE component; each
+  screen passes in its own right-side actions rather than forking it.
+- **Full-text search.** Typing filters to notes whose TITLE or ANY body paragraph contains the query -
+  case-insensitive AND diacritic-insensitive, substring (not title-only). Search is GLOBAL across the
+  whole folder tree, shown as a flat result list; tapping a result opens that note, and clearing the
+  field restores the normal folder view. It reuses the notes the store already loads (no separate
+  index). Searching from the note-detail bar performs the same global search and routes to the results,
+  so search is reachable from anywhere. The match logic is the pure, unit-tested `NoteSearch`.
+- **Empty state.** A list or folder with no notes shows a centered call to action instead of an empty
+  list: the RECORD button in the middle WITH its text label and a NEW-NOTE button directly below it
+  (the one place these keep labels). A non-empty store filtered to zero matches shows a "no matches"
+  state with the search field still visible. The state selection (empty / results / no-matches /
+  normal) is the pure, unit-tested `FolderScreenState`.
+- **Three bottom affordances compose.** The now-playing bar (spec 0015) still sits above the bottom bar
+  while playback is active, and the transient undo-delete chip (spec 0020) now stacks above BOTH in the
+  SAME bottom safe-area inset (a shared VStack), so the three never overlap - the earlier hardcoded
+  overlay clearance for the undo chip is gone (the chip previously overlapped the record control).
+- **Consistent title below the toolbar (revises feedback 0016).** Both the root "Thoughts" screen and
+  every folder screen show their title as a large title BELOW the toolbar buttons, reading identically,
+  instead of the inline title (feedback 0016) that read as cramped under the buttons.
+- **Contextual record + new thought.** Recording or creating a thought while inside a folder files it in
+  THAT folder, not at the root - the record/mic and new-thought actions carry the current folder path
+  through to the dictation session (hands-free Siri/CarPlay starts stay at the root, having no folder
+  context).
+- **Reliable folder rename + Shake to Undo.** Folder rename now presents and applies reliably (the three
+  folder dialogs were un-stacked into one dialog host), and Shake to Undo works (the delete registers on
+  a stable, first-responder-backed `UndoManager` instead of the frequently-nil environment one).

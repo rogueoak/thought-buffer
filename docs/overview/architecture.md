@@ -56,6 +56,12 @@ How the system is built and why.
     unsigned Simulator build and App Store build are unaffected. Ready the day Apple grants the
     entitlement; activating it needs the entitlement plus a CarPlay head unit / the CarPlay simulator.
     See `docs/carplay-audio-entitlement-request.md`.
+- `Models/` - `NoteSearch` (spec 0021) is the pure, unit-testable full-text match seam over the notes
+  the store already loads (no separate index): `matches(_:query:)` tests whether a note's title OR any
+  body paragraph contains the query as a substring, case- and diacritic-insensitively (both sides folded
+  via `.folding(options: [.caseInsensitive, .diacriticInsensitive])`); `results(in:query:)` returns the
+  flat, order-preserving GLOBAL list across all folders; `isActive(_:)` gates results-vs-normal on a
+  non-whitespace query. No SwiftUI import - the folder and note-detail views are thin callers.
 - `Models/` - `Note` (id, title, paragraphs, createdAt, derived snippet + paragraph count) with
   Markdown (de)serialization, plus `MockNotes` (sample data, used only by previews now). The
   value type stays small and tolerant of unknown frontmatter keys so later fields do not break
@@ -360,12 +366,45 @@ How the system is built and why.
   (spec 0015):** a leading swipe adds a Play action - `controller.play(note:)` on a recorded note row
   (no Play on a text-only note), and `controller.playQueue(...)` on a folder row, built from the feed's
   notes filtered to that folder's subtree (`FolderListModel.isDescendant`) with a recording, ordered by
-  the current `NoteSortOrder`. `NowPlayingBar` (a Canopy pill observing the shared controller) is hosted
-  in the bottom safe-area inset above the Record button, on every folder screen, shown only while the
-  controller has a `currentNote`; its title tap routes via `onOpenNote`. Its toolbar's
-  compose button (spec 0013) calls `onNewNote(currentPath)`, and `StreamListView` pushes a `.newNote`
-  route seeded with a fresh `Note(title: "", paragraphs: [], folderPath: currentPath)`. `FolderRow` mirrors `NoteCard`'s surface with a folder
-  glyph, item count, and chevron. `DictationView` binds to `DictationViewModel`; `NoteCard`,
+  the current `NoteSortOrder`. **Persistent bottom bar + search (spec 0021):** the shared `BottomBar`
+  (a Canopy capsule: a wide search field on the left, an icon-only trailing action slot the caller
+  fills - `BottomBarIconButton`/`BottomBarRecordButton` for new-note + record, dropping text labels but
+  keeping accessibility labels) lives in the bottom safe-area inset. `FolderContentsView` renders one of
+  four states chosen by the PURE `FolderScreenState.select(...)`: `.emptyStore` (a centered
+  `FolderEmptyStateCTA` with the LABELED record + new-note buttons, and no bottom bar - the CTA carries
+  the actions), `.searchResults` (a flat GLOBAL result list from `NoteSearch.results` over `feed.notes`,
+  ignoring `folderPath`), `.noMatches` (a message, search field kept visible), or `.normal` (the
+  interleaved `FolderListModel` list). The `searchQuery` is a `@Binding` owned by `StreamListView` (so a
+  search started on the note page can pop to root and land here). The `NowPlayingBar` still sits above
+  the bottom bar in the same inset, and the transient undo-delete chip (spec 0020) now renders at the
+  TOP of that same VStack (its ~5s window timer moved here, lifecycle-tied and keyed on
+  `NoteDeletionController.deleteTrigger`, replacing the old root overlay + hardcoded clearance), so the
+  three bottom affordances compose without overlap. `NoteDetailView`'s bottom bar reuses the SAME
+  `BottomBar` with a resume icon (shown only when `resumeApplies` per the audio-retention setting,
+  computed at the root); its search field routes to the global results on SUBMIT (via `onSearch`, which
+  pops to root and sets the shared query) rather than per keystroke. **Folder dialogs (feedback 0018):**
+  the New folder / Rename / Delete alerts were three STACKED `.alert`s on one node (a SwiftUI flakiness
+  source that broke rename); they are now ONE `FolderDialog` enum (`@State activeDialog`) with each alert
+  on its OWN hidden `Color.clear` background anchor via a per-case binding, and the name text in a
+  separate `@State` so editing it does not churn the enum identity. **Contextual record (feedback
+  0018):** the record/new-thought action carries the current folder path (`onNewThought([String])`), the
+  root captures it at tap time (`newThoughtFolderPath`) and passes it to `DictationViewModel(folderPath:)`
+  so a thought recorded inside a folder is filed there, not at the root; the note page passes its note's
+  `folderPath`, and hands-free entry points pass `[]`. Both the root and folder titles use a large title
+  below the toolbar (feedback 0018, superseding feedback 0016's inline title). `FolderRow` mirrors
+  `NoteCard`'s surface with a folder glyph, item count, and chevron. `UndoManagerHost` (a
+  `UIViewControllerRepresentable` embedding a zero-size first-responder `UIViewController` that vends a
+  STABLE `UndoManager`) is overlaid at the root and its manager injected into `NoteDeletionController`,
+  so Shake to Undo works (feedback 0018) - `@Environment(\.undoManager)` is frequently nil in plain
+  SwiftUI, so the delete had nothing registered for the shake to reach. The host RE-CLAIMS first
+  responder on keyboard-hide / text end-editing / app-active (not just on appear), because the
+  now-omnipresent search field steals first responder and would otherwise break the shake after the first
+  text focus. The note-detail bottom bar's "search / resume / hidden-while-editing" choice is the pure,
+  tested `NoteDetailBottomBar.decide(...)` (hidden entirely while editing so the search field never
+  renders under the keyboard and a new note does not show two competing fields); the folder screen
+  computes its search results ONCE per render (a single `resolveContent()` feeds both the state selection
+  and the results list, scanning only when a search is active) instead of rescanning per keystroke.
+  `DictationView` binds to `DictationViewModel`; `NoteCard`,
   `NoteDetailView` stay presentational. On a committed edit, `StreamListView`'s `onCommitEdit` runs
   the note through the pure `TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)`
   before saving (spec 0016): when the flag is on it reflows continuation lines, rebuilding via
@@ -414,7 +453,18 @@ stores' `softDelete`/`restore`/`purge`/`purgeAllTrash` (audio sibling moved + re
 root when the original folder is gone, trash stays inside the store root, purge is permanent), and
 the same seam driven through `StreamFeed`/`NoteStoreDriver` (delete returns a restorable token,
 restore re-inserts the note and audio, purge removes it). The system `UndoManager`/shake gesture is
-verified manually, not in tests.
+verified manually, not in tests. Plus the full-text search + bottom-bar redesign (spec 0021):
+`NoteSearch` (title match, body-paragraph match, substring, case- and diacritic-insensitivity, no-match,
+empty/whitespace query returns all, GLOBAL multi-folder results in preserved order) and `FolderScreenState`
+(empty-store-regardless-of-search, normal, results, no-matches selection, plus search-field visibility).
+The bottom-bar/now-playing/undo composition, the live search field, the empty-state CTA, and the
+note-page search routing are UI-only and verified on device. Plus the feedback-0018 fixes:
+`FolderRenameDriverTests` (rename through `StreamFeed` renames on disk, moves notes, returns the name,
+republishes; conflict + invalid-name rejection), the injected-UndoManager registration
+(`NoteDeletionControllerTests` - a delete registers "Undo Delete" on the injected manager; the shake
+gesture and the undo-through-the-manager restore stay manual-verify), and contextual folder filing
+(`DictationViewModelTests` - a session created from path `[X]` files its thought in `[X]`; the default
+files at the root).
 The generated scheme runs them.
 
 ## Design tokens

@@ -19,8 +19,11 @@ final class NoteDeletionController: ObservableObject {
     @Published private(set) var deleteTrigger = 0
 
     private let feed: StreamFeed
-    /// The system UndoManager for the active scene, set from the SwiftUI `@Environment(\.undoManager)`
-    /// so a shake routes to `undo()`/redo. Weak: the manager is owned by the responder chain, not us.
+    /// The UndoManager the Shake to Undo gesture reaches, injected by the composition root. It is the
+    /// STABLE, first-responder-backed manager `UndoManagerHost` vends (spec 0021 fix), NOT SwiftUI's
+    /// `@Environment(\.undoManager)`, which is nil in plain SwiftUI - so a shake previously found no
+    /// registered action. Registering the delete on this manager makes `undo()`/redo route to the same
+    /// one the responder-chain shake resolves. Weak: the manager is owned by the host controller, not us.
     weak var undoManager: UndoManager?
 
     init(feed: StreamFeed) {
@@ -101,8 +104,14 @@ final class NoteDeletionController: ObservableObject {
     }
 
     /// The UndoManager's undo action: restore the note (mirrors the in-app `undo()`), and if this note is
-    /// the one the in-app affordance is tracking, clear it so its timer stops purging.
-    private func undoDelete(_ token: DeletedNote) async {
+    /// the one the in-app affordance is tracking, clear it so its timer stops purging. Registers the redo.
+    ///
+    /// Internal (not `private`) so tests can drive the SAME restore + redo-registration the manager's
+    /// registered closure invokes, WITHOUT calling `UndoManager.undo()` synchronously - that call spawns
+    /// this as an async Task that then re-registers on the manager outside its undoing state, which
+    /// corrupts the heap in the unit-test harness (no real run loop to close the group). Driving this seam
+    /// directly proves the shake channel's restore + re-arm without the run-loop coupling.
+    func undoDelete(_ token: DeletedNote) async {
         if pending == token { pending = nil }
         await feed.restore(token)
         registerRedo(for: token)
@@ -123,7 +132,10 @@ final class NoteDeletionController: ObservableObject {
     /// the undo against the token the RE-DELETE returned, not the original: `softDelete` is not required
     /// to be deterministic, and a fresh delete produces a fresh trash location, so the undo must key off
     /// the new token. A failed re-delete (nil) simply leaves nothing pending.
-    private func redoDelete(_ token: DeletedNote) async {
+    ///
+    /// Internal (not `private`) for the same testing reason as `undoDelete`: tests drive the re-delete +
+    /// re-registration seam directly instead of through `UndoManager.redo()`, which is run-loop-coupled.
+    func redoDelete(_ token: DeletedNote) async {
         if let previous = pending, previous != token {
             pending = nil
             await feed.purge(previous)
