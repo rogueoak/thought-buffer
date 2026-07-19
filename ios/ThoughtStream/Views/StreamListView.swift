@@ -109,7 +109,8 @@ struct StreamListView: View {
         thoughtStoreKind: ThoughtStoreKind = .local,
         thoughtObserver: UbiquitousThoughtObserving? = nil,
         sessionRoute: PendingSessionRoute,
-        playbackController: ThoughtPlaybackController? = nil
+        playbackController: ThoughtPlaybackController? = nil,
+        watchCoordinator: PhoneConnectivityCoordinator? = nil
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
@@ -118,6 +119,12 @@ struct StreamListView: View {
         self.playbackController = playbackController
         self.sessionRoute = sessionRoute
         let feed = StreamFeed(store: store, observer: thoughtObserver)
+        // Push the recent-thoughts projection to a paired Apple Watch whenever the list changes (spec
+        // 0023), so the wrist browse list stays fresh after a save / delete / move / synced-in edit. Nil
+        // coordinator (tests, iPad) leaves this unwired, so the phone-only path is unchanged.
+        if let watchCoordinator {
+            feed.onThoughtsChanged = { _ in watchCoordinator.pushRecentThoughts() }
+        }
         _feed = StateObject(wrappedValue: feed)
         _deletion = StateObject(wrappedValue: ThoughtDeletionController(feed: feed))
         _sortOrder = State(initialValue: settingsStore.thoughtSortOrder)

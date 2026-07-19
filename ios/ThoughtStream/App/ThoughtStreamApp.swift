@@ -110,7 +110,8 @@ struct ThoughtStreamApp: App {
                     thoughtStoreKind: dependencies.thoughtStoreKind,
                     thoughtObserver: dependencies.thoughtObserver,
                     sessionRoute: dependencies.sessionRoute,
-                    playbackController: dependencies.playbackController
+                    playbackController: dependencies.playbackController,
+                    watchCoordinator: dependencies.watchCoordinator
                 )
             }
         } else {

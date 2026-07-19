@@ -636,3 +636,38 @@ multi-column layout, and on iPhone it is unchanged.
   thought cards read well in a wider column. iPad supports all orientations (rotation and multitasking
   split adapt without a broken layout); iPhone stays portrait-only. The launch cover, share sheet, and
   dictation UI lay out correctly on iPad.
+
+## Apple Watch quick-capture and browse (spec 0023)
+
+Thought Stream reaches the wrist: record a voice thought from the watch, and browse recent thoughts on
+it. The watch does NOT transcribe - it captures audio and syncs it to the phone, which transcribes and
+files it as a normal thought. This is a paired watchOS app, embedded in and a companion of the iPhone
+app.
+
+- **Quick capture on the watch.** A prominent Record button records the watch mic to a compressed `.m4a`;
+  tap to start, tap to stop, with a haptic and a glanceable recording state. On stop the capture is queued
+  for RELIABLE background transfer to the phone (`transferFile`), so a thought spoken while the phone is
+  away or the watch app closes is not lost - it syncs once connectivity returns. A "Syncing N captures"
+  line shows while a transfer is pending.
+- **Phone transcribes and files it.** The phone receives the `.m4a` plus a small metadata payload (capture
+  id, when it was spoken, an optional folder hint) and turns it into a normal thought: it runs the iOS 26
+  file-based speech engine over the recording, groups the result into paragraphs with timings (the same
+  pause-based grouping dictation uses), derives the title from the first sentence, attaches the audio, and
+  saves it through the existing store - into the folder hint when it still exists, else the top level. The
+  capture's timestamp becomes the thought's, so a thought that syncs minutes later still sorts by when it
+  was spoken. If transcription fails or finds no words, the thought is filed AUDIO-ONLY (a "Voice thought -
+  <time>" title, the recording attached and playable) rather than dropping the capture - the text can be
+  regenerated later.
+- **Browse and play on the watch.** The phone pushes a lightweight recent-thoughts list (title, one-line
+  preview, duration) to the watch, which shows it newest-first. Tapping a thought shows its text and, for a
+  recorded thought, a Play control that fetches the audio from the phone on demand and plays it on the
+  watch. Read-only: no editing, folders, search, or settings on the wrist.
+- **Shared, on-device, private.** The watch and phone share one definition of the wire format and the
+  thought model (no drift). Audio and transcription stay on the user's devices; nothing leaves them. The
+  watch link is inactive on an iPad (no paired watch) and unaffects the phone-only path.
+
+Real on-watch mic capture, the live watch<->phone transfer, and real file transcription need a physical
+device / a paired simulator (the watch simulator has no mic and WatchConnectivity needs a pairing); the
+pure cores - the wire codecs, the file-transcription mapping, the recent-thoughts projection, and the
+ingest/audio-only-fallback logic - are proven by unit tests. Complications and Siri on the watch are out
+(a possible follow-up).

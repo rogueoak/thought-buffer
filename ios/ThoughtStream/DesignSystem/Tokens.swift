@@ -21,7 +21,13 @@ public extension Color {
     /// Hexes are 0xRRGGBB. On platforms with UIKit this uses a dynamic UIColor provider so it
     /// updates live when the color scheme changes; elsewhere it falls back to the light value.
     init(light: UInt, dark: UInt) {
-        #if canImport(UIKit)
+        // watchOS has no `UIColor(dynamicProvider:)` / trait `userInterfaceStyle` (spec 0023): the watch
+        // renders on a dark background, so it resolves to the DARK value. iOS keeps the live dynamic
+        // provider. This platform guard is the one hand-edit to this generated file; preserve it on a
+        // re-sync from Canopy.
+        #if os(watchOS)
+        self = Color(rgb: dark)
+        #elseif canImport(UIKit)
         self = Color(UIColor { traits in
             traits.userInterfaceStyle == .dark ? UIColor(rgb: dark) : UIColor(rgb: light)
         })
