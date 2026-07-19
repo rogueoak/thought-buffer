@@ -194,6 +194,7 @@ final class DictationViewModel: ObservableObject {
         recordsAudio: Bool = false,
         audioTrimmer: AudioTrimming? = nil,
         controlWord: String = MiraTextProcessor.defaultControlWord,
+        folderPath: [String] = [],
         resuming: Note? = nil
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
@@ -205,6 +206,10 @@ final class DictationViewModel: ObservableObject {
         self.recordsAudio = recordsAudio
         self.audioTrimmer = audioTrimmer
         self.controlWord = controlWord
+        // A brand-new session started while browsing a folder files its thought THERE, not at the root
+        // (feedback: the record + new-thought actions must be contextual). A resuming note overrides this
+        // below with the folder it already lives in.
+        self.folderPath = folderPath
         // Resuming an existing note (feedback 0008): keep its id, creation time, and text so the
         // session continues that note (saving overwrites the same file) rather than starting a new
         // one. New spoken content is appended as text; the original recording and its per-paragraph
@@ -217,8 +222,9 @@ final class DictationViewModel: ObservableObject {
             paragraphTimings = Self.seedTimings(for: resuming)
             existingAudioFileName = resuming.audioFileName
             // Keep the resumed note in the folder it already lives in, so continuing it re-saves in
-            // place rather than relocating it to the top level.
-            folderPath = resuming.folderPath
+            // place rather than relocating it to the top level. Overrides the `folderPath` argument (a
+            // resume ignores any browsing-context path). `self.` because the init parameter shadows it.
+            self.folderPath = resuming.folderPath
             // Keep a user-set title through the resume (spec 0009); a derived title re-derives normally.
             if resuming.hasCustomTitle {
                 hasCustomTitle = true

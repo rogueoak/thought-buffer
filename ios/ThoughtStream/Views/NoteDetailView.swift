@@ -12,10 +12,10 @@ struct NoteDetailView: View {
     // `@State` stays local so per-note editing is not reworked into the root.
     @Environment(\.scenePhase) private var scenePhase
 
-    /// Called when the user taps the toolbar mic to start a fresh thought (feedback 0011), so the
-    /// composition root requests a new session through the same route the list uses. Nil at
+    /// Called when the user taps the toolbar mic to start a fresh thought (feedback 0011), carrying a
+    /// folder path so the new thought is filed contextually (this note's folder), not at the root. Nil at
     /// bare/preview call sites (no mic shown).
-    private let onNewThought: (() -> Void)?
+    private let onNewThought: (([String]) -> Void)?
     /// Called when the user taps the toolbar gear (feedback 0011), so the composition root opens
     /// Settings. Nil at bare/preview call sites (no gear shown).
     private let onOpenSettings: (() -> Void)?
@@ -33,6 +33,15 @@ struct NoteDetailView: View {
     /// composition root soft-deletes it through the shared undoable path AND pops back to the list where
     /// the undo affordance is visible. Nil at bare/preview call sites (no Delete shown).
     private let onDelete: ((UUID) -> Void)?
+    /// Called with a search query typed into the persistent bottom bar's search field (spec 0021), so
+    /// the composition root routes to the SAME global results the list shows - search is reachable from
+    /// the note page too. Nil at bare/preview call sites (the bottom bar then omits the field).
+    private let onSearch: ((String) -> Void)?
+    /// Whether the resume icon applies for this note per the audio-retention setting (spec 0021):
+    /// resuming an existing recording always applies; recording onto a text-only note applies only when
+    /// the retention policy records audio. Computed by the composition root and passed in so the pure
+    /// decision is not re-derived in the view. When false, the bottom bar omits the resume icon.
+    private let resumeApplies: Bool
     /// Whether this note is a brand-new, not-yet-persisted note opened straight into the editor
     /// (spec 0013). It stays true until the first non-empty commit persists real content; while true,
     /// leaving with no title and no body discards the note via `onDiscardEmpty`.
@@ -62,6 +71,12 @@ struct NoteDetailView: View {
     @State private var copiedTrigger = 0
     @State private var showCopiedConfirmation = false
 
+    /// The live query typed into the persistent bottom bar's search field (spec 0021). Because search is
+    /// GLOBAL and presented as a flat list on the folder screens, a non-empty query here routes to the
+    /// list results via `onSearch` (popping back to the list) - this view does not render its own
+    /// results. Kept local so the field is inert on a bare/preview call site.
+    @State private var searchQuery = ""
+
     /// Build the detail view. Prefers the ONE shared `NotePlaybackController` (so the phone and
     /// CarPlay drive the same media center and never race); when none is supplied - a preview, a
     /// screenshot build, or a bare call site - it falls back to a private controller over the given
@@ -73,12 +88,14 @@ struct NoteDetailView: View {
         resolver: AudioURLResolving,
         player: AudioNotePlayer? = nil,
         controller: NotePlaybackController? = nil,
-        onNewThought: (() -> Void)? = nil,
+        onNewThought: (([String]) -> Void)? = nil,
         onOpenSettings: (() -> Void)? = nil,
         onResume: ((Note) -> Void)? = nil,
         onCommitEdit: ((Note) -> Void)? = nil,
         onDiscardEmpty: (() -> Void)? = nil,
         onDelete: ((UUID) -> Void)? = nil,
+        onSearch: ((String) -> Void)? = nil,
+        resumeApplies: Bool = true,
         startInEdit: Bool = false
     ) {
         self.note = note
@@ -88,6 +105,8 @@ struct NoteDetailView: View {
         self.onCommitEdit = onCommitEdit
         self.onDiscardEmpty = onDiscardEmpty
         self.onDelete = onDelete
+        self.onSearch = onSearch
+        self.resumeApplies = resumeApplies
         _paragraphs = State(initialValue: note.paragraphs)
         _hasCustomTitle = State(initialValue: note.hasCustomTitle)
         _customTitleText = State(initialValue: note.title)
@@ -181,15 +200,16 @@ struct NoteDetailView: View {
         // modifier so a rapid double-copy re-arms it and navigation cancels its timer. Pinned near the
         // bottom so it clears the note text and the toolbar.
         .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .bottom)
-        // Resume sits centered at the bottom of the screen (feedback 0008), clear of the scrolling
-        // note body. Hidden while editing text, and only when a call site can reopen a session.
+        // The persistent bottom bar (spec 0021): a wide search field on the left, the resume icon on the
+        // right. Search is global, so a query here routes to the list results via `onSearch`; the resume
+        // icon appears only when a call site can reopen a session, the retention setting makes resuming
+        // applicable, and the note is not mid-edit or a still-empty brand-new note (nothing to record
+        // onto yet, and it would race the discard-on-leave). It is hidden entirely while editing, so the
+        // Done flow owns the screen. The bar reuses the SAME component the list uses (not a fork).
         .safeAreaInset(edge: .bottom) {
-            // Hide the record affordance while a brand-new note is still empty (spec 0013): there is
-            // nothing to record onto yet, and it would race the discard-on-leave. It appears once the
-            // note has content (committed, so no longer unsaved).
-            if let onResume, !isEditingAnything, !isUnsavedNewNote {
-                resumeButton { onResume(currentNote) }
-                    .padding(.bottom, CanopySpacing.x4)
+            if onSearch != nil || (onResume != nil && resumeApplies) {
+                bottomBar
+                    .padding(.bottom, CanopySpacing.x2)
             }
         }
         .navigationTitle(currentNote.title)
@@ -210,7 +230,10 @@ struct NoteDetailView: View {
             if !isEditingAnything {
                 if let onNewThought {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button(action: onNewThought) {
+                        Button {
+                            // File the new thought in THIS note's folder (contextual), not the root.
+                            onNewThought(note.folderPath)
+                        } label: {
                             Image(systemName: "mic.fill")
                         }
                         .tint(CanopyColor.primary)
@@ -329,26 +352,38 @@ struct NoteDetailView: View {
         }
     }
 
-    /// The record affordance (reopen the note into a dictation session), styled as a prominent pill
-    /// for the bottom bar. Labeled "Record" when the note has no audio yet - tapping it captures a
-    /// real recording (spec 0013) - and "Resume" once it already carries a recording (feedback 0008).
-    private func resumeButton(action: @escaping () -> Void) -> some View {
-        let hasAudio = currentNote.hasAudio
-        let title = hasAudio ? "Resume" : "Record"
-        return Button(action: action) {
-            HStack(spacing: CanopySpacing.x2) {
-                Image(systemName: "mic.fill")
-                Text(title)
-                    .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
+    /// The persistent bottom bar for the note page (spec 0021): the SAME `BottomBar` component the list
+    /// uses, with a search field and a resume icon on the right. The search field is shown only when the
+    /// call site can route a search (`onSearch`); the resume icon only when a call site can reopen a
+    /// session, the retention makes resuming applicable, and the note is neither mid-edit nor a
+    /// still-empty new note.
+    private var bottomBar: some View {
+        let showsSearch = onSearch != nil
+        let showsResume = onResume != nil && resumeApplies && !isEditingAnything && !isUnsavedNewNote
+        // Submitting a non-empty query routes to the SAME global results the folder screens render (spec
+        // 0021): the composition root pops back to the list and applies the query there, so search from
+        // the note page behaves identically. Routing on SUBMIT (not every keystroke) lets the user type a
+        // multi-character query on the note page before it pops - a per-keystroke route would tear this
+        // view down on the first character.
+        return BottomBar(
+            query: $searchQuery,
+            showsSearchField: showsSearch,
+            onSubmit: {
+                if NoteSearch.isActive(searchQuery) { onSearch?(searchQuery) }
             }
-            .foregroundStyle(CanopyColor.primaryForeground)
-            .padding(.horizontal, CanopySpacing.x6)
-            .padding(.vertical, CanopySpacing.x3)
-            .background(CanopyColor.primary)
-            .clipShape(Capsule())
-            .shadow(color: CanopyColor.overlay.opacity(0.25), radius: 12, y: 6)
+        ) {
+            if showsResume {
+                BottomBarRecordButton(accessibilityLabel: resumeAccessibilityLabel) {
+                    onResume?(currentNote)
+                }
+            }
         }
-        .accessibilityLabel(hasAudio ? "Resume dictating this note" : "Record audio for this note")
+    }
+
+    /// The resume icon's accessibility label (the text label is dropped in the bottom bar, spec 0021):
+    /// "Resume recording" for a note that already carries audio, else "Record audio for this note".
+    private var resumeAccessibilityLabel: String {
+        currentNote.hasAudio ? "Resume recording" : "Record audio for this note"
     }
 
     /// The simple play / stop control for the note's recording. Play / stop only - no scrubbing or

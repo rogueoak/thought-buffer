@@ -19,8 +19,11 @@ final class NoteDeletionController: ObservableObject {
     @Published private(set) var deleteTrigger = 0
 
     private let feed: StreamFeed
-    /// The system UndoManager for the active scene, set from the SwiftUI `@Environment(\.undoManager)`
-    /// so a shake routes to `undo()`/redo. Weak: the manager is owned by the responder chain, not us.
+    /// The UndoManager the Shake to Undo gesture reaches, injected by the composition root. It is the
+    /// STABLE, first-responder-backed manager `UndoManagerHost` vends (spec 0021 fix), NOT SwiftUI's
+    /// `@Environment(\.undoManager)`, which is nil in plain SwiftUI - so a shake previously found no
+    /// registered action. Registering the delete on this manager makes `undo()`/redo route to the same
+    /// one the responder-chain shake resolves. Weak: the manager is owned by the host controller, not us.
     weak var undoManager: UndoManager?
 
     init(feed: StreamFeed) {

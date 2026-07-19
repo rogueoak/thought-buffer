@@ -100,6 +100,30 @@ final class DictationViewModelTests: XCTestCase {
         XCTAssertEqual(store.loadAll().count, 1)
     }
 
+    /// A brand-new session started while browsing a folder files its thought in THAT folder (feedback:
+    /// the record action must be contextual). Creating from path ["Work", "Q1"] yields a thought whose
+    /// `folderPath` is ["Work", "Q1"], not the root.
+    func testNewSessionInFolderFilesThoughtThere() throws {
+        let model = DictationViewModel(store: store, folderPath: ["Work", "Q1"])
+        model.injectFinalized("A thought recorded inside a folder.")
+
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.folderPath, ["Work", "Q1"])
+
+        // It really lands in that folder on disk, not the root.
+        let reloaded = try XCTUnwrap(store.load(id: saved.id))
+        XCTAssertEqual(reloaded.folderPath, ["Work", "Q1"])
+    }
+
+    /// The default (no folder) still files at the root, so a session from the root list or a hands-free
+    /// entry point (Siri/CarPlay, which pass no folder) is unchanged.
+    func testNewSessionWithNoFolderFilesAtRoot() throws {
+        let model = DictationViewModel(store: store)
+        model.injectFinalized("A top-level thought.")
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.folderPath, [])
+    }
+
     func testFinishWithNothingCapturedSavesNothing() throws {
         let model = DictationViewModel(store: store)
         XCTAssertNil(try model.finish())

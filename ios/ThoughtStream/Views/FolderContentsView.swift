@@ -6,8 +6,14 @@ import SwiftUI
 /// It shows the child folders at `currentPath` and the notes whose `folderPath == currentPath`,
 /// INTERLEAVED into one list sorted by the chosen `NoteSortOrder` (via `FolderListModel`). Folder rows
 /// navigate (tap = push); note rows navigate to detail. Folder rows carry Rename / Delete; note rows
-/// carry Move-to-folder and swipe-to-delete. The toolbar adds new-folder + sort, and the record button
-/// is pinned in the bottom safe area, exactly as the flat stream had it.
+/// carry Move-to-folder and swipe-to-delete.
+///
+/// Spec 0021 gives it the persistent bottom bar (search field + icon-only new-note + record) and
+/// GLOBAL full-text search: typing filters `feed.notes` across the WHOLE tree to a flat results list
+/// (via `NoteSearch`); tapping a result opens it; clearing restores the normal folder list. An empty
+/// store shows a centered record + new-note CTA instead of an empty list; a non-empty store filtered to
+/// zero matches shows a "no matches" state with the field still visible. The state selection is the
+/// pure `FolderScreenState`.
 struct FolderContentsView: View {
     @ObservedObject var feed: StreamFeed
     /// This screen's folder path (root = []). Notes shown are those whose `folderPath` equals this;
@@ -15,6 +21,11 @@ struct FolderContentsView: View {
     let currentPath: [String]
     /// The shared sort order, bound so the toolbar menu here re-sorts the whole app live.
     @Binding var sortOrder: NoteSortOrder
+    /// The live search query for the persistent bottom bar (spec 0021). Non-whitespace text switches the
+    /// screen to the flat global results list; clearing it restores the normal folder view. Bound from
+    /// the root (`StreamListView`) so a search initiated on the note-detail page can pop back and land in
+    /// the ROOT folder screen's field, driving the same global results.
+    @Binding var searchQuery: String
 
     /// The ONE shared playback controller (spec 0008), threaded down so a leading swipe can play a note
     /// or a folder's queue through the same path the detail view, CarPlay, and the now-playing bar
@@ -27,28 +38,39 @@ struct FolderContentsView: View {
     /// Create a blank keyboard note filed in this screen's folder (spec 0013). Carries `currentPath`
     /// so the new note lands in the folder the user is currently browsing.
     let onNewNote: ([String]) -> Void
-    let onNewThought: () -> Void
+    /// Start a new dictation session (the mic / Record action), filed into the folder path passed in so
+    /// a thought recorded while browsing a folder lands in THAT folder, not at the root (feedback: the
+    /// record action must be contextual, like the new-note action). Carries `currentPath`.
+    let onNewThought: ([String]) -> Void
     let onOpenSettings: () -> Void
     /// Soft-delete a note by id through the shared undoable path (spec 0020), so the list swipe and the
     /// list-row context-menu Delete both route through the composition root's `NoteDeletionController`
     /// (which registers undo + shows the affordance) rather than deleting the store directly.
     let onDeleteNote: (UUID) -> Void
+    /// The shared undoable-delete coordinator (spec 0020), owned by the root and observed here so the
+    /// "Note deleted - Undo" affordance renders in THIS screen's bottom stack, ABOVE the now-playing bar
+    /// and persistent bottom bar (spec 0021 reconciliation) - so the three compose via one VStack rather
+    /// than a hardcoded overlay clearance. Optional so a preview / bare call site without a coordinator
+    /// simply omits the chip; the root still owns the UndoManager wiring and the window timer.
+    @ObservedObject var deletion: NoteDeletionController
 
     /// The child folder names at this path, loaded off-main (the store walk can coordinate on iCloud)
     /// and refreshed after a folder edit. Kept local to this screen so each path shows its own folders.
     @State private var childFolderNames: [String] = []
     @State private var folderLoaded = false
 
-    // New-folder alert.
-    @State private var showNewFolderAlert = false
-    @State private var newFolderName = ""
-
-    // Rename alert (targets a specific child folder path).
-    @State private var renameTarget: [String]?
-    @State private var renameName = ""
-
-    // Delete confirmation (targets a specific child folder path).
-    @State private var deleteTarget: [String]?
+    /// The single active folder dialog (spec 0021 rename-bug fix). The New folder / Rename folder /
+    /// Delete folder dialogs were three STACKED `.alert(...)` modifiers on one view, each driven by its
+    /// own `@State`, with rename/delete presented straight from a `.contextMenu` action - a classic
+    /// SwiftUI flakiness source where a stacked alert may fail to present or a rename never applies. They
+    /// are now ONE `.alert(item:)` host driven by this single enum, so exactly one alert node exists and
+    /// its presentation is item-driven (reliable) rather than a bool that races the context-menu
+    /// dismissal. The rename/new-folder text lives in the separate `folderNameField` so the TextField
+    /// binding is stable across the item change.
+    @State private var activeDialog: FolderDialog?
+    /// The text field backing the New folder and Rename folder alerts. Seeded when the dialog opens and
+    /// read when its action runs, kept out of the enum so editing it does not churn the item identity.
+    @State private var folderNameField = ""
 
     // Move-to-folder sheet (targets a specific note).
     @State private var moveNote: Note?
@@ -72,29 +94,52 @@ struct FolderContentsView: View {
         )
     }
 
+    /// The flat, GLOBAL search results across the whole tree (spec 0021), newest first (the feed loads
+    /// notes newest first and `NoteSearch` preserves order). Computed only when a search is active.
+    private var searchResults: [Note] {
+        NoteSearch.results(in: feed.notes, query: searchQuery)
+    }
+
+    /// Whether the search field currently holds a non-whitespace query.
+    private var searchActive: Bool {
+        NoteSearch.isActive(searchQuery)
+    }
+
+    /// The pure state selection (spec 0021): empty store, active-search results, no-matches, or the
+    /// normal folder list. `storeHasNotes` is the WHOLE store (search is global), so the empty-state CTA
+    /// shows only when there is genuinely nothing anywhere - a note in another folder keeps the normal
+    /// list here. Gated on the initial load so a not-yet-loaded feed does not flash the empty CTA.
+    private var screenState: FolderScreenState {
+        guard feed.didLoad, folderLoaded else { return .normal }
+        return FolderScreenState.select(
+            storeHasNotes: !feed.notes.isEmpty,
+            searchActive: searchActive,
+            hasSearchMatches: !searchResults.isEmpty
+        )
+    }
+
     var body: some View {
         Group {
-            if items.isEmpty && feed.didLoad && folderLoaded {
-                emptyState
+            switch screenState {
+            case .emptyStore:
+                FolderEmptyStateCTA(
+                    isRoot: currentPath.isEmpty,
+                    onRecord: { onNewThought(currentPath) },
+                    onNewNote: { onNewNote(currentPath) }
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .searchResults:
+                searchResultsList
+            case .noMatches:
+                noMatchesState
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                list
+            case .normal:
+                normalContent
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CanopyColor.bg.ignoresSafeArea())
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: CanopySpacing.x3) {
-                // The now-playing bar sits ABOVE the Record button on every folder screen (spec 0015),
-                // shown only while the shared controller has a loaded note. Tapping its title routes to
-                // that note via the same `onOpenNote` the rows use.
-                if let controller = playbackController {
-                    NowPlayingBar(controller: controller, onOpenNote: onOpenNote)
-                }
-                RecordButton { onNewThought() }
-            }
-            .padding(.bottom, CanopySpacing.x6)
-        }
+        .safeAreaInset(edge: .bottom) { bottomStack }
         .overlay(alignment: .top) {
             if feed.deleteFailed {
                 DeleteFailedBanner()
@@ -118,24 +163,15 @@ struct FolderContentsView: View {
         .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
         .animation(.easeInOut(duration: 0.2), value: folderError)
         .toolbar { toolbarContent }
-        .alert("New folder", isPresented: $showNewFolderAlert) {
-            TextField("Name", text: $newFolderName)
-            Button("Create") { Task { await createFolder() } }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Create a folder here.")
-        }
-        .alert("Rename folder", isPresented: renameAlertBinding) {
-            TextField("Name", text: $renameName)
-            Button("Rename") { Task { await renameFolder() } }
-            Button("Cancel", role: .cancel) { renameTarget = nil }
-        }
-        .alert("Delete folder?", isPresented: deleteAlertBinding) {
-            Button("Delete", role: .destructive) { Task { await deleteFolder() } }
-            Button("Cancel", role: .cancel) { deleteTarget = nil }
-        } message: {
-            Text("This deletes the folder and everything inside it - notes, recordings, and subfolders. This can't be undone.")
-        }
+        // The folder dialogs (spec 0021 rename-bug fix). All three were STACKED `.alert`s on this one
+        // view node, which is a classic SwiftUI flakiness source (a sibling alert can swallow another's
+        // presentation, and a rename triggered from a `.contextMenu` may never present or apply). Each
+        // alert now hangs off its OWN hidden background anchor, driven by the single `activeDialog` enum
+        // via per-case bindings, so no two alerts share a node and none can lose the race. Alerts keep
+        // the TextField form (the item-based `Alert` value has no text field), just un-stacked.
+        .background(newFolderAlertAnchor)
+        .background(renameFolderAlertAnchor)
+        .background(deleteFolderAlertAnchor)
         .sheet(item: $moveNote) { note in
             MoveToFolderSheet(
                 note: note,
@@ -156,9 +192,55 @@ struct FolderContentsView: View {
         }
     }
 
-    // MARK: - List
+    // MARK: - Bottom stack (spec 0021)
 
-    private var list: some View {
+    /// The composed bottom safe-area stack (spec 0021 reconciliation of the three bottom affordances):
+    /// from top to bottom, the transient "Note deleted - Undo" chip (spec 0020), the now-playing bar
+    /// (spec 0015), then the persistent bottom bar (spec 0021), all in ONE inset so they stack cleanly
+    /// via the SHARED VStack spacing and reserve real layout space - no hardcoded overlay clearance, and
+    /// no overlap. Each element appears only when relevant (undo chip while a delete is pending,
+    /// now-playing bar while something plays), so the stack is just the bottom bar in the common case.
+    /// The bar hides its search field in a truly empty store but still shows Record, so recording is
+    /// always reachable.
+    private var bottomStack: some View {
+        VStack(spacing: CanopySpacing.x3) {
+            if deletion.pending != nil {
+                UndoDeleteAffordance(onUndo: { Task { await deletion.undo() } })
+                    .transition(.opacity)
+            }
+            // In a truly empty store the centered CTA already carries labeled Record + New-note buttons
+            // (spec 0021), so the bottom bar (which would only duplicate them, with no field to search)
+            // is omitted; the undo chip above can still show while a just-deleted note is pending.
+            if screenState != .emptyStore {
+                if let controller = playbackController {
+                    NowPlayingBar(controller: controller, onOpenNote: onOpenNote)
+                }
+                BottomBar(query: $searchQuery, showsSearchField: screenState.showsSearchField) {
+                    BottomBarIconButton(
+                        systemImage: "square.and.pencil",
+                        accessibilityLabel: "New note"
+                    ) { onNewNote(currentPath) }
+                    BottomBarRecordButton(accessibilityLabel: "Record") { onNewThought(currentPath) }
+                }
+            }
+        }
+        .padding(.bottom, CanopySpacing.x2)
+        .animation(.easeInOut(duration: 0.2), value: deletion.pending != nil)
+        // The undo window's ~5s timer is lifecycle-tied to THIS view (spec 0020), the same shape as the
+        // copied-confirmation chip: keyed on the monotonic delete trigger so a rapid second delete
+        // re-arms it and navigation cancels it, never a detached timer. On expiry with a still-pending
+        // delete it commits (purges). The root still owns the UndoManager + scene-phase commit.
+        .task(id: deletion.deleteTrigger) {
+            guard deletion.deleteTrigger > 0, deletion.pending != nil else { return }
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled else { return }
+            await deletion.commitWindow()
+        }
+    }
+
+    // MARK: - Lists
+
+    private var normalContent: some View {
         List {
             ForEach(items) { item in
                 switch item {
@@ -167,6 +249,20 @@ struct FolderContentsView: View {
                 case let .note(note):
                     noteRow(note: note)
                 }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .padding(.top, CanopySpacing.x2)
+    }
+
+    /// The flat GLOBAL search results (spec 0021): every matching note anywhere in the tree, as note
+    /// rows. Tapping opens the note; the rows keep their swipe/context actions so a match can be played,
+    /// moved, shared, or deleted in place.
+    private var searchResultsList: some View {
+        List {
+            ForEach(searchResults) { note in
+                noteRow(note: note)
             }
         }
         .listStyle(.plain)
@@ -189,13 +285,12 @@ struct FolderContentsView: View {
         .rowInsets()
         .contextMenu {
             Button {
-                renameName = name
-                renameTarget = folderPath
+                beginRename(name: name, path: folderPath)
             } label: {
                 Label("Rename", systemImage: "pencil")
             }
             Button(role: .destructive) {
-                deleteTarget = folderPath
+                activeDialog = .deleteFolder(path: folderPath)
             } label: {
                 Label("Delete", systemImage: "trash")
             }
@@ -215,13 +310,12 @@ struct FolderContentsView: View {
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
-                deleteTarget = folderPath
+                activeDialog = .deleteFolder(path: folderPath)
             } label: {
                 Label("Delete", systemImage: "trash")
             }
             Button {
-                renameName = name
-                renameTarget = folderPath
+                beginRename(name: name, path: folderPath)
             } label: {
                 Label("Rename", systemImage: "pencil")
             }
@@ -303,8 +397,8 @@ struct FolderContentsView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
             Button {
-                newFolderName = ""
-                showNewFolderAlert = true
+                folderNameField = ""
+                activeDialog = .newFolder
             } label: {
                 Image(systemName: "folder.badge.plus")
             }
@@ -322,19 +416,8 @@ struct FolderContentsView: View {
             }
             .tint(CanopyColor.primary)
         }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button { onNewNote(currentPath) } label: {
-                Image(systemName: "square.and.pencil")
-            }
-            .tint(CanopyColor.primary)
-            .accessibilityLabel("New note")
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button { onNewThought() } label: {
-                Image(systemName: "mic.fill")
-            }
-            .tint(CanopyColor.primary)
-        }
+        // The new-note + record actions moved to the persistent bottom bar (spec 0021); the top-right
+        // keeps only Settings so the gear stays where it always was.
         ToolbarItem(placement: .topBarTrailing) {
             Button { onOpenSettings() } label: {
                 Image(systemName: "gearshape")
@@ -343,19 +426,19 @@ struct FolderContentsView: View {
         }
     }
 
-    // MARK: - Empty state
+    // MARK: - No-matches state
 
-    private var emptyState: some View {
+    /// Shown when a search is active but matched nothing in a non-empty store (spec 0021). The search
+    /// field stays visible (it lives in the bottom bar), so the user can edit or clear the query.
+    private var noMatchesState: some View {
         VStack(spacing: CanopySpacing.x3) {
-            Image(systemName: currentPath.isEmpty ? "waveform" : "folder")
+            Image(systemName: "magnifyingglass")
                 .font(.system(size: CanopyFont.sizeX4xl, weight: .semibold))
                 .foregroundStyle(CanopyColor.primary)
-            Text(currentPath.isEmpty ? "No notes yet" : "This folder is empty")
+            Text("No matches")
                 .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
                 .foregroundStyle(CanopyColor.text)
-            Text(currentPath.isEmpty
-                ? "Tap Record and start talking. Your words land here as a note."
-                : "Move a note here, or create a folder inside it.")
+            Text("No note's title or text contains \"\(trimmedQuery)\".")
                 .font(.system(size: CanopyFont.sizeSm))
                 .foregroundStyle(CanopyColor.textMuted)
                 .multilineTextAlignment(.center)
@@ -363,14 +446,65 @@ struct FolderContentsView: View {
         }
     }
 
-    // MARK: - Alert bindings
-
-    private var renameAlertBinding: Binding<Bool> {
-        Binding(get: { renameTarget != nil }, set: { if !$0 { renameTarget = nil } })
+    private var trimmedQuery: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private var deleteAlertBinding: Binding<Bool> {
-        Binding(get: { deleteTarget != nil }, set: { if !$0 { deleteTarget = nil } })
+    // MARK: - Folder dialog hosts (spec 0021 rename-bug fix)
+
+    /// Open the rename dialog for a folder, seeding the shared name field with its current name (so the
+    /// user edits from what they see). Setting the enum + field together, from one place, keeps the
+    /// context-menu and swipe entry points identical.
+    private func beginRename(name: String, path: [String]) {
+        folderNameField = name
+        activeDialog = .renameFolder(path: path, currentName: name)
+    }
+
+    /// A per-case presentation binding off the single `activeDialog` enum: true while THAT case is
+    /// active, and clearing it dismisses. Each alert anchor uses its own so no two share a node.
+    private func dialogBinding(for match: @escaping (FolderDialog) -> Bool) -> Binding<Bool> {
+        Binding(
+            get: { activeDialog.map(match) ?? false },
+            set: { presented in if !presented, let d = activeDialog, match(d) { activeDialog = nil } }
+        )
+    }
+
+    /// Hidden anchor hosting ONLY the New folder alert, so it is not stacked with the others.
+    private var newFolderAlertAnchor: some View {
+        Color.clear
+            .alert("New folder", isPresented: dialogBinding { $0.isNewFolder }) {
+                folderNameTextField(placeholder: "Name")
+                Button("Create") { Task { await createFolder() } }
+                Button("Cancel", role: .cancel) { activeDialog = nil }
+            } message: {
+                Text("Create a folder here.")
+            }
+    }
+
+    /// Hidden anchor hosting ONLY the Rename folder alert.
+    private var renameFolderAlertAnchor: some View {
+        Color.clear
+            .alert("Rename folder", isPresented: dialogBinding { $0.isRenameFolder }) {
+                folderNameTextField(placeholder: "Name")
+                Button("Rename") { Task { await renameFolder() } }
+                Button("Cancel", role: .cancel) { activeDialog = nil }
+            }
+    }
+
+    /// Hidden anchor hosting ONLY the Delete folder confirmation.
+    private var deleteFolderAlertAnchor: some View {
+        Color.clear
+            .alert("Delete folder?", isPresented: dialogBinding { $0.isDeleteFolder }) {
+                Button("Delete", role: .destructive) { Task { await deleteFolder() } }
+                Button("Cancel", role: .cancel) { activeDialog = nil }
+            } message: {
+                Text("This deletes the folder and everything inside it - notes, recordings, and subfolders. This can't be undone.")
+            }
+    }
+
+    /// The shared TextField for the New folder / Rename folder alerts, bound to `folderNameField`.
+    private func folderNameTextField(placeholder: String) -> some View {
+        TextField(placeholder, text: $folderNameField)
     }
 
     // MARK: - Actions
@@ -381,17 +515,24 @@ struct FolderContentsView: View {
     }
 
     private func createFolder() async {
-        let created = await feed.createFolder(named: newFolderName, at: currentPath)
+        let name = folderNameField
+        activeDialog = nil
+        let created = await feed.createFolder(named: name, at: currentPath)
         await reloadFolders()
         if created == nil {
             folderError = "That name can't be used. Try another."
         }
     }
 
+    /// Apply a pending rename. Reads the target path off the active dialog and the new name off the
+    /// shared field, clears the dialog, then renames through the feed and reloads. A nil result (invalid
+    /// or already-used name) surfaces the advisory banner. This is the path the old stacked-alert bug
+    /// could skip entirely; the single un-stacked alert host now presents and applies reliably.
     private func renameFolder() async {
-        guard let target = renameTarget else { return }
-        renameTarget = nil
-        let renamed = await feed.renameFolder(at: target, to: renameName)
+        guard case let .renameFolder(path, _)? = activeDialog else { return }
+        let newName = folderNameField
+        activeDialog = nil
+        let renamed = await feed.renameFolder(at: path, to: newName)
         await reloadFolders()
         if renamed == nil {
             folderError = "Couldn't rename - the name is invalid or already used."
@@ -399,10 +540,75 @@ struct FolderContentsView: View {
     }
 
     private func deleteFolder() async {
-        guard let target = deleteTarget else { return }
-        deleteTarget = nil
-        await feed.deleteFolder(at: target)
+        guard case let .deleteFolder(path)? = activeDialog else { return }
+        activeDialog = nil
+        await feed.deleteFolder(at: path)
         await reloadFolders()
+    }
+}
+
+/// The single active folder dialog on a folder screen (spec 0021 rename-bug fix). One enum drives all
+/// three dialogs from ONE state so they are no longer three stacked `.alert`s racing each other; each is
+/// hosted on its own hidden anchor via a per-case binding. `Identifiable` for stable presentation.
+enum FolderDialog: Identifiable, Equatable {
+    case newFolder
+    case renameFolder(path: [String], currentName: String)
+    case deleteFolder(path: [String])
+
+    var id: String {
+        switch self {
+        case .newFolder: return "new"
+        case let .renameFolder(path, _): return "rename:" + path.joined(separator: "/")
+        case let .deleteFolder(path): return "delete:" + path.joined(separator: "/")
+        }
+    }
+
+    var isNewFolder: Bool { if case .newFolder = self { return true }; return false }
+    var isRenameFolder: Bool { if case .renameFolder = self { return true }; return false }
+    var isDeleteFolder: Bool { if case .deleteFolder = self { return true }; return false }
+}
+
+/// The empty-state call to action (spec 0021): when a list or folder has no notes anywhere, show the
+/// RECORD button in the middle of the screen WITH its text label, and a NEW-NOTE button directly below
+/// it. This is the ONE place record/new-note keep their labels (the persistent bottom bar drops them).
+struct FolderEmptyStateCTA: View {
+    /// Whether this is the root list (vs a folder), only for the supporting copy.
+    let isRoot: Bool
+    let onRecord: () -> Void
+    let onNewNote: () -> Void
+
+    var body: some View {
+        VStack(spacing: CanopySpacing.x4) {
+            Image(systemName: "waveform")
+                .font(.system(size: CanopyFont.sizeX4xl, weight: .semibold))
+                .foregroundStyle(CanopyColor.primary)
+            Text(isRoot ? "No notes yet" : "This folder is empty")
+                .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
+                .foregroundStyle(CanopyColor.text)
+            Text("Tap Record and start talking, or make a note with the keyboard.")
+                .font(.system(size: CanopyFont.sizeSm))
+                .foregroundStyle(CanopyColor.textMuted)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, CanopySpacing.x8)
+
+            // Record in the middle WITH its label, new-note directly below it (spec 0021).
+            RecordButton(action: onRecord)
+                .padding(.top, CanopySpacing.x2)
+            Button(action: onNewNote) {
+                HStack(spacing: CanopySpacing.x2) {
+                    Image(systemName: "square.and.pencil")
+                    Text("New note")
+                        .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
+                }
+                .foregroundStyle(CanopyColor.primary)
+                .padding(.horizontal, CanopySpacing.x6)
+                .padding(.vertical, CanopySpacing.x3)
+                .overlay(
+                    Capsule().stroke(CanopyColor.primary, lineWidth: 1)
+                )
+            }
+            .accessibilityLabel("New note")
+        }
     }
 }
 

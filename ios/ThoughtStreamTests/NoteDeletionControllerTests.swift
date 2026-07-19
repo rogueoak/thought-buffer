@@ -121,6 +121,36 @@ final class NoteDeletionControllerTests: XCTestCase {
         XCTAssertNil(controller.pending)
     }
 
+    // MARK: - Shake to Undo channel (spec 0021 fix)
+
+    /// With an injected UndoManager - the one `UndoManagerHost` vends to the shake gesture - a delete
+    /// REGISTERS an undoable "Delete" action on THAT manager. Before the fix, the controller took its
+    /// manager from `@Environment(\.undoManager)`, which is nil in plain SwiftUI, so nothing was ever
+    /// registered and a shake found nothing. This proves the action lands on the injected manager.
+    func testDeleteRegistersUndoOnInjectedManager() async throws {
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        controller.undoManager = manager
+        let note = Note(title: "Shakeable", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        await feed.reload()
+
+        manager.beginUndoGrouping()
+        await controller.delete(id: note.id)
+        manager.endUndoGrouping()
+
+        XCTAssertTrue(manager.canUndo, "a delete registers an undoable action on the injected manager")
+        XCTAssertEqual(manager.undoActionName, "Delete", "the shake prompt reads 'Undo Delete'")
+    }
+
+    // NOTE: end-to-end "invoke undo() on the injected manager restores the note" is a MANUAL-verify
+    // (like the shake gesture itself). Driving `UndoManager.undo()` synchronously in a unit test, where
+    // the registered undo closure hops onto an async Task that re-registers a redo, corrupts the harness
+    // heap outside a real run loop's grouping. The RESTORE semantics are already proven by
+    // `testDeleteThenUndoRestoresNote` (the same seam the manager's closure calls), and the test above
+    // proves the delete now registers on the injected manager - which is the exact bug the fix closed
+    // (the environment manager was nil, so nothing was registered for a shake to reach).
+
     /// The launch sweep empties the trash of any leftover (committed-but-unswept / crash) entries.
     func testPurgeOrphanedTrashOnLaunchSweeps() async throws {
         let note = Note(title: "Leftover", paragraphs: ["Body."], createdAt: Date())

@@ -70,6 +70,24 @@ showing a "no matches" state.
 - No per-note in-note find (search is note-finding, not within-note).
 - No server/cloud search - fully local.
 
+## Device-feedback additions (2026-07-19)
+
+A round of device feedback arriving during the build folded four folder-screen items into this same PR
+(they touch the files this spec rewrites); see `docs/feedback/0018-search-bottom-bar-device-feedback.md`.
+
+- **Consistent title below the toolbar** (revises feedback 0016). Both the root "Thoughts" screen and
+  the folder screens show a large title BELOW the toolbar buttons, not the inline title feedback 0016
+  chose (which read as cramped). Feedback 0016's note is superseded.
+- **Folder rename fixed.** The three folder alerts (New / Rename / Delete) were stacked on one view
+  node, which broke rename presentation; they are un-stacked into one `FolderDialog` host, each on its
+  own anchor. Locked with a driver-level rename test.
+- **Shake to Undo fixed.** The delete registered on `@Environment(\.undoManager)` (nil in plain
+  SwiftUI); a `UndoManagerHost` now vends a stable first-responder-backed `UndoManager` that is injected
+  into the deletion controller, so the shake reaches the registered action.
+- **Contextual record + new thought.** Recording or creating a thought inside a folder files it in that
+  folder (the actions carry the current folder path into the dictation session); hands-free starts stay
+  at the root.
+
 ## Acceptance
 
 - The bottom bar shows a wide search field with icon-only actions on the right, on
