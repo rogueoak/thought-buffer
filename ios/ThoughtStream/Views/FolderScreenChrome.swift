@@ -5,6 +5,71 @@ import SwiftUI
 /// folder thoughts screen render them identically (these were private helpers on the retired interleaving
 /// `FolderContentsView`).
 
+/// The ONE thought row for a flat thought list AND a global search-result list (spec 0026, architect
+/// review): tapping opens the thought, and the row carries the full affordances - a leading swipe to Play
+/// (only a recorded thought) or Move, a trailing swipe to Delete, and a long-press context menu (Share /
+/// Copy via `ThoughtActionsMenu`, plus Move and Delete). Both `FolderThoughtsView` and
+/// `TopLevelFoldersView`'s search-results list render THIS, so an identical thought looks and behaves the
+/// same everywhere - a search result cannot gain or lose swipe-to-play based only on which screen the search
+/// started from. This is also the single wiring point a future "play -> bottom player from a row" hooks into.
+struct ThoughtResultRow: View {
+    let thought: Thought
+    /// The shared playback controller; nil (preview / bare call site) omits the swipe-to-play action.
+    let playbackController: ThoughtPlaybackController?
+    let onOpen: (Thought) -> Void
+    let onMove: (Thought) -> Void
+    let onDelete: (UUID) -> Void
+    /// Bumped when a Copy fires, so the host can flash its shared "Copied to clipboard" confirmation.
+    let onCopied: () -> Void
+
+    var body: some View {
+        Button {
+            onOpen(thought)
+        } label: {
+            ThoughtCard(thought: thought)
+        }
+        .buttonStyle(.plain)
+        .tightRowInsets()
+        .contextMenu {
+            ThoughtActionsMenu(thought: thought, onCopied: onCopied) {
+                Button {
+                    onMove(thought)
+                } label: {
+                    Label("Move to folder", systemImage: "folder")
+                }
+                Button(role: .destructive) {
+                    onDelete(thought.id)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+        }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            if thought.hasAudio, let controller = playbackController {
+                Button {
+                    controller.play(thought: thought)
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+                .tint(CanopyColor.success)
+            }
+            Button {
+                onMove(thought)
+            } label: {
+                Label("Move", systemImage: "folder")
+            }
+            .tint(CanopyColor.primary)
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            Button(role: .destructive) {
+                onDelete(thought.id)
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
+        }
+    }
+}
+
 extension View {
     /// The TIGHTER row insets for the redesigned dense list (spec 0026): the vertical inset drops from the
     /// old `x1_5` (6pt) to `x0_5` (2pt) so rows read as a compact list rather than bulky spaced cards, while

@@ -176,34 +176,17 @@ struct TopLevelFoldersView: View {
     private func searchResultsList(_ results: [Thought]) -> some View {
         List {
             ForEach(results) { thought in
-                Button {
-                    onOpenThought(thought)
-                } label: {
-                    ThoughtCard(thought: thought)
-                }
-                .buttonStyle(.plain)
-                .tightRowInsets()
-                .contextMenu {
-                    ThoughtActionsMenu(thought: thought, onCopied: { copiedTrigger += 1 }) {
-                        Button {
-                            moveThought = thought
-                        } label: {
-                            Label("Move to folder", systemImage: "folder")
-                        }
-                        Button(role: .destructive) {
-                            onDeleteThought(thought.id)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                }
-                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    Button(role: .destructive) {
-                        onDeleteThought(thought.id)
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                }
+                // The SAME shared row the folder screen uses (spec 0026, architect review), so a global
+                // search result is identical everywhere - it keeps its play/move leading swipe here too,
+                // rather than a hand-rolled row that silently dropped those actions.
+                ThoughtResultRow(
+                    thought: thought,
+                    playbackController: playbackController,
+                    onOpen: onOpenThought,
+                    onMove: { moveThought = $0 },
+                    onDelete: onDeleteThought,
+                    onCopied: { copiedTrigger += 1 }
+                )
             }
         }
         .listStyle(.plain)
@@ -370,7 +353,7 @@ struct TopLevelFoldersView: View {
                 Button("Delete", role: .destructive) { Task { await deleteFolder() } }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             } message: {
-                Text("This deletes the folder and everything inside it - thoughts, recordings, and subfolders. This can't be undone.")
+                Text("This deletes the folder and everything inside it - its thoughts and their recordings. This can't be undone.")
             }
     }
 

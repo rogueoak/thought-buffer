@@ -263,7 +263,11 @@ struct StreamListView: View {
     private func compactDestination(for route: StreamRoute) -> some View {
         switch route {
         case let .folder(folderPath):
-            folderThoughts(subject: .userFolder(folderPath.last ?? ""), showsBottomBar: true, resolved: nil)
+            // Resolve the subject by the folder's FIRST component to match the membership rule
+            // (`TopLevelFolders.belongs` / `landOnThought` filter on `folderPath.first`), so a future deeper
+            // `.folder([...])` route still renders the right top-level folder instead of an empty list
+            // (defensive consistency; today's paths are single-component so `.first` == `.last`).
+            folderThoughts(subject: .userFolder(folderPath.first ?? ""), showsBottomBar: true, resolved: nil)
                 .navigationBarTitleDisplayMode(.inline)
         case let .alias(alias):
             folderThoughts(subject: .alias(alias), showsBottomBar: true, resolved: nil)

@@ -531,8 +531,13 @@ How the system is built and why.
     but no longer applied to these screens). Rows use the tighter `tightRowInsets()` (vertical inset dropped
     from `x1_5` to `x0_5`) for a dense list, keeping the card's own padding for tap targets. The feedback-0024
     search-field-focus fix is preserved (the bottom `StreamBottomStack` hangs off the STABLE outer node; only
-    the content switches on state). Shared chrome (`FolderDialog`, `FolderEmptyStateCTA`, `FolderErrorBanner`,
-    `NoSearchMatchesState`, `tightRowInsets`) lives in `FolderScreenChrome`. Global search stays the same
+    the content switches on state). Shared chrome (`ThoughtResultRow`, `FolderDialog`, `FolderEmptyStateCTA`,
+    `FolderErrorBanner`, `NoSearchMatchesState`, `tightRowInsets`) lives in `FolderScreenChrome`. `ThoughtResultRow`
+    is the ONE thought row both the flat folder list AND the global search-result list render (on either
+    screen), so a thought's affordances (leading Play/Move swipe when it has audio, trailing Delete, the
+    Share/Copy/Move/Delete context menu) are identical everywhere - a search result cannot gain/lose
+    swipe-to-play based on which screen the search started from, and it is the single wiring point a future
+    "play -> bottom player from a row" hooks into. Global search stays the same
     `StreamSearchProjection`/`FolderScreenState` seam (it reaches every thought, folder or uncategorized).
   `SettingsView` edits the injected
   `SettingsStoring` instance directly (control-phrase field with validation hint, a command-aliases

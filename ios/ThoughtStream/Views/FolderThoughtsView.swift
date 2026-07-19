@@ -152,50 +152,16 @@ struct FolderThoughtsView: View {
     }
 
     private func thoughtRow(thought: Thought) -> some View {
-        Button {
-            onOpenThought(thought)
-        } label: {
-            ThoughtCard(thought: thought)
-        }
-        .buttonStyle(.plain)
-        .tightRowInsets()
-        .contextMenu {
-            ThoughtActionsMenu(thought: thought, onCopied: { copiedTrigger += 1 }) {
-                Button {
-                    moveThought = thought
-                } label: {
-                    Label("Move to folder", systemImage: "folder")
-                }
-                Button(role: .destructive) {
-                    onDeleteThought(thought.id)
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            }
-        }
-        .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            if thought.hasAudio, let controller = playbackController {
-                Button {
-                    controller.play(thought: thought)
-                } label: {
-                    Label("Play", systemImage: "play.fill")
-                }
-                .tint(CanopyColor.success)
-            }
-            Button {
-                moveThought = thought
-            } label: {
-                Label("Move", systemImage: "folder")
-            }
-            .tint(CanopyColor.primary)
-        }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
-                onDeleteThought(thought.id)
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
+        // The ONE shared row (spec 0026), so a thought looks and behaves identically in a folder list and in
+        // a global search-result list on any screen.
+        ThoughtResultRow(
+            thought: thought,
+            playbackController: playbackController,
+            onOpen: onOpenThought,
+            onMove: { moveThought = $0 },
+            onDelete: onDeleteThought,
+            onCopied: { copiedTrigger += 1 }
+        )
     }
 
     @ToolbarContentBuilder

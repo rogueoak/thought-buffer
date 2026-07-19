@@ -161,6 +161,33 @@ final class TopLevelFoldersTests: XCTestCase {
         XCTAssertEqual(counts.count, 2)
     }
 
+    /// Drift guard: `folderThoughtCounts` (the one-pass bucket used by the top-level list) and
+    /// `folderThoughts(...).count` are TWO implementations of the same `belongs` membership rule. Pin that
+    /// they agree for EVERY folder in a mixed fixture, so a future edit to either path fails CI.
+    func testFolderThoughtCountsAgreesWithFolderThoughtsCount() {
+        let thoughts = [
+            thought("a", 1_000, folder: ["Work"]),
+            thought("b", 2_000, folder: ["Work", "Q1"]),      // legacy-nested under Work
+            thought("c", 3_000, folder: ["Work", "Q1", "Jan"]), // deeper legacy nesting under Work
+            thought("d", 4_000, folder: ["Workshop"]),          // prefix-collision sibling, NOT Work
+            thought("e", 5_000, folder: ["Other"]),
+            thought("f", 6_000, folder: []),                    // uncategorized
+        ]
+        let counts = TopLevelFolders.folderThoughtCounts(thoughts)
+        // Every folder that appears as a first component must agree across both paths.
+        for name in ["Work", "Workshop", "Other", "Missing"] {
+            let viaList = TopLevelFolders.folderThoughts(thoughts, folder: name, sorted: .newest).count
+            let viaCount = TopLevelFolders.folderThoughtCount(thoughts, folder: name)
+            let viaBucket = counts[name] ?? 0
+            XCTAssertEqual(viaList, viaCount, "list vs count disagree for \(name)")
+            XCTAssertEqual(viaCount, viaBucket, "count vs bucket disagree for \(name)")
+        }
+        // Concrete values pinning the flatten: Work has 3 (direct + two legacy-nested), Workshop 1, Other 1.
+        XCTAssertEqual(counts["Work"], 3)
+        XCTAssertEqual(counts["Workshop"], 1)
+        XCTAssertEqual(counts["Other"], 1)
+    }
+
     // MARK: - Uncategorized (store root)
 
     func testUncategorizedIsOnlyRootThoughtsAndExcludesFoldered() {
