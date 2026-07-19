@@ -25,6 +25,10 @@ small set of ICON-ONLY action buttons on the right (labels dropped to make room)
   this note; only when resuming is applicable per audio-retention settings).
 - The now-playing bar (spec 0015) continues to appear above the bottom bar when
   playback is active; the two must stack cleanly in the bottom safe-area inset.
+- RECONCILE the undo-delete affordance (spec 0020), which is currently pinned to
+  `.bottom` with a fixed clearance for the old bare toolbar: this redesign owns
+  making that overlay sit above the new persistent bottom bar + now-playing bar via
+  the shared safe-area inset math, not a hardcoded offset.
 - Canopy tokens throughout; the record/resume icon keeps its recording-state
   affordance (the pulsing/active state) without a text label.
 
