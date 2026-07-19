@@ -501,6 +501,11 @@ final class DictationViewModel: ObservableObject {
             let remappedThought = current.withTimings(
                 TimingRemapper.remap(timings: current.timings, removedRanges: removedRanges)
             )
+            // RE-CONFIRM existence immediately before the save (feedback 0022 security review): a
+            // soft-delete landing between the swap and this save would otherwise be UNDONE by `save`
+            // writing a fresh `<id>.md` at root, resurrecting the deleted thought's text. Skip the save
+            // when the thought is gone - the same second-window guard the resume-concatenation path uses.
+            guard store.loadAll().contains(where: { $0.id == thoughtID }) else { return }
             // Discard the saved URL: this is a background re-save, the reload triggered below reflects it.
             _ = try? store.save(remappedThought)
 
@@ -606,6 +611,16 @@ final class DictationViewModel: ObservableObject {
             let offsetThought = current.paragraphs.count == offset.count
                 ? current.withTimings(offset)
                 : current
+
+            // 6. RE-CONFIRM the thought still exists immediately before the final save (security review).
+            //    There is a SECOND delete-race window AFTER the swap: a soft-delete (spec 0020 trash) that
+            //    lands between `replaceAudio` succeeding and this save moves `<id>.md`/`.m4a` into `.trash/`,
+            //    and `save` - finding no live file (`locateFile` skips the trashed one) - would write a FRESH
+            //    `<id>.md` at root, RESURRECTING the deleted thought's title + paragraphs as a live,
+            //    audio-less thought. So skip the save entirely when the thought is gone. (Leaving the
+            //    already-swapped audio on the trashed file is fine: a restore just gets the concatenated
+            //    version.) The timings-save is only an optimization; the recording already continues.
+            guard store.loadAll().contains(where: { $0.id == thoughtID }) else { return }
             _ = try? store.save(offsetThought)
 
             // Reload so the host drops the stale (un-offset, original-audio) in-memory thought. Reuses the

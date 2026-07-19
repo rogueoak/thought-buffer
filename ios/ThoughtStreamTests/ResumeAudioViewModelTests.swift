@@ -311,6 +311,86 @@ final class ResumeAudioViewModelTests: XCTestCase {
                        "the new paragraph is offset, not mistaken for pre-existing after the removal")
     }
 
+    // MARK: - Soft-delete racing the POST-swap window does not resurrect the thought's text (security)
+
+    /// SECURITY REGRESSION (feedback 0022 panel, security MAJOR): there is a SECOND delete-race window
+    /// AFTER `replaceAudio` succeeds but BEFORE the final timings `save`. A soft-delete landing there moves
+    /// `<id>.md` into `.trash/`, and without a guard the final `save` would write a FRESH `<id>.md` at root,
+    /// RESURRECTING the deleted thought's title + paragraphs as a live, audio-less thought. The re-confirm
+    /// before the save must SKIP the save when the thought is gone. Uses a store wrapper that pauses INSIDE
+    /// `replaceAudio` AFTER the real swap, so the delete lands strictly in the post-swap / pre-save window.
+    func testSoftDeleteAfterSwapBeforeFinalSaveDoesNotResurrectThought() async throws {
+        let raceStore = PostSwapRaceStore(inner: store)
+        let original = try makeThoughtWithRecording()
+        let id = original.id
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let combined = try makeTempRecordingURL(contents: "combined-after-swap")
+        let concatenator = StubAudioConcatenator(
+            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
+        let model = DictationViewModel(
+            service: service, store: raceStore, recordsAudio: true,
+            audioConcatenator: concatenator, resuming: original
+        )
+        service.emitFinalized("Newly spoken addition.", range: ParagraphTiming(start: 1.0, duration: 2.0))
+        _ = try XCTUnwrap(try model.finish())
+        let rootMd = tempDir.appendingPathComponent("\(id.uuidString).md")
+
+        // Wait until the swap has completed and `replaceAudio` is paused, THEN soft-delete (the delete
+        // lands strictly after the swap, before the final save), then release.
+        await raceStore.awaitPausedAfterSwap()
+        _ = try store.softDelete(id: id)
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "precondition: deleted after the swap")
+        raceStore.release()
+
+        // The final save must be SKIPPED - the thought stays deleted and no <id>.md reappears at root.
+        try await pollUntil { !FileManager.default.fileExists(atPath: combined.path) }
+        // Give the (guarded) final-save path a chance to run and be skipped.
+        try await pollUntil { raceStore.replaceReturned }
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "the thought stays deleted - no resurrection")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootMd.path),
+                       "no fresh <id>.md is re-materialized at the store root")
+    }
+
+    // MARK: - Keyboard edit during a resume keeps the new paragraph offset (clamp holds)
+
+    func testKeyboardEditDuringResumeKeepsNewParagraphOffset() async throws {
+        // Two pre-existing spoken paragraphs + a recording (8s).
+        let id = UUID()
+        let recURL = FileManager.default.temporaryDirectory.appendingPathComponent("orig-\(UUID().uuidString).m4a")
+        try Data("original".utf8).write(to: recURL)
+        try store.save(Thought(id: id, title: "Original", paragraphs: ["Para one.", "Para two."],
+                               createdAt: Date(timeIntervalSince1970: 1_700_000_000)))
+        let audioURL = try store.saveAudio(from: recURL, for: id)
+        let withAudio = Thought(id: id, title: "Original", paragraphs: ["Para one.", "Para two."],
+                                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                                audioFileName: audioURL.lastPathComponent,
+                                timings: [ParagraphTiming(start: 0, duration: 4), ParagraphTiming(start: 4, duration: 4)])
+        try store.save(withAudio)
+
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let combined = try makeTempRecordingURL(contents: "combined")
+        let concatenator = StubAudioConcatenator(
+            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true,
+            audioConcatenator: concatenator, resuming: withAudio
+        )
+
+        // The user edits the transcript via the keyboard, DROPPING a pre-existing paragraph (re-split to
+        // one paragraph), then dictates a NEW one. The clamp must shrink existingParagraphCount from 2 to
+        // 1 so the new paragraph (index 1) is still treated as NEW and offset past the 8s existing audio.
+        model.applyEditedTranscript("Para one only.")
+        service.emitFinalized("A newly spoken paragraph.", range: ParagraphTiming(start: 1.0, duration: 2.0))
+
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.paragraphs, ["Para one only.", "A newly spoken paragraph."])
+        let reloaded = try await awaitReSave(concatenator: concatenator, id: saved.id, paragraphIndex: 1, expectedStart: 9.0)
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 9.0, accuracy: 0.001,
+                       "after a keyboard edit that dropped a pre-existing paragraph, the new one is still offset")
+    }
+
     // MARK: - No concatenator (recording OFF, or a store that keeps no audio): text-only append
 
     func testResumeWithoutConcatenatorStaysTextOnlyAppendAndKeepsOriginal() throws {
@@ -466,4 +546,49 @@ private final class StubAudioConcatenator: AudioConcatenating, @unchecked Sendab
 private struct StubAudioTrimmer: AudioTrimming {
     let result: AudioTrimResult
     func trim(fileAt url: URL) async -> AudioTrimResult { result }
+}
+
+/// A `ThoughtStoring` that forwards to a real `ThoughtStore` but PAUSES inside `replaceAudio` AFTER
+/// performing the real swap, so a test can inject a soft-delete in the POST-swap / PRE-final-save window
+/// (feedback 0022 security regression). Only the methods the concatenation path uses are forwarded; the
+/// folder ops fall back to the protocol defaults (unused here). `@unchecked Sendable` because the
+/// concatenation task runs off the main actor; the gate is a plain semaphore.
+private final class PostSwapRaceStore: ThoughtStoring, @unchecked Sendable {
+    private let inner: ThoughtStore
+    private let pausedSignal = DispatchSemaphore(value: 0)
+    private let releaseSignal = DispatchSemaphore(value: 0)
+    private(set) var replaceReturned = false
+
+    init(inner: ThoughtStore) { self.inner = inner }
+
+    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL? {
+        // Do the REAL swap first, then pause so a delete can land after the swap but before the save.
+        let result = try inner.replaceAudio(from: temporaryURL, for: id)
+        pausedSignal.signal()
+        releaseSignal.wait()
+        replaceReturned = true
+        return result
+    }
+
+    /// Suspend until `replaceAudio` has done the real swap and is paused.
+    func awaitPausedAfterSwap() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async {
+                self.pausedSignal.wait()
+                continuation.resume()
+            }
+        }
+    }
+
+    func release() { releaseSignal.signal() }
+
+    // Forwarded to the real store.
+    @discardableResult func save(_ thought: Thought) throws -> URL { try inner.save(thought) }
+    func loadAll() -> [Thought] { inner.loadAll() }
+    func delete(id: UUID) throws { try inner.delete(id: id) }
+    @discardableResult func softDelete(id: UUID) throws -> DeletedThought? { try inner.softDelete(id: id) }
+    func audioURL(for id: UUID) -> URL? { inner.audioURL(for: id) }
+    @discardableResult func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL {
+        try inner.saveAudio(from: temporaryURL, for: id)
+    }
 }

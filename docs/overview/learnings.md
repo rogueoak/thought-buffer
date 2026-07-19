@@ -706,3 +706,15 @@ an end-delete (a "remove last paragraph" command, a keyboard edit) that eats int
 silently reclassifies a later new item as pre-existing unless the boundary is clamped to the live count on
 every mutation. Both are the same trap - a value captured once that the rest of the flow then invalidates -
 which is exactly the shape that hid in the happy path and only bit the trimmed / edited-mid-resume cases.
+A third corollary, from the independent security panel: a deferred background task that persists a
+user-deletable record must re-confirm the record still EXISTS before EVERY write to it, not just the first.
+The task guarded the audio swap (a fresh re-read plus the store's absent-slot refusal), but a soft-delete
+(spec 0020 trash) landing in the LATER window - after the swap, before the final metadata save - was undone
+by that save, which found no live file and wrote a fresh one at root, RESURRECTING the just-deleted text.
+A destructive concurrent action (delete/move) can land in ANY gap between a deferred task's steps, so each
+step that writes must re-check the precondition; guarding only the first write leaves every subsequent write
+a resurrection hole. Feedback 0017 had already hardened this task's pre-swap window, but the same task's
+post-swap save was unguarded - and the sibling dead-air-trim task (spec 0019) had the identical hole, fixed
+in the same pass. Generalizes to any fire-and-forget task that re-persists a record a user can delete
+underneath it: gate every write on a fresh existence check, and treat a "gone" result as skip-silently, not
+as create.

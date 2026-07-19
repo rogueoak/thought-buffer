@@ -110,12 +110,25 @@ Three review findings were fixed in the same PR before merge:
    boundary to the current paragraph count after every removal / edit (`clampExistingParagraphCount`).
 3. **`onTrimmed` callback name no longer matched its contract** (architect, nit -> fixed). It now fires for
    two background re-saves (trim + resume concatenation), so it was renamed `onBackgroundAudioResave`.
+4. **POST-swap delete-race resurrected the thought's TEXT** (security, MAJOR - independent panel). The
+   audio swap is guarded (step-3 fresh re-read + `replaceAudio`'s absent-slot refusal), but there was a
+   SECOND window: a soft-delete landing AFTER `replaceAudio` succeeds but BEFORE the final timings `save`
+   moves `<id>.md` into `.trash/`, and `save` - finding no live file (`locateFile` skips the trashed one) -
+   would write a FRESH `<id>.md` at root, re-materializing the deleted thought's title + paragraphs as a
+   live, audio-less thought. Fixed by RE-CONFIRMING the thought still exists immediately before the final
+   save and SKIPPING the save when it is gone (the timings-save is only an optimization; the recording
+   already continues, and leaving the swapped audio on the trashed file is fine - a restore gets the
+   concatenated version). The SAME second-window guard was added to spec 0019's `scheduleTrim`, which had
+   the identical shape (feedback 0017 hardened only its pre-swap window).
 
-Coverage was added for both majors and the untested safety branches the tester flagged: the trim-then-
-offset remap, the concurrent-edit paragraph-count-misalignment branch, a soft-delete racing the swap
-(no orphan, stays deleted), a multi-new-paragraph offset, and the boundary-drift-after-removal case; the
-success test was made deterministic (signal invocation, then a bounded poll that fails loudly on timeout).
-Security review found nothing (protection, temp cleanup, coordinated swap, no data loss all clean).
+Coverage was added for both concatenation majors, the security post-swap window, and the untested safety
+branches the tester flagged: the trim-then-offset remap, the concurrent-edit paragraph-count-misalignment
+branch, a soft-delete racing the PRE-swap window (no orphan, stays deleted), a soft-delete racing the
+POST-swap window (no text resurrection at root), a multi-new-paragraph offset, the boundary-drift-after-
+removal case, and the keyboard-edit boundary-clamp path; the success test was made deterministic (signal
+invocation, then a bounded poll that fails loudly on timeout). The initial security pass found the file
+protection, temp cleanup, coordinated swap, and no-data-loss all clean; the independent panel then caught
+the post-swap window above.
 
 ## Learning
 
