@@ -115,7 +115,7 @@ actions beyond start / new thought are still out.
 
 The Settings stub becomes real: two things a user configures, plus a read-only storage status.
 Reachable from the gear in the Stream toolbar. Changes apply to the next dictation session started
-(the text processor is built per session from current settings), thoughtd in the UI copy.
+(the text processor is built per session from current settings), noted in the UI copy.
 
 - **Custom control phrase.** Name the assistant whatever you like (default "Mira"). Type "Nova" and
   "Nova remove the last sentence" fires the remove command while "Mira ..." no longer does; the
