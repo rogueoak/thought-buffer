@@ -69,7 +69,11 @@ How the system is built and why.
   user-set title from a derived one. Parsing still prefers a stored `title:` (files keep their title),
   and the flag only counts when a title is stored; it governs edit-time behavior - a non-custom note
   re-derives its title on a body edit, a custom note keeps it. `NoteDetailView` edits the title as a
-  tappable header and `DictationViewModel` preserves a resumed note's custom title.
+  tappable header and `DictationViewModel` preserves a resumed note's custom title. `NoteDetailView`
+  also takes a `startInEdit` flag (spec 0013): a brand-new keyboard note opens with the body editor
+  focused and is tracked as unsaved until its first non-empty commit; a commit or leave with no title
+  and no body calls `onDiscardEmpty` (delete any provisional save, pop the route) so no blank note is
+  persisted.
 - `Storage/` - two `NoteStoring` backends behind one seam, chosen at startup:
   - `NoteStore` persists each note as `Documents/ThoughtStream/<id>.md` (YAML frontmatter + body).
     Thin and cache-free: the files are the source of truth. `loadAll` returns notes newest first.
@@ -194,7 +198,14 @@ How the system is built and why.
   (spec 0007), so every note mutation (commit, remove-sentence/paragraph, fold-partial) updates
   both, and builds the saved `Note` with its recording (adopted from the service's temp file into
   the store) and timings at `finish()`. Mid-session "new note" saves the transcript only - the one
-  continuous recording is finalized at Stop and belongs to the FINAL note. In-session read-back
+  continuous recording is finalized at Stop and belongs to the FINAL note. Resuming a note seeds its
+  id, paragraphs, timings, folder, and (when present) its existing recording; `saveCurrentNote`
+  prefers a NEWLY captured recording when armed, else keeps the existing one. So a text-only note
+  recorded into with `recordsAudio: true` (spec 0013 - `StreamListView`'s note-page record action
+  passes `!note.hasAudio && audioRetention.recordsAudio`) adopts the new audio: the newly spoken tail
+  keeps its real range and the original typed paragraphs get zero-length timing placeholders (TTS on
+  playback). A note that already has audio keeps `recordsAudio: false` (text-only append, original
+  recording preserved). In-session read-back
   speaks via the `Speaker` (the live recording is not yet finalized); it pauses capture and resumes
   on `readBackDidFinish`, so the spoken audio never feeds back into recognition. `NotePlaybackModel`
   drives the detail view's simple play / stop of a SAVED note's recording via `AudioNotePlayer` -
@@ -231,12 +242,14 @@ How the system is built and why.
     formatted duration (`recordingDuration` = the tail of the last-ending timing range), and refreshes
     on driver change; its duration formatting is a pure, unit-tested static.
 - `Views/` - SwiftUI screens. `StreamListView` is the ROOT of the Thoughts `NavigationStack` whose
-  path is an enum route `StreamRoute { case folder([String]); case note(Note) }`: it owns the shared
-  session/settings/playback wiring and the sort-order state, and renders `FolderContentsView(path: [])`
-  as the root with a `navigationDestination` for both routes. `FolderContentsView` renders the same
-  folder-list screen at ANY path (so a pushed `.folder` recurses into another instance), projecting its
-  rows through `FolderListModel`; it owns the folder-CRUD alerts, the sort menu, swipe/context actions,
-  the `MoveToFolderSheet`, and the empty states. `FolderRow` mirrors `NoteCard`'s surface with a folder
+  path is an enum route `StreamRoute { case folder([String]); case note(Note); case newNote(Note) }`:
+  it owns the shared session/settings/playback wiring and the sort-order state, and renders
+  `FolderContentsView(path: [])` as the root with a `navigationDestination` for the routes.
+  `FolderContentsView` renders the same folder-list screen at ANY path (so a pushed `.folder` recurses
+  into another instance), projecting its rows through `FolderListModel`; it owns the folder-CRUD alerts,
+  the sort menu, swipe/context actions, the `MoveToFolderSheet`, and the empty states. Its toolbar's
+  compose button (spec 0013) calls `onNewNote(currentPath)`, and `StreamListView` pushes a `.newNote`
+  route seeded with a fresh `Note(title: "", paragraphs: [], folderPath: currentPath)`. `FolderRow` mirrors `NoteCard`'s surface with a folder
   glyph, item count, and chevron. `DictationView` binds to `DictationViewModel`; `NoteCard`,
   `NoteDetailView` stay presentational. `SettingsView` edits the injected `SettingsStoring`
   instance directly (control-phrase field with validation hint, add/edit/delete override rows, a

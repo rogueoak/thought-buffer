@@ -206,6 +206,55 @@ final class DualCaptureViewModelTests: XCTestCase {
         XCTAssertEqual(note.timing(forParagraphAt: 1)?.duration, 0.0)
     }
 
+    // MARK: - Text-only note gains audio on resume (spec 0013)
+
+    /// Spec 0013 acceptance: resuming a TEXT-ONLY note with `recordsAudio: true` and speaking a tail
+    /// must save a note that (a) keeps the original typed paragraphs, (b) appends the newly spoken
+    /// paragraph, (c) attaches the newly captured recording, and (d) maps timings so the original
+    /// paragraphs have zero-length placeholders (play back via TTS) while the spoken tail keeps its
+    /// real recorded range. This is the inverse of the usual resume (which preserves an EXISTING
+    /// recording): here the original had none, so the new audio is adopted.
+    func testResumingTextOnlyNoteWithRecordingAttachesAudioForNewTail() throws {
+        // A typed note with two paragraphs and NO recording (hasAudio == false).
+        let original = Note(
+            title: "Typed note",
+            paragraphs: ["First typed paragraph.", "Second typed paragraph."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        XCTAssertFalse(original.hasAudio, "precondition: the original note carries no recording")
+
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true, resuming: original
+        )
+
+        // Speak a tail with a real recorded range (an absolute offset past the typed paragraphs).
+        service.emitFinalized("Spoken addition.", range: ParagraphTiming(start: 0.0, duration: 2.5))
+
+        let note = try XCTUnwrap(try model.finish())
+
+        // The original paragraphs are preserved and the spoken tail is appended, in order.
+        XCTAssertEqual(note.paragraphs, [
+            "First typed paragraph.",
+            "Second typed paragraph.",
+            "Spoken addition."
+        ])
+        // The newly captured recording was adopted (the note now has audio and a Play control shows).
+        XCTAssertTrue(note.hasAudio, "the note gained a recording from the spoken tail")
+        let audioURL = try XCTUnwrap(store.audioURL(for: note.id))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path), "audio adopted into store")
+        XCTAssertEqual(note.audioFileName, audioURL.lastPathComponent)
+
+        // Timings line up 1:1 with paragraphs: the two typed paragraphs get zero-length placeholders
+        // (TTS on playback), the spoken tail keeps its real range.
+        XCTAssertEqual(note.timings.count, 3)
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 0.0, "typed paragraph plays via TTS")
+        XCTAssertEqual(note.timing(forParagraphAt: 1)?.duration, 0.0, "typed paragraph plays via TTS")
+        XCTAssertEqual(note.timing(forParagraphAt: 2)?.start, 0.0)
+        XCTAssertEqual(note.timing(forParagraphAt: 2)?.duration, 2.5, "the spoken tail keeps its range")
+    }
+
     // MARK: - Cancelled / empty session leaves no audio on disk
 
     /// Cancelling a session discards the recording: the temp file is removed and no note audio is

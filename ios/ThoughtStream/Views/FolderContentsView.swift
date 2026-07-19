@@ -18,6 +18,9 @@ struct FolderContentsView: View {
 
     let onOpenFolder: ([String]) -> Void
     let onOpenNote: (Note) -> Void
+    /// Create a blank keyboard note filed in this screen's folder (spec 0013). Carries `currentPath`
+    /// so the new note lands in the folder the user is currently browsing.
+    let onNewNote: ([String]) -> Void
     let onNewThought: () -> Void
     let onOpenSettings: () -> Void
 
@@ -242,6 +245,13 @@ struct FolderContentsView: View {
                 Image(systemName: "arrow.up.arrow.down")
             }
             .tint(CanopyColor.primary)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Button { onNewNote(currentPath) } label: {
+                Image(systemName: "square.and.pencil")
+            }
+            .tint(CanopyColor.primary)
+            .accessibilityLabel("New note")
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button { onNewThought() } label: {

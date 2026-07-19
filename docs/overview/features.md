@@ -360,6 +360,26 @@ real directories on disk (visible in Files / iCloud Drive), not tags - a note in
 - **CarPlay unaffected.** The CarPlay recordings browser still lists every recorded note regardless of
   which folder it lives in.
 
+## Keyboard notes (spec 0013)
+
+Not every note starts by talking. You can now make a note with the keyboard, and add voice to a note
+that began as text.
+
+- **New note button.** A compose button (the pencil-in-square) on the Thoughts toolbar, next to the
+  mic, creates a blank note and opens it straight into the keyboard editor - type a title and body,
+  tap Done. It is filed in the folder you are currently browsing.
+- **Discard-if-empty.** A brand-new note is not saved until the first non-empty commit. Backing out of
+  a fresh note without typing anything - no title, no body - leaves nothing behind; the blank note is
+  discarded rather than littering the list.
+- **Record onto a text note.** The note page's record affordance is labeled **Record** when the note
+  has no recording yet and **Resume** when it does. Recording into a text-only note captures real
+  audio: the note becomes a true voice note (a Play control appears). The originally-typed paragraphs
+  play back via text-to-speech; the newly spoken tail plays its recording. Recording into a note that
+  already has audio stays a text-only append, so the original recording is never corrupted. Real audio
+  capture is subject to the transcript-only retention setting.
+- **Just a normal note.** A keyboard note is an ordinary `Note` on disk (no storage or format change),
+  so it works with folders, sort, editing, and delete exactly like any other note.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires
