@@ -77,6 +77,29 @@ final class BottomBarLayoutTests: XCTestCase {
         XCTAssertTrue(afterNoMatches.showsSearchField)
     }
 
+    /// One-persistent-List invariant (feedback 0029, item 8): the normal, results, and no-matches states all
+    /// render through the SAME `List` (only the rows change), so the `.safeAreaInset` search field's host is
+    /// never torn down while typing - the third and final fix for the dropped-focus bug. Only the empty-store
+    /// CTA renders outside that list, and it has no search field, so the sole transition off the shared list
+    /// happens when the store goes from zero thoughts to some, never mid-typing. A refactor that reintroduced
+    /// a distinct list view for a searching state (reviving the bug) would flip one of these and fail here.
+    func testSearchingStatesShareOnePersistentList() {
+        // Every state that shows the search field must use the ONE shared List, so the field never re-mounts
+        // on a query-driven state flip.
+        XCTAssertTrue(FolderScreenState.normal.contentUsesList)
+        XCTAssertTrue(FolderScreenState.searchResults.contentUsesList)
+        XCTAssertTrue(FolderScreenState.noMatches.contentUsesList)
+        // The empty store is the only state OUTSIDE that list - and it hides the field, so no focus is lost.
+        XCTAssertFalse(FolderScreenState.emptyStore.contentUsesList)
+
+        // The two invariants agree everywhere: a state uses the shared list exactly when it shows the field.
+        for state in [FolderScreenState.emptyStore, .searchResults, .noMatches, .normal] {
+            XCTAssertEqual(
+                state.contentUsesList, state.showsSearchField,
+                "\(state): the field lives in the shared list, so it shows the field iff it uses that list")
+        }
+    }
+
     // MARK: - Thought-detail bottom bar decision (spec 0021)
 
     /// While editing the title or body, the thought-detail bottom bar is HIDDEN entirely - so the search
