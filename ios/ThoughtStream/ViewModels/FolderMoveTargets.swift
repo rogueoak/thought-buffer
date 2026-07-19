@@ -21,13 +21,13 @@ struct FolderMoveTarget: Identifiable, Hashable {
 /// Pure builder for the move-to-folder target list (spec 0010), kept out of the view so the tree walk
 /// and ordering are unit testable. Driven by a `children` closure - `store.folders(at:)` in the app,
 /// a stub in a test - so it flattens the WHOLE folder tree (including empty folders, which never
-/// appear in any note's `folderPath`) without the model reaching into the file system itself.
+/// appear in any thought's `folderPath`) without the model reaching into the file system itself.
 enum FolderMoveTargets {
     /// Every folder in the tree as an ordered, depth-tagged list: pre-order (parent before children),
     /// A-Z among siblings (the store already returns children sorted, but we sort again so the order is
     /// the model's guarantee, not the store's). `children([])` gives the top-level folders.
     ///
-    /// `excluding` drops a subtree from the results: moving a note need not exclude anything, but the
+    /// `excluding` drops a subtree from the results: moving a thought need not exclude anything, but the
     /// parameter keeps the builder reusable (e.g. a future move-a-folder picker must not offer a folder
     /// its own descendant). Pass `[]`-free paths; an excluded path and everything under it are omitted.
     static func all(

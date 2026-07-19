@@ -1,16 +1,16 @@
 import SwiftUI
 
-/// A single folder row in the Thoughts list (spec 0010), styled to match `NoteCard`: the same
-/// surface, border, radius, and padding, with a folder glyph, the folder name, a descendant-note
+/// A single folder row in the Thoughts list (spec 0010), styled to match `ThoughtCard`: the same
+/// surface, border, radius, and padding, with a folder glyph, the folder name, a descendant-thought
 /// count, and a trailing chevron (the row navigates into the folder, so a chevron is the right
 /// affordance here).
 ///
-/// The count label is an honest recursive descendant-note count (e.g. "3 notes"), computed and
-/// pluralized in `FolderListModel` by the view that already holds the notes - the row stays a pure
+/// The count label is an honest recursive descendant-thought count (e.g. "3 thoughts"), computed and
+/// pluralized in `FolderListModel` by the view that already holds the thoughts - the row stays a pure
 /// render.
 struct FolderRow: View {
     let name: String
-    /// A pluralized descendant-note count label (e.g. "No notes", "1 note", "3 notes").
+    /// A pluralized descendant-thought count label (e.g. "No thoughts", "1 thought", "3 thoughts").
     let countLabel: String
 
     var body: some View {

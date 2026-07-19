@@ -1,33 +1,33 @@
 # Thought Stream
 
-**Hands-free, on-device dictation notes for iPhone and CarPlay.**
+**Hands-free, on-device dictation thoughts for iPhone and CarPlay.**
 
 Thought Stream is an iOS app for capturing your thinking out loud. Tap once (or ask Siri, or
-press Start in CarPlay) and just talk. Unlike the built-in Notes app, Thought Stream is a
+press Start in CarPlay) and just talk. Unlike the built-in Thoughts app, Thought Stream is a
 continuous feed of your thoughts that lets you pause to think and, importantly, edit entirely by
 voice using a control word, so you never have to touch the screen.
 
 All speech-to-text runs on the device. The words you speak are never sent to any server, and
-dictation needs no internet connection. Your notes are stored locally by default; you can
+dictation needs no internet connection. Your thoughts are stored locally by default; you can
 optionally sync them through your own iCloud account so they follow you across your devices.
 
 ## Why it exists
 
 Ideas arrive when your hands are busy: driving, walking, cooking. The moment you reach for a
 keyboard, the thought is gone. Thought Stream keeps the capture friction near zero: start a
-stream, speak, and fix mistakes by voice. Your notes land as plain Markdown files you own.
+stream, speak, and fix mistakes by voice. Your thoughts land as plain Markdown files you own.
 
 ## How it works
 
-### Dictating a note
+### Dictating a thought
 
 Start a session any of three ways:
 
-- Tap the record button in the app to open a new note and start talking.
+- Tap the record button in the app to open a new thought and start talking.
 - Say "Hey Siri, start a Thought Stream".
 - Press Start in CarPlay.
 
-A new note is created and your words stream into it. Pause whenever you need to think; the stream
+A new thought is created and your words stream into it. Pause whenever you need to think; the stream
 waits for you.
 
 ### Control with words
@@ -37,7 +37,7 @@ Spoken commands include:
 
 - "Mira remove the last sentence" - delete the last sentence.
 - "Mira remove the last paragraph" - delete the last paragraph.
-- "Mira new note" - start a fresh note.
+- "Mira new thought" - start a fresh thought.
 - "Mira read that back" - read the last paragraph aloud.
 
 ### Auto-replace common mistakes
@@ -50,19 +50,19 @@ the spelling "Shea".
 
 - **On-device speech-to-text.** Recognition runs entirely on your phone and works offline; the
   audio never leaves the device. No Thought Stream account required.
-- **Voice recordings, kept or not.** Each note can keep the actual recording of your voice, so
-  "read that back" plays how you said it and a note plays back in full. Recordings stay on your
+- **Voice recordings, kept or not.** Each thought can keep the actual recording of your voice, so
+  "read that back" plays how you said it and a thought plays back in full. Recordings stay on your
   device by default (or your iCloud, if enabled). Turn them off (transcript only) or have them
   auto-delete after a set number of days, all in Settings.
-- **Continuous feed.** Notes are a stream you can pause and resume, not a blank page each time.
-- **Voice editing.** Fix and manage notes hands-free with the control word.
-- **CarPlay Audio surface.** Browse your voice notes and play them back in CarPlay Now Playing,
-  with play / pause / skip on the head unit, plus a Start row to begin a new note hands-free.
-- **Lock-screen playback.** Playing a note shows Now Playing on the lock screen and in Control
+- **Continuous feed.** Thoughts are a stream you can pause and resume, not a blank page each time.
+- **Voice editing.** Fix and manage thoughts hands-free with the control word.
+- **CarPlay Audio surface.** Browse your voice thoughts and play them back in CarPlay Now Playing,
+  with play / pause / skip on the head unit, plus a Start row to begin a new thought hands-free.
+- **Lock-screen playback.** Playing a thought shows Now Playing on the lock screen and in Control
   Center, and keeps playing in the background, like any audio app.
-- **Markdown storage.** Every note is a Markdown file. Point storage at an iCloud Drive folder
-  and notes sync across your devices automatically.
-- **Browse and review.** A simple UI to jump back into the notes you have created.
+- **Markdown storage.** Every thought is a Markdown file. Point storage at an iCloud Drive folder
+  and thoughts sync across your devices automatically.
+- **Browse and review.** A simple UI to jump back into the thoughts you have created.
 - **Light and dark themes.** Follows the system appearance by default.
 
 ## Privacy
@@ -74,17 +74,17 @@ the spelling "Shea".
 - **No Thought Stream account, ever.** There is no Thought Stream sign-in and no Thought Stream
   server. "No account" means no account with us - iCloud, if you enable it, uses your existing
   Apple account, not one we create.
-- **Notes are local by default; iCloud sync is optional and yours.** Your notes are plain files
-  you own. Left local, they stay on the device. If you turn on iCloud sync, note files travel
+- **Thoughts are local by default; iCloud sync is optional and yours.** Your thoughts are plain files
+  you own. Left local, they stay on the device. If you turn on iCloud sync, thought files travel
   through your own iCloud account (Apple) so they appear in the Files app and follow you across
   your devices - the same way any iCloud Drive document does. That is the only thing that leaves
   the device, it is your choice, and it can be kept off.
 - **Voice recordings are stored, and you control them.** When recording is on (the default), the
-  raw audio of a note is saved as an `.m4a` next to its Markdown file, encrypted at rest, and
-  syncs only where your notes do (locally, or your own iCloud). It is never uploaded to us. Set
+  raw audio of a thought is saved as an `.m4a` next to its Markdown file, encrypted at rest, and
+  syncs only where your thoughts do (locally, or your own iCloud). It is never uploaded to us. Set
   recordings to transcript-only to never save audio, or auto-delete them after a number of days,
   in Settings.
-- **Now Playing shows the note title.** When you play a note, its title (the note's first line)
+- **Now Playing shows the thought title.** When you play a thought, its title (the thought's first line)
   appears in the system Now Playing surface - the lock screen, Control Center, and CarPlay - like
   any audio app shows its track title. This is your own content on your own device, never sent
   anywhere, and iOS's own "Show on Lock Screen" controls let you hide media info on the lock screen
@@ -149,16 +149,16 @@ the dictation screen shows a message explaining what it needs and how to turn it
 on device (Apple's `SpeechAnalyzer`); nothing is sent to a server. The language model installs once
 on first use (a model download, not your audio), then works offline.
 
-Notes are saved as Markdown files, one `<id>.md` file per note (YAML frontmatter plus the body).
+Thoughts are saved as Markdown files, one `<id>.md` file per thought (YAML frontmatter plus the body).
 The Stream list reads them straight from disk, newest first.
 
 Where those files live depends on iCloud. At launch the app resolves its iCloud Drive ubiquity
 container off the main thread:
 
-- **iCloud available** (signed in, container provisioned): notes read and write to the container's
+- **iCloud available** (signed in, container provisioned): thoughts read and write to the container's
   `Documents/ThoughtStream/` folder through `NSFileCoordinator` (coordinated IO, to avoid sync
   conflicts). The folder shows up in the Files app as "Thought Stream" and syncs across your
-  devices. An `NSMetadataQuery` watches the folder, downloads notes synced in from other devices,
+  devices. An `NSMetadataQuery` watches the folder, downloads thoughts synced in from other devices,
   and refreshes the Stream list on external changes.
 - **iCloud unavailable** (not signed in, no provisioning, or the Simulator with no account): the
   app falls back to the local `Documents/ThoughtStream/` directory and behaves exactly as before.
@@ -176,7 +176,7 @@ To use real iCloud sync on a physical device:
 1. Open `ios/ThoughtStream.xcodeproj` (after `xcodegen generate`).
 2. In the ThoughtStream target's Signing & Capabilities, set your Apple Developer **Team**. With
    automatic signing, the iCloud container provisions itself the first time you build to a device.
-3. Sign in to iCloud on the device. Run the app; notes now live in your iCloud Drive under
+3. Sign in to iCloud on the device. Run the app; thoughts now live in your iCloud Drive under
    "Thought Stream" and sync across your devices.
 
 Cross-device sync cannot be verified in the Simulator (it needs your Team and an iCloud account
@@ -189,15 +189,15 @@ simulator without a mic, launch with `-uiScreen dictation`, which injects sample
 screen for the same tooling.
 
 Mira control words let you edit hands-free while dictating. Say "Mira" and a command: "Mira
-remove the last sentence", "Mira remove the last paragraph", "Mira new note" (saves and starts
+remove the last sentence", "Mira remove the last paragraph", "Mira new thought" (saves and starts
 fresh), or "Mira read that back" (speaks the last paragraph aloud). The command phrase is not
-written into the note.
+written into the thought.
 
 Settings (the gear in the Stream toolbar) let you rename the assistant and teach it spelling
 fixes. Change the control phrase from "Mira" to anything you like - "Nova remove the last
 sentence" then works. Add spelling overrides (spoken "Shay" -> written "Shea") that auto-replace
 words the recognizer gets wrong, whole-word and case-insensitive. A read-only row shows whether
-notes live on iCloud or on this device. Settings persist across launches; changes apply to your
+thoughts live on iCloud or on this device. Settings persist across launches; changes apply to your
 next dictation session.
 
 ### Siri and CarPlay
@@ -205,21 +205,21 @@ next dictation session.
 Starting a stream without touching the phone runs through one shared seam: the Record button, the
 Siri App Intent, and the CarPlay action all request the same fresh dictation session.
 
-**Siri (the shippable hands-free path).** `StartThoughtStreamIntent` and `NewNoteIntent` are
+**Siri (the shippable hands-free path).** `StartThoughtStreamIntent` and `NewThoughtIntent` are
 `AppIntent`s that open the app and begin a new session. An `AppShortcutsProvider` registers the
 phrases on install, so "Hey Siri, start a stream in Thought Stream" (or "start dictating", "new
-thought", "new note in Thought Stream") works, including through CarPlay's Siri button. Real Siri
+thought", "new thought in Thought Stream") works, including through CarPlay's Siri button. Real Siri
 invocation needs a device; the intents and the shared starter are covered by unit tests in the
 simulator.
 
 **CarPlay Audio surface (built, gated, pending Apple's approval).** The CarPlay scene is now a full
-Audio experience: a recordings browser (`CPListTemplate` listing notes that have a recording -
-title, date, duration, newest first, live-refreshed as notes are added or synced in) plus a
+Audio experience: a recordings browser (`CPListTemplate` listing thoughts that have a recording -
+title, date, duration, newest first, live-refreshed as thoughts are added or synced in) plus a
 "Start a thought stream" row, and `CPNowPlayingTemplate` with play / pause / skip when you tap a
-recording. It is driven by the shared, headless `NotePlaybackController` - the one audio path that
+recording. It is driven by the shared, headless `ThoughtPlaybackController` - the one audio path that
 also feeds the phone's lock-screen Now Playing. Apple grants the CarPlay entitlement only for
 specific app categories (audio, navigation, communication, EV charging, parking, and a few more);
-because Thought Stream records and plays back the user's voice notes, the **Audio** category
+because Thought Stream records and plays back the user's voice thoughts, the **Audio** category
 (`com.apple.developer.carplay-audio`) fits - but it is granted only on approval, so:
 
 - The default unsigned Simulator build and the App Store build are unaffected - they build and run
@@ -231,9 +231,9 @@ because Thought Stream records and plays back the user's voice notes, the **Audi
   [docs/carplay-audio-entitlement-request.md](docs/carplay-audio-entitlement-request.md) for the
   request justification and the exact enable steps.
 
-**System Now Playing (ships now, no entitlement).** Playing a note - on the phone or in CarPlay -
+**System Now Playing (ships now, no entitlement).** Playing a thought - on the phone or in CarPlay -
 populates `MPNowPlayingInfoCenter` (title, duration, elapsed) and wires `MPRemoteCommandCenter`
-(play / pause / stop / skip), and the app declares the `audio` background mode, so a note shows on
+(play / pause / stop / skip), and the app declares the `audio` background mode, so a thought shows on
 the lock screen and in Control Center and keeps playing in the background like any audio app. This
 needs a device to see on the lock screen; the wiring is covered by unit tests in the simulator.
 

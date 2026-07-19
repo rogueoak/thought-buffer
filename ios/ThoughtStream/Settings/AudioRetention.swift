@@ -1,6 +1,6 @@
 import Foundation
 
-/// How long a note's voice recording is kept (spec 0007).
+/// How long a thought's voice recording is kept (spec 0007).
 ///
 /// The recording is raw audio, more sensitive than the transcript, so the user controls whether it
 /// is written at all and how long it lives. This is the one place that policy is expressed; the
@@ -12,7 +12,7 @@ import Foundation
 enum AudioRetention: Equatable, Hashable {
     /// Keep the recording indefinitely (the default). Audio is written and never auto-deleted.
     case keep
-    /// Never record. The file writer is skipped entirely, so no audio is ever written for a note.
+    /// Never record. The file writer is skipped entirely, so no audio is ever written for a thought.
     case transcriptOnly
     /// Keep the recording, then delete it once it is older than `days` days.
     case autoDeleteDays(Int)

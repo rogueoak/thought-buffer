@@ -66,9 +66,9 @@ final class TranscriptCleanupTests: XCTestCase {
 
     // MARK: - refinedForSave gating (the single enforcement of "on edit-save when on, not on load")
 
-    /// A note whose paragraphs WOULD reflow (lowercase continuation), so the gating is observable.
-    private func reflowableNote() -> Note {
-        Note(
+    /// A thought whose paragraphs WOULD reflow (lowercase continuation), so the gating is observable.
+    private func reflowableThought() -> Thought {
+        Thought(
             title: "My title",
             paragraphs: ["the plan is", "ready to go"],
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -76,32 +76,32 @@ final class TranscriptCleanupTests: XCTestCase {
         )
     }
 
-    func testRefinedForSaveOffReturnsNoteVerbatim() {
-        // refine OFF: the note is returned unchanged even though it WOULD reflow.
-        let note = reflowableNote()
-        let result = TranscriptCleanup.refinedForSave(note, refine: false)
+    func testRefinedForSaveOffReturnsThoughtVerbatim() {
+        // refine OFF: the thought is returned unchanged even though it WOULD reflow.
+        let thought = reflowableThought()
+        let result = TranscriptCleanup.refinedForSave(thought, refine: false)
         XCTAssertEqual(result.paragraphs, ["the plan is", "ready to go"])
-        XCTAssertEqual(result.id, note.id)
+        XCTAssertEqual(result.id, thought.id)
     }
 
-    func testRefinedForSaveOnMergesReflowableNote() {
-        // refine ON, commit-edit path: the reflowable note is saved MERGED, preserving id/title/custom.
-        let note = reflowableNote()
-        let result = TranscriptCleanup.refinedForSave(note, refine: true)
+    func testRefinedForSaveOnMergesReflowableThought() {
+        // refine ON, commit-edit path: the reflowable thought is saved MERGED, preserving id/title/custom.
+        let thought = reflowableThought()
+        let result = TranscriptCleanup.refinedForSave(thought, refine: true)
         XCTAssertEqual(result.paragraphs, ["the plan is ready to go"])
-        XCTAssertEqual(result.id, note.id)
+        XCTAssertEqual(result.id, thought.id)
         XCTAssertEqual(result.title, "My title")
         XCTAssertTrue(result.hasCustomTitle)
     }
 
-    func testRefinedForSaveOnLeavesNonReflowableNoteUnchanged() {
-        // refine ON but nothing to merge (terminated sentences): the note is returned as-is.
-        let note = Note(
+    func testRefinedForSaveOnLeavesNonReflowableThoughtUnchanged() {
+        // refine ON but nothing to merge (terminated sentences): the thought is returned as-is.
+        let thought = Thought(
             title: "T",
             paragraphs: ["A finished thought.", "Another finished thought."],
             createdAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
-        let result = TranscriptCleanup.refinedForSave(note, refine: true)
+        let result = TranscriptCleanup.refinedForSave(thought, refine: true)
         XCTAssertEqual(result.paragraphs, ["A finished thought.", "Another finished thought."])
     }
 }

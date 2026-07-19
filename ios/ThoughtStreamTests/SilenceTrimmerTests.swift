@@ -24,7 +24,7 @@ final class SilenceTrimmerTests: XCTestCase {
     func testMinPauseStaysStrictlyAboveParagraphGapThreshold() {
         // The whole remap correctness rests on this: a trimmable silence is always a paragraph
         // boundary, never interior. If a future change lowers the trim floor below the group
-        // threshold, revisit range merging (see ParagraphGrouper's LOAD-BEARING COUPLING note).
+        // threshold, revisit range merging (see ParagraphGrouper's LOAD-BEARING COUPLING thought).
         XCTAssertGreaterThan(SilenceTrimmer.minPauseSeconds, ParagraphGrouper.defaultGapThreshold)
     }
 

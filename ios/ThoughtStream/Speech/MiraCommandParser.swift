@@ -4,7 +4,7 @@ import Foundation
 ///
 /// The model changed after DEVICE feedback (feedback 0006): on a real device a single recognition
 /// task ACCUMULATES the whole spoken passage into one growing transcription, so a spoken command
-/// ("Mira new note") lands in the MIDDLE or END of an accumulating segment, not at its start. The
+/// ("Mira new thought") lands in the MIDDLE or END of an accumulating segment, not at its start. The
 /// old "starts-with-keyword" model therefore never fired for real continuous speech. The parser now
 /// SPLITS at the FIRST control-word token:
 ///
@@ -15,9 +15,9 @@ import Foundation
 ///   or is an unrecognized command that is dropped with a "didn't catch that" chip
 ///   (`.unrecognizedCommand`).
 ///
-/// The command portion is never transcribed; only `preText` (if non-empty) is committed to the note.
+/// The command portion is never transcribed; only `preText` (if non-empty) is committed to the thought.
 enum MiraParseResult: Equatable {
-    /// No control word anywhere in the segment; commit it to the note unchanged.
+    /// No control word anywhere in the segment; commit it to the thought unchanged.
     case text
     /// A control word was found. `preText` is the dictation before it (empty if it led the segment);
     /// `command` is the parsed outcome of the command mode that follows (the shared `CommandOutcome`).
@@ -140,7 +140,7 @@ struct MiraCommandParser {
             // command tokens are the words after it.
             // Trim only the trailing whitespace/newlines the recognizer left between the dictation
             // and the control word; any punctuation the user spoke just before the control word
-            // ("...before noon. Mira new note") is INTENTIONALLY kept on `preText` - it belongs to the
+            // ("...before noon. Mira new thought") is INTENTIONALLY kept on `preText` - it belongs to the
             // sentence being committed, not to the command that follows.
             let preRaw = ns.substring(to: match.range.location)
             let preText = preRaw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -162,7 +162,7 @@ struct MiraCommandParser {
     /// remainder must match one of a command's phrasings after filler has been stripped. Matching is
     /// tolerant: the phrase must be PRESENT as the whole remainder (filler already removed), so
     /// "read that back" and "read back" both fire readThatBack, but a trailing real clause ("read
-    /// that note back to the team") does not - "note" is not filler, so it does not match and the
+    /// that memo back to the team") does not - "memo" is not filler, so it does not match and the
     /// segment is dropped as an unrecognized command rather than mis-firing.
     private static let grammar: [([[String]], MiraCommand)] = [
         // "delete/remove last sentence", "delete/remove/scratch last line", and "scratch that" all
@@ -179,7 +179,7 @@ struct MiraCommandParser {
             .removeLastSentence
         ),
         ([["remove", "last", "paragraph"], ["delete", "last", "paragraph"]], .removeLastParagraph),
-        ([["new", "note"], ["start", "new", "note"]], .newNote),
+        ([["new", "thought"], ["start", "new", "thought"]], .newThought),
         // "read back that" / "read back it" are omitted: `innerFiller` drops "that"/"it", so they
         // reduce to "read back" (already listed). The distinct phrasings kept here are the ones that
         // differ once inner filler is removed.
@@ -188,7 +188,7 @@ struct MiraCommandParser {
 
     /// Match the filler-stripped remainder against the grammar. A phrase matches when the remainder
     /// equals it after ALSO dropping the inner optional filler ("the", "that", "it", "a") that may
-    /// sit between required tokens (e.g. "remove THE last sentence", "start A new note").
+    /// sit between required tokens (e.g. "remove THE last sentence", "start A new thought").
     private static func matchCommand(_ rest: [String]) -> MiraCommand? {
         let core = rest.filter { !innerFiller.contains($0) }
         for (phrases, command) in grammar {
@@ -201,7 +201,7 @@ struct MiraCommandParser {
     }
 
     /// Optional filler that may appear BETWEEN required command tokens and is ignored when matching
-    /// (e.g. "remove the last sentence", "start a new note", "read that back").
+    /// (e.g. "remove the last sentence", "start a new thought", "read that back").
     private static let innerFiller: Set<String> = ["the", "a", "that", "it"]
 
     // MARK: - Filler stripping

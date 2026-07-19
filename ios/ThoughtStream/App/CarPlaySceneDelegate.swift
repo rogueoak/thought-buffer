@@ -4,17 +4,17 @@ import UIKit
 /// The CarPlay Audio surface (spec 0008): a recordings browser plus Now Playing.
 ///
 /// The root is a `CPListTemplate` with two sections - a "Start a thought stream" row that calls the
-/// same shared session starter the Record button and Siri use, and a row per note that HAS a
+/// same shared session starter the Record button and Siri use, and a row per thought that HAS a
 /// recording (title, date, duration), newest first, driven by the headless `RecordingsListModel`
-/// over the shared `NoteStoreDriver`. Tapping a recording plays its `.m4a` through the shared
-/// `NotePlaybackController` and pushes `CPNowPlayingTemplate`, whose transport (play / pause / skip)
-/// is wired to the same controller that feeds `MPNowPlayingInfoCenter`. When the note list changes
-/// (a saved session, a synced-in note), the list refreshes live.
+/// over the shared `ThoughtStoreDriver`. Tapping a recording plays its `.m4a` through the shared
+/// `ThoughtPlaybackController` and pushes `CPNowPlayingTemplate`, whose transport (play / pause / skip)
+/// is wired to the same controller that feeds `MPNowPlayingInfoCenter`. When the thought list changes
+/// (a saved session, a synced-in thought), the list refreshes live.
 ///
 /// GATED, PENDING APPLE APPROVAL. Apple grants the CarPlay entitlement only for specific app
 /// CATEGORIES (audio, communication, navigation, EV, parking, and a few more). The CarPlay AUDIO
 /// entitlement (`com.apple.developer.carplay-audio`) fits this app - it records and plays back the
-/// user's voice notes - but is granted only on approval, so it is NOT declared on the shipping
+/// user's voice thoughts - but is granted only on approval, so it is NOT declared on the shipping
 /// target: the system never creates this scene, and the unsigned Simulator build and the App Store
 /// build are unaffected. This code is ready the day Apple grants the entitlement; until then Siri is
 /// the shippable hands-free-in-car path. Activating this needs the entitlement plus a CarPlay head
@@ -30,10 +30,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// `MPNowPlayingInfoCenter`, no race on the transport observers). One controller feeds
     /// `CPNowPlayingTemplate` and `MPNowPlayingInfoCenter`, driven by the row tap and the Now Playing
     /// transport buttons. Nil until connect.
-    private var playback: NotePlaybackController?
+    private var playback: ThoughtPlaybackController?
     /// This scene's transport-observer registration on the shared controller, dropped on disconnect so
     /// the scene stops observing without disturbing the phone's registration.
-    private var playbackObserver: NotePlaybackController.TransportObserverToken?
+    private var playbackObserver: ThoughtPlaybackController.TransportObserverToken?
     /// The live root list template, kept so a driver change can rebuild its sections in place.
     private var rootTemplate: CPListTemplate?
 
@@ -47,14 +47,14 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         // system outside the SwiftUI tree, so it cannot receive them by injection (the same bridge the
         // session starter uses). Fall back to a local store if the root has not resolved yet (rare -
         // the app resolves at launch); the browser then lists local recordings.
-        let store = AppDependencies.shared?.noteStore ?? NoteStore()
-        let observer = AppDependencies.shared?.noteObserver
+        let store = AppDependencies.shared?.thoughtStore ?? ThoughtStore()
+        let observer = AppDependencies.shared?.thoughtObserver
         let recordings = RecordingsListModel(store: store, observer: observer)
         self.recordings = recordings
         // Drive the ONE shared controller so the phone detail view and this scene never race on the
         // media center. Fall back to a local controller only if the root has not resolved yet (rare).
         let playback = AppDependencies.shared?.playbackController
-            ?? NotePlaybackController(resolver: StoreAudioURLResolver(store: store))
+            ?? ThoughtPlaybackController(resolver: StoreAudioURLResolver(store: store))
         self.playback = playback
         // Observe transport changes so the Now Playing template can react; multi-observer safe, so
         // this coexists with the phone projection's observer on the shared controller.
@@ -99,7 +99,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
     /// Static and closure-driven so the routing (a tap starts a session) is unit-testable without a
     /// connected CarPlay scene; production passes the shared `AppDependencies.sessionStarter`.
     static func makeStartItem(onStart: @escaping () -> Void) -> CPListItem {
-        let start = CPListItem(text: "Start a thought stream", detailText: "Begin a new note by voice")
+        let start = CPListItem(text: "Start a thought stream", detailText: "Begin a new thought by voice")
         start.handler = { _, completion in
             onStart()
             completion()
@@ -115,7 +115,7 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         let items: [CPListItem] = entries.map { entry in
             let item = CPListItem(text: entry.title, detailText: entry.detail)
             item.handler = { [weak self] _, completion in
-                self?.playAndShowNowPlaying(entry.note)
+                self?.playAndShowNowPlaying(entry.thought)
                 completion()
             }
             return item
@@ -129,10 +129,10 @@ final class CarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegat
         return [startSection, recordingsSection]
     }
 
-    /// Play the note through the shared controller and push the CarPlay Now Playing template, whose
+    /// Play the thought through the shared controller and push the CarPlay Now Playing template, whose
     /// transport buttons drive the same controller (which also feeds `MPNowPlayingInfoCenter`).
-    private func playAndShowNowPlaying(_ note: Note) {
-        playback?.play(note: note)
+    private func playAndShowNowPlaying(_ thought: Thought) {
+        playback?.play(thought: thought)
         configureNowPlayingButtons()
         let nowPlaying = CPNowPlayingTemplate.shared
         // Only push it if it is not already the top template, so repeated taps do not stack it.

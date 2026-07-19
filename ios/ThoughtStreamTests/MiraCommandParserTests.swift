@@ -68,12 +68,12 @@ final class MiraCommandParserTests: XCTestCase {
         assertCommand("mira remove the last paragraph.", preText: "", .removeLastParagraph)
     }
 
-    // MARK: - New note
+    // MARK: - New thought
 
-    func testNewNote() {
-        assertCommand("Mira new note", preText: "", .newNote)
-        assertCommand("Mira start a new note", preText: "", .newNote)
-        assertCommand("mira, new note", preText: "", .newNote)
+    func testNewThought() {
+        assertCommand("Mira new thought", preText: "", .newThought)
+        assertCommand("Mira start a new thought", preText: "", .newThought)
+        assertCommand("mira, new thought", preText: "", .newThought)
     }
 
     // MARK: - Read that back (including tolerant trailing filler "to me")
@@ -96,7 +96,7 @@ final class MiraCommandParserTests: XCTestCase {
     /// The core device behavior: a spoken command lands at the END of one accumulating segment. The
     /// dictation before the control word is committed; the command fires.
     func testCommandAtEndOfAccumulatingSegment() {
-        assertCommand("here is my note Mira new note", preText: "here is my note", .newNote)
+        assertCommand("here is my thought Mira new thought", preText: "here is my thought", .newThought)
         assertCommand(
             "remember the milk Mira read that back to me",
             preText: "remember the milk", .readThatBack
@@ -111,8 +111,8 @@ final class MiraCommandParserTests: XCTestCase {
     /// derived from the control word.
     func testPreTextPreservesCasingAndPunctuation() {
         XCTAssertEqual(
-            parser.parse("Buy Eggs, Milk & Bread mira new note"),
-            .split(preText: "Buy Eggs, Milk & Bread", command: .command(.newNote))
+            parser.parse("Buy Eggs, Milk & Bread mira new thought"),
+            .split(preText: "Buy Eggs, Milk & Bread", command: .command(.newThought))
         )
     }
 
@@ -121,8 +121,8 @@ final class MiraCommandParserTests: XCTestCase {
     /// as unrecognized - the split boundary is the FIRST control word, not the last.
     func testSplitsAtFirstControlWord() {
         XCTAssertEqual(
-            parser.parse("note one Mira new note Mira remove last sentence"),
-            .split(preText: "note one", command: .unrecognizedCommand)
+            parser.parse("thought one Mira new thought Mira remove last sentence"),
+            .split(preText: "thought one", command: .unrecognizedCommand)
         )
     }
 
@@ -151,11 +151,11 @@ final class MiraCommandParserTests: XCTestCase {
         )
         // Pre-text present, then keyword-led gibberish: keep the pre-text, drop the command tail.
         XCTAssertEqual(
-            parser.parse("here is my note Mira flibber"),
-            .split(preText: "here is my note", command: .unrecognizedCommand)
+            parser.parse("here is my thought Mira flibber"),
+            .split(preText: "here is my thought", command: .unrecognizedCommand)
         )
         XCTAssertEqual(
-            parser.parse("Mira read that note back to the team"),
+            parser.parse("Mira read that thought back to the team"),
             .split(preText: "", command: .unrecognizedCommand)
         )
     }
@@ -164,25 +164,25 @@ final class MiraCommandParserTests: XCTestCase {
 
     func testCustomControlWord() {
         let custom = MiraCommandParser(controlWord: "Echo")
-        XCTAssertEqual(custom.parse("Echo new note"), .split(preText: "", command: .command(.newNote)))
+        XCTAssertEqual(custom.parse("Echo new thought"), .split(preText: "", command: .command(.newThought)))
         XCTAssertEqual(
-            custom.parse("here is my note Echo new note"),
-            .split(preText: "here is my note", command: .command(.newNote))
+            custom.parse("here is my thought Echo new thought"),
+            .split(preText: "here is my thought", command: .command(.newThought))
         )
         // A different control word leads: command mode, but no match -> unrecognized, not text.
         XCTAssertEqual(custom.parse("Echo blah blah"), .split(preText: "", command: .unrecognizedCommand))
         // "Mira" is no longer the control word, so a Mira-led phrase is ordinary text.
-        XCTAssertEqual(custom.parse("Mira new note"), .text)
+        XCTAssertEqual(custom.parse("Mira new thought"), .text)
     }
 
     // MARK: - Trigger-word aliases (spec 0018)
 
     func testAliasFiresCommand() {
-        // With aliases {mira, mirror}, "mirror new note" fires newNote and is NOT written to the note.
+        // With aliases {mira, mirror}, "mirror new thought" fires newThought and is NOT written to the thought.
         let aliased = MiraCommandParser(triggerWords: ["Mira", "mirror"])
-        XCTAssertEqual(aliased.parse("mirror new note"), .split(preText: "", command: .command(.newNote)))
+        XCTAssertEqual(aliased.parse("mirror new thought"), .split(preText: "", command: .command(.newThought)))
         // The primary word still fires.
-        XCTAssertEqual(aliased.parse("Mira new note"), .split(preText: "", command: .command(.newNote)))
+        XCTAssertEqual(aliased.parse("Mira new thought"), .split(preText: "", command: .command(.newThought)))
     }
 
     func testAliasMatchesAnyTriggerAndSplitsAtFirst() {
@@ -192,22 +192,22 @@ final class MiraCommandParserTests: XCTestCase {
         XCTAssertEqual(aliased.parse("meera remove the last sentence"),
                        .split(preText: "", command: .command(.removeLastSentence)))
         // Pre-text before an alias is committed; the alias splits like the primary word.
-        XCTAssertEqual(aliased.parse("buy milk mirror new note"),
-                       .split(preText: "buy milk", command: .command(.newNote)))
+        XCTAssertEqual(aliased.parse("buy milk mirror new thought"),
+                       .split(preText: "buy milk", command: .command(.newThought)))
     }
 
     func testAliasMatchingIsCaseInsensitive() {
         let aliased = MiraCommandParser(triggerWords: ["Mira", "Mirror"])
-        XCTAssertEqual(aliased.parse("MIRROR new note"), .split(preText: "", command: .command(.newNote)))
-        XCTAssertEqual(aliased.parse("MiRrOr new note"), .split(preText: "", command: .command(.newNote)))
+        XCTAssertEqual(aliased.parse("MIRROR new thought"), .split(preText: "", command: .command(.newThought)))
+        XCTAssertEqual(aliased.parse("MiRrOr new thought"), .split(preText: "", command: .command(.newThought)))
     }
 
     func testRemovedAliasStopsFiring() {
         // A parser built WITHOUT "mirror" treats a "mirror"-led phrase as ordinary text (the removed
         // alias no longer triggers).
         let onlyPrimary = MiraCommandParser(triggerWords: ["Mira"])
-        XCTAssertEqual(onlyPrimary.parse("mirror new note"), .text)
-        XCTAssertEqual(onlyPrimary.parse("Mira new note"), .split(preText: "", command: .command(.newNote)))
+        XCTAssertEqual(onlyPrimary.parse("mirror new thought"), .text)
+        XCTAssertEqual(onlyPrimary.parse("Mira new thought"), .split(preText: "", command: .command(.newThought)))
     }
 
     func testAliasMatchingIsTokenBounded() {
@@ -222,8 +222,8 @@ final class MiraCommandParserTests: XCTestCase {
     // MARK: - command(in:) convenience
 
     func testCommandConvenience() {
-        XCTAssertEqual(parser.command(in: "Mira new note"), .newNote)
-        XCTAssertEqual(parser.command(in: "here is my note Mira new note"), .newNote)
+        XCTAssertEqual(parser.command(in: "Mira new thought"), .newThought)
+        XCTAssertEqual(parser.command(in: "here is my thought Mira new thought"), .newThought)
         XCTAssertNil(parser.command(in: "Mira gibberish"))
         XCTAssertNil(parser.command(in: "an ordinary sentence"))
     }

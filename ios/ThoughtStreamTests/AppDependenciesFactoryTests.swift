@@ -56,18 +56,18 @@ final class AppDependenciesFactoryTests: XCTestCase {
         store.controlPhraseAliases = ["mirror"]
         let processor = deps.makeTextProcessor()
 
-        // The alias fires the command and is NOT written into the note...
+        // The alias fires the command and is NOT written into the thought...
         XCTAssertEqual(
-            processor.process("mirror new note"),
-            .split(preText: "", command: .command(.newNote))
+            processor.process("mirror new thought"),
+            .split(preText: "", command: .command(.newThought))
         )
         // ...the primary word still fires...
         XCTAssertEqual(
-            processor.process("Mira new note"),
-            .split(preText: "", command: .command(.newNote))
+            processor.process("Mira new thought"),
+            .split(preText: "", command: .command(.newThought))
         )
         // ...and a word that is neither is ordinary text.
-        XCTAssertEqual(processor.process("meera new note"), .text("meera new note"))
+        XCTAssertEqual(processor.process("meera new thought"), .text("meera new thought"))
     }
 
     /// Spec 0016: the filler stage is present in the built processor only when `refineTranscript` is
@@ -110,7 +110,7 @@ private final class MutableSettingsStore: SettingsStoring {
     var spellingOverrides: [SpellingOverride] = []
     var audioRetention: AudioRetention = .keep
     var lockScreenTitle: LockScreenTitle = .noteTitle
-    var noteSortOrder: NoteSortOrder = .newest
+    var thoughtSortOrder: ThoughtSortOrder = .newest
     var refineTranscript = true
     var trimSilence = true
 }

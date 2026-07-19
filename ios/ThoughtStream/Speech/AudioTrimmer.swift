@@ -174,7 +174,7 @@ struct AudioTrimmer: AudioTrimming {
 
         let fm = FileManager.default
         let tempURL = fm.temporaryDirectory
-            .appendingPathComponent("thoughtstream-trim-\(UUID().uuidString).\(NoteStore.audioFileExtension)")
+            .appendingPathComponent("thoughtstream-trim-\(UUID().uuidString).\(ThoughtStore.audioFileExtension)")
         try? fm.removeItem(at: tempURL)
 
         // Create the temp file PROTECTED (`completeUnlessOpen`) before `AVAudioFile` writes any audio

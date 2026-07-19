@@ -2,7 +2,7 @@ import XCTest
 @testable import ThoughtStream
 
 /// Regression tests for the on-device feedback fixes (feedback 0005): pause/restart never loses
-/// text (#2), the mic-level -> bar-height mapping (#5), the note word count (#6), and swipe-to-delete
+/// text (#2), the mic-level -> bar-height mapping (#5), the thought word count (#6), and swipe-to-delete
 /// through the store from the feed (#4). The command-mode changes (#3) live in
 /// `MiraCommandParserTests` / `MiraCommandExecutionTests`.
 final class DeviceFeedbackFixesTests: XCTestCase {
@@ -57,11 +57,11 @@ final class DeviceFeedbackFixesTests: XCTestCase {
     // MARK: - #6 Word count
 
     func testWordCountAndLabel() {
-        let one = Note(title: "t", paragraphs: ["Hello"], createdAt: Date())
+        let one = Thought(title: "t", paragraphs: ["Hello"], createdAt: Date())
         XCTAssertEqual(one.wordCount, 1)
         XCTAssertEqual(one.wordCountLabel, "1 word")
 
-        let many = Note(
+        let many = Thought(
             title: "t",
             paragraphs: ["Call the supplier before noon.", "Draft the launch email today."],
             createdAt: Date()
@@ -70,16 +70,16 @@ final class DeviceFeedbackFixesTests: XCTestCase {
         XCTAssertEqual(many.wordCount, 10)
         XCTAssertEqual(many.wordCountLabel, "10 words")
 
-        let empty = Note(title: "t", paragraphs: [], createdAt: Date())
+        let empty = Thought(title: "t", paragraphs: [], createdAt: Date())
         XCTAssertEqual(empty.wordCount, 0)
         XCTAssertEqual(empty.wordCountLabel, "0 words")
 
         // Extra whitespace does not inflate the count.
-        let spaced = Note(title: "t", paragraphs: ["  spaced   out   words  "], createdAt: Date())
+        let spaced = Thought(title: "t", paragraphs: ["  spaced   out   words  "], createdAt: Date())
         XCTAssertEqual(spaced.wordCount, 3)
     }
 
-    // MARK: - Note.hasAudio dual guard (a recording is not silently dropped, nor half-recognized)
+    // MARK: - Thought.hasAudio dual guard (a recording is not silently dropped, nor half-recognized)
 
     /// `hasAudio` requires BOTH an audio filename AND at least one timing. Pin the two-condition
     /// guard so a recording with a filename but no timings (or vice versa) is not treated as
@@ -89,22 +89,22 @@ final class DeviceFeedbackFixesTests: XCTestCase {
         let timing = ParagraphTiming(start: 0, duration: 1)
 
         // Both present: a real recording.
-        let full = Note(title: "t", paragraphs: ["a"], createdAt: Date(),
+        let full = Thought(title: "t", paragraphs: ["a"], createdAt: Date(),
                         audioFileName: "x.m4a", timings: [timing])
         XCTAssertTrue(full.hasAudio)
 
         // Filename but no timings: not a mapped recording.
-        let noTimings = Note(title: "t", paragraphs: ["a"], createdAt: Date(),
+        let noTimings = Thought(title: "t", paragraphs: ["a"], createdAt: Date(),
                              audioFileName: "x.m4a", timings: [])
         XCTAssertFalse(noTimings.hasAudio)
 
         // Timings but no filename: nothing to play.
-        let noFile = Note(title: "t", paragraphs: ["a"], createdAt: Date(),
+        let noFile = Thought(title: "t", paragraphs: ["a"], createdAt: Date(),
                           audioFileName: nil, timings: [timing])
         XCTAssertFalse(noFile.hasAudio)
 
         // Neither: plainly text-only.
-        let textOnly = Note(title: "t", paragraphs: ["a"], createdAt: Date())
+        let textOnly = Thought(title: "t", paragraphs: ["a"], createdAt: Date())
         XCTAssertFalse(textOnly.hasAudio)
     }
 }
@@ -118,12 +118,12 @@ final class DeviceFeedbackFixesTests: XCTestCase {
 /// replacing partials. Driven through a fake capture service so no live mic is needed.
 @MainActor
 final class PauseRestartPreservationTests: XCTestCase {
-    private var store: MemoryNoteStore!
+    private var store: MemoryThoughtStore!
     private var service: EventDrivingCaptureService!
 
     override func setUp() {
         super.setUp()
-        store = MemoryNoteStore()
+        store = MemoryThoughtStore()
         service = EventDrivingCaptureService()
     }
 
@@ -157,14 +157,14 @@ final class PauseRestartPreservationTests: XCTestCase {
             service: service, store: store, processor: MiraTextProcessor()
         )
         // A partial with no control word shows in full.
-        model.simulatePartial("here is my note")
-        XCTAssertEqual(model.partial, "here is my note")
+        model.simulatePartial("here is my thought")
+        XCTAssertEqual(model.partial, "here is my thought")
         // Once the control word appears, only the pre-keyword dictation shows; the forming command
-        // ("new note") is not displayed.
-        model.simulatePartial("here is my note Mira new")
-        XCTAssertEqual(model.partial, "here is my note")
+        // ("new thought") is not displayed.
+        model.simulatePartial("here is my thought Mira new")
+        XCTAssertEqual(model.partial, "here is my thought")
         // A keyword-led partial with no pre-text shows nothing.
-        model.simulatePartial("Mira new note")
+        model.simulatePartial("Mira new thought")
         XCTAssertEqual(model.partial, "")
     }
 
@@ -198,24 +198,24 @@ final class PauseRestartPreservationTests: XCTestCase {
     }
 
     /// Device double-commit regression (PR #10 review): on device the live partial echoes the SAME
-    /// pre-keyword words the accumulating segment then finalizes with. When "P1 Mira new note"
+    /// pre-keyword words the accumulating segment then finalizes with. When "P1 Mira new thought"
     /// finalizes, the split commits "P1" - the stale partial "P1" must NOT then be folded in by
-    /// `new note`, or the SAVED note would be ["P1","P1"]. Fails without clearing the partial in the
-    /// `.split` case. A fresh note starts after the command.
-    func testSplitNewNoteDoesNotDoubleCommitEchoedPartial() throws {
+    /// `new thought`, or the SAVED thought would be ["P1","P1"]. Fails without clearing the partial in the
+    /// `.split` case. A fresh thought starts after the command.
+    func testSplitNewThoughtDoesNotDoubleCommitEchoedPartial() throws {
         let model = DictationViewModel(
             service: service, store: store, processor: MiraTextProcessor()
         )
         // The recognizer's live partial for the accumulating segment is the pre-keyword text "P1".
         model.simulatePartial("P1")
         XCTAssertEqual(model.partial, "P1")
-        // The same segment finalizes as "P1 Mira new note": commit "P1" once, then start a new note.
-        service.emitFinalized("P1 Mira new note", range: nil)
+        // The same segment finalizes as "P1 Mira new thought": commit "P1" once, then start a new thought.
+        service.emitFinalized("P1 Mira new thought", range: nil)
 
-        // The just-saved note is "P1" ONCE (not ["P1","P1"]), and a fresh empty note is now running.
-        let saved = try XCTUnwrap(store.notes.last)
-        XCTAssertEqual(saved.paragraphs, ["P1"], "new note must not double-commit the echoed partial")
-        XCTAssertTrue(model.paragraphs.isEmpty, "a fresh note starts after new note")
+        // The just-saved thought is "P1" ONCE (not ["P1","P1"]), and a fresh empty thought is now running.
+        let saved = try XCTUnwrap(store.thoughts.last)
+        XCTAssertEqual(saved.paragraphs, ["P1"], "new thought must not double-commit the echoed partial")
+        XCTAssertTrue(model.paragraphs.isEmpty, "a fresh thought starts after new thought")
         XCTAssertEqual(model.partial, "", "the stale echoed partial is cleared by the split")
     }
 
@@ -249,19 +249,19 @@ final class PauseRestartPreservationTests: XCTestCase {
         service.emit(.partial("Second thought"))
         service.emitFinalized("Second thought", range: nil)
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.paragraphs, ["First thought", "Second thought"])
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.paragraphs, ["First thought", "Second thought"])
     }
 
     /// The ACTUAL reported bug (feedback 0005 #2): with prior committed paragraphs already in the
-    /// note, a pause seam (task error-end emits its words as a `.finalizedSegment`) followed by the
+    /// thought, a pause seam (task error-end emits its words as a `.finalizedSegment`) followed by the
     /// fresh task's empty/short partial must NOT wipe the committed text. Before the fix the last
     /// pre-pause words came in as a partial and the restart's fresh partial clobbered them; here we
     /// assert every prior paragraph AND the pause-seam paragraph all survive, in order.
     func testPriorParagraphsSurvivePauseSeamAndFreshPartial() {
         let model = makeModel()
 
-        // Two paragraphs are already committed to the note.
+        // Two paragraphs are already committed to the thought.
         service.emitFinalized("P1", range: nil)
         service.emitFinalized("P2", range: nil)
         XCTAssertEqual(model.paragraphs, ["P1", "P2"])
@@ -306,57 +306,57 @@ final class PauseRestartPreservationTests: XCTestCase {
 
 @MainActor
 final class StreamFeedDeleteTests: XCTestCase {
-    func testDeleteRemovesNoteThroughStoreAndReloads() async {
-        let store = MemoryNoteStore()
-        let keep = Note(title: "Keep", paragraphs: ["stays"], createdAt: Date())
-        let drop = Note(title: "Drop", paragraphs: ["goes"], createdAt: Date())
+    func testDeleteRemovesThoughtThroughStoreAndReloads() async {
+        let store = MemoryThoughtStore()
+        let keep = Thought(title: "Keep", paragraphs: ["stays"], createdAt: Date())
+        let drop = Thought(title: "Drop", paragraphs: ["goes"], createdAt: Date())
         try? store.save(keep)
         try? store.save(drop)
 
         let feed = StreamFeed(store: store)
         await feed.start()
-        XCTAssertEqual(feed.notes.count, 2)
+        XCTAssertEqual(feed.thoughts.count, 2)
 
         await feed.delete(id: drop.id)
 
         // The delete went THROUGH the store (removed there) and the feed reloaded to reflect it.
         XCTAssertEqual(store.deletedIDs, [drop.id])
-        XCTAssertEqual(feed.notes.map(\.id), [keep.id])
+        XCTAssertEqual(feed.thoughts.map(\.id), [keep.id])
         XCTAssertFalse(feed.deleteFailed, "a successful delete leaves no error surfaced")
     }
 
-    /// Feedback 0005 #4/#9: deleting a note at the feed level also removes its sibling recording, so
+    /// Feedback 0005 #4/#9: deleting a thought at the feed level also removes its sibling recording, so
     /// a delete never orphans audio on disk. Asserted through the store double's audio-delete log.
     func testDeleteAlsoRemovesSiblingAudioAtFeedLevel() async {
-        let store = MemoryNoteStore()
-        let note = Note(title: "Recorded", paragraphs: ["spoken"], createdAt: Date())
-        try? store.save(note)
+        let store = MemoryThoughtStore()
+        let thought = Thought(title: "Recorded", paragraphs: ["spoken"], createdAt: Date())
+        try? store.save(thought)
 
         let feed = StreamFeed(store: store)
         await feed.start()
 
-        await feed.delete(id: note.id)
+        await feed.delete(id: thought.id)
 
-        XCTAssertEqual(store.deletedAudioIDs, [note.id],
-                       "deleting a note must delete its sibling recording too")
+        XCTAssertEqual(store.deletedAudioIDs, [thought.id],
+                       "deleting a thought must delete its sibling recording too")
     }
 
     /// Feedback 0005 #4: a throwing coordinated delete must be SURFACED, not swallowed. The feed
-    /// sets `deleteFailed` so the view shows a brief message, and the note stays visible (the reload
+    /// sets `deleteFailed` so the view shows a brief message, and the thought stays visible (the reload
     /// re-reflects the true on-disk state).
-    func testFailedDeleteSurfacesErrorAndKeepsNote() async {
+    func testFailedDeleteSurfacesErrorAndKeepsThought() async {
         let store = ThrowingDeleteStore()
-        let note = Note(title: "Sticky", paragraphs: ["stays put"], createdAt: Date())
-        try? store.save(note)
+        let thought = Thought(title: "Sticky", paragraphs: ["stays put"], createdAt: Date())
+        try? store.save(thought)
 
         let feed = StreamFeed(store: store)
         await feed.start()
-        XCTAssertEqual(feed.notes.count, 1)
+        XCTAssertEqual(feed.thoughts.count, 1)
 
-        await feed.delete(id: note.id)
+        await feed.delete(id: thought.id)
 
         XCTAssertTrue(feed.deleteFailed, "a failed delete must surface an error state")
-        XCTAssertEqual(feed.notes.map(\.id), [note.id], "a failed delete leaves the note visible")
+        XCTAssertEqual(feed.thoughts.map(\.id), [thought.id], "a failed delete leaves the thought visible")
 
         // The view dismisses the message after showing it.
         feed.clearDeleteFailure()
@@ -414,30 +414,30 @@ private final class TraceSpeaker: Speaker {
     func stop() {}
 }
 
-/// An in-memory note store that records saves and deletes (note AND sibling audio), for the
+/// An in-memory thought store that records saves and deletes (thought AND sibling audio), for the
 /// feed/delete and save tests. `@unchecked Sendable`: touched only from the test's single actor,
-/// but `NoteStoring: Sendable` requires the annotation for its mutable buffers.
-private final class MemoryNoteStore: NoteStoring, @unchecked Sendable {
-    private(set) var notes: [Note] = []
+/// but `ThoughtStoring: Sendable` requires the annotation for its mutable buffers.
+private final class MemoryThoughtStore: ThoughtStoring, @unchecked Sendable {
+    private(set) var thoughts: [Thought] = []
     private(set) var deletedIDs: [UUID] = []
     /// Audio IDs whose sibling recording was deleted, so a test can assert `delete(id:)` removes the
-    /// audio too (feedback 0005 #4: a note delete must not orphan its recording).
+    /// audio too (feedback 0005 #4: a thought delete must not orphan its recording).
     private(set) var deletedAudioIDs: [UUID] = []
 
     @discardableResult
-    func save(_ note: Note) throws -> URL {
-        notes.removeAll { $0.id == note.id }
-        notes.append(note)
+    func save(_ thought: Thought) throws -> URL {
+        thoughts.removeAll { $0.id == thought.id }
+        thoughts.append(thought)
         return URL(fileURLWithPath: "/dev/null")
     }
 
-    func loadAll() -> [Note] { notes.reversed() }
+    func loadAll() -> [Thought] { thoughts.reversed() }
 
     func delete(id: UUID) throws {
         deletedIDs.append(id)
-        // Mirror the real stores: deleting a note also removes its sibling recording.
+        // Mirror the real stores: deleting a thought also removes its sibling recording.
         try deleteAudio(for: id)
-        notes.removeAll { $0.id == id }
+        thoughts.removeAll { $0.id == id }
     }
 
     func deleteAudio(for id: UUID) throws {
@@ -446,19 +446,19 @@ private final class MemoryNoteStore: NoteStoring, @unchecked Sendable {
 }
 
 /// A store whose `delete` always throws, to prove a failed delete is SURFACED (not swallowed).
-/// `@unchecked Sendable` for the same reason as `MemoryNoteStore`.
-private final class ThrowingDeleteStore: NoteStoring, @unchecked Sendable {
+/// `@unchecked Sendable` for the same reason as `MemoryThoughtStore`.
+private final class ThrowingDeleteStore: ThoughtStoring, @unchecked Sendable {
     struct DeleteError: Error {}
-    private(set) var notes: [Note] = []
+    private(set) var thoughts: [Thought] = []
 
     @discardableResult
-    func save(_ note: Note) throws -> URL {
-        notes.removeAll { $0.id == note.id }
-        notes.append(note)
+    func save(_ thought: Thought) throws -> URL {
+        thoughts.removeAll { $0.id == thought.id }
+        thoughts.append(thought)
         return URL(fileURLWithPath: "/dev/null")
     }
 
-    func loadAll() -> [Note] { notes.reversed() }
+    func loadAll() -> [Thought] { thoughts.reversed() }
 
     func delete(id: UUID) throws { throw DeleteError() }
 }
@@ -489,22 +489,22 @@ final class CheatSheetGrammarTests: XCTestCase {
     }
 }
 
-/// Feedback 0008: resuming a note continues it (same id/created), appended text is added, and the
-/// note's original recording and per-paragraph timings are preserved. Keyboard editing replaces the
+/// Feedback 0008: resuming a thought continues it (same id/created), appended text is added, and the
+/// thought's original recording and per-paragraph timings are preserved. Keyboard editing replaces the
 /// transcript text.
 @MainActor
 final class ResumeAndEditTests: XCTestCase {
-    private var store: MemoryNoteStore!
+    private var store: MemoryThoughtStore!
     private var service: EventDrivingCaptureService!
 
     override func setUp() {
         super.setUp()
-        store = MemoryNoteStore()
+        store = MemoryThoughtStore()
         service = EventDrivingCaptureService()
     }
 
-    func testResumeSeedsExistingNoteAndPreservesRecordingOnSave() throws {
-        let original = Note(
+    func testResumeSeedsExistingThoughtAndPreservesRecordingOnSave() throws {
+        let original = Thought(
             id: UUID(),
             title: "Alpha",
             paragraphs: ["Alpha", "Beta"],
@@ -522,7 +522,7 @@ final class ResumeAndEditTests: XCTestCase {
         service.emitFinalized("Gamma", range: nil)
         let saved = try XCTUnwrap(try model.finish())
 
-        XCTAssertEqual(saved.id, original.id, "resume continues the same note")
+        XCTAssertEqual(saved.id, original.id, "resume continues the same thought")
         XCTAssertEqual(saved.createdAt, original.createdAt, "the original creation time is kept")
         XCTAssertEqual(saved.paragraphs, ["Alpha", "Beta", "Gamma"], "new text appends")
         XCTAssertEqual(saved.audioFileName, "rec.m4a", "the original recording is preserved")
@@ -559,8 +559,8 @@ final class ResumeAndEditTests: XCTestCase {
         XCTAssertEqual(model.editableTranscript, "Para one\n\nPara two")
     }
 
-    func testResumeTextOnlyNoteDoesNotFabricateAudioOnSave() throws {
-        let original = Note(
+    func testResumeTextOnlyThoughtDoesNotFabricateAudioOnSave() throws {
+        let original = Thought(
             id: UUID(), title: "Text only", paragraphs: ["Alpha", "Beta"],
             createdAt: Date(timeIntervalSince1970: 500)
         )
@@ -572,12 +572,12 @@ final class ResumeAndEditTests: XCTestCase {
 
         let saved = try XCTUnwrap(try model.finish())
         XCTAssertEqual(saved.paragraphs, ["Alpha", "Beta", "Gamma"])
-        XCTAssertNil(saved.audioFileName, "a text-only note must not gain a recording on resume")
+        XCTAssertNil(saved.audioFileName, "a text-only thought must not gain a recording on resume")
         XCTAssertFalse(saved.hasAudio)
     }
 
-    func testEditingResumedNoteToFewerParagraphsTruncatesTimings() throws {
-        let original = Note(
+    func testEditingResumedThoughtToFewerParagraphsTruncatesTimings() throws {
+        let original = Thought(
             id: UUID(), title: "Three", paragraphs: ["One", "Two", "Three"],
             createdAt: Date(timeIntervalSince1970: 500),
             audioFileName: "rec.m4a",
@@ -597,10 +597,10 @@ final class ResumeAndEditTests: XCTestCase {
         XCTAssertEqual(saved.audioFileName, "rec.m4a", "the original recording is still preserved")
     }
 
-    func testNewNoteAfterResumeDoesNotCarryRecordingToFreshNote() throws {
-        // Engineer review regression: resuming an audio note then "Mira new note" must not attach the
-        // original recording to the fresh note.
-        let original = Note(
+    func testNewThoughtAfterResumeDoesNotCarryRecordingToFreshThought() throws {
+        // Engineer review regression: resuming an audio thought then "Mira new thought" must not attach the
+        // original recording to the fresh thought.
+        let original = Thought(
             id: UUID(), title: "Rec", paragraphs: ["First"],
             createdAt: Date(timeIntervalSince1970: 500),
             audioFileName: "rec.m4a",
@@ -608,17 +608,17 @@ final class ResumeAndEditTests: XCTestCase {
         let model = DictationViewModel(
             service: service, store: store, processor: MiraTextProcessor(),
             recordsAudio: false, resuming: original)
-        // "new note" saves the resumed note (keeping its audio) and starts a fresh one.
-        service.emitFinalized("Mira new note", range: nil)
-        // The fresh note now captures new text and stops.
+        // "new thought" saves the resumed thought (keeping its audio) and starts a fresh one.
+        service.emitFinalized("Mira new thought", range: nil)
+        // The fresh thought now captures new text and stops.
         service.emitFinalized("Totally new", range: nil)
         let fresh = try XCTUnwrap(try model.finish())
 
         XCTAssertEqual(fresh.paragraphs, ["Totally new"])
-        XCTAssertNil(fresh.audioFileName, "the fresh note must not inherit the resumed note's recording")
+        XCTAssertNil(fresh.audioFileName, "the fresh thought must not inherit the resumed thought's recording")
         XCTAssertFalse(fresh.hasAudio)
-        // The resumed note was saved with its recording preserved.
-        let resumedSaved = try XCTUnwrap(store.notes.first { $0.id == original.id })
+        // The resumed thought was saved with its recording preserved.
+        let resumedSaved = try XCTUnwrap(store.thoughts.first { $0.id == original.id })
         XCTAssertEqual(resumedSaved.audioFileName, "rec.m4a")
     }
 }
@@ -687,18 +687,18 @@ final class SpeechAnalyzerMappingTests: XCTestCase {
 
 // MARK: - Feedback 0012: pause-based paragraph grouping in the view model
 
-/// Proves the flowing, Notes-style paragraph grouping at the service->view-model event seam: a
+/// Proves the flowing, Thoughts-style paragraph grouping at the service->view-model event seam: a
 /// mid-thought breath (small inter-segment gap) lands in ONE paragraph; a real pause (large gap)
 /// breaks into two; a resume-seam segment (analysis start) always starts a new paragraph. Driven
 /// through the injected event seam, no live audio.
 @MainActor
 final class ParagraphGroupingViewModelTests: XCTestCase {
-    private var store: MemoryNoteStore!
+    private var store: MemoryThoughtStore!
     private var service: EventDrivingCaptureService!
 
     override func setUp() {
         super.setUp()
-        store = MemoryNoteStore()
+        store = MemoryThoughtStore()
         service = EventDrivingCaptureService()
     }
 
@@ -816,30 +816,30 @@ final class ParagraphGroupingViewModelTests: XCTestCase {
                        "the next real segment groups against the last REAL segment, not the blank one")
     }
 
-    /// PR #24 review (engineer minor): "Mira new note" resets the grouper, so the FIRST committed
-    /// segment of the fresh note is its own paragraph even if its raw start would be a small gap from
-    /// the previous note's last segment end. Without the reset the carried-over anchor could merge the
-    /// new note's opener into... nothing (empty paragraphs) or mis-group it.
-    func testNewNoteResetsGrouperSoFreshNoteFirstSegmentIsItsOwnParagraph() throws {
+    /// PR #24 review (engineer minor): "Mira new thought" resets the grouper, so the FIRST committed
+    /// segment of the fresh thought is its own paragraph even if its raw start would be a small gap from
+    /// the previous thought's last segment end. Without the reset the carried-over anchor could merge the
+    /// new thought's opener into... nothing (empty paragraphs) or mis-group it.
+    func testNewThoughtResetsGrouperSoFreshThoughtFirstSegmentIsItsOwnParagraph() throws {
         let model = DictationViewModel(
             service: service, store: store, processor: MiraTextProcessor())
-        // First note: one paragraph ending (raw) at 2.0.
+        // First thought: one paragraph ending (raw) at 2.0.
         service.emitFinalized(
-            "First note body", range: nil,
+            "First thought body", range: nil,
             startSeconds: 0.0, durationSeconds: 2.0, isAnalysisStart: false)
-        // "Mira new note" saves and resets. It is a pure-command split (empty pre-text), so it does not
-        // advance the grouper; and startNewNote resets it regardless.
+        // "Mira new thought" saves and resets. It is a pure-command split (empty pre-text), so it does not
+        // advance the grouper; and startNewThought resets it regardless.
         service.emitFinalized(
-            "Mira new note", range: nil,
+            "Mira new thought", range: nil,
             startSeconds: 2.1, durationSeconds: 1.0, isAnalysisStart: false)
-        XCTAssertTrue(model.paragraphs.isEmpty, "a fresh note starts empty after new note")
-        // The fresh note's first real segment lands at raw start 2.3 (a 0.3s gap from the OLD note's 2.0
+        XCTAssertTrue(model.paragraphs.isEmpty, "a fresh thought starts empty after new thought")
+        // The fresh thought's first real segment lands at raw start 2.3 (a 0.3s gap from the OLD thought's 2.0
         // end - a small gap that, if the grouper had carried over, would try to append). It must be its
-        // OWN paragraph in the fresh note.
+        // OWN paragraph in the fresh thought.
         service.emitFinalized(
-            "Fresh note opener", range: nil,
+            "Fresh thought opener", range: nil,
             startSeconds: 2.3, durationSeconds: 1.0, isAnalysisStart: false)
-        XCTAssertEqual(model.paragraphs, ["Fresh note opener"],
-                       "the reset grouper makes the fresh note's first segment its own paragraph")
+        XCTAssertEqual(model.paragraphs, ["Fresh thought opener"],
+                       "the reset grouper makes the fresh thought's first segment its own paragraph")
     }
 }

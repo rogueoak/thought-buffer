@@ -56,19 +56,19 @@ final class SessionStartTests: XCTestCase {
         XCTAssertEqual(starter.startCount, 1, "the start intent must request exactly one session")
     }
 
-    func testNewNoteIntentRequestsSessionThroughStarter() async throws {
+    func testNewThoughtIntentRequestsSessionThroughStarter() async throws {
         let starter = StubStarter()
-        let intent = NewNoteIntent(starter: starter)
+        let intent = NewThoughtIntent(starter: starter)
 
         _ = try await intent.perform()
 
-        XCTAssertEqual(starter.startCount, 1, "the new-note intent must request exactly one session")
+        XCTAssertEqual(starter.startCount, 1, "the new-thought intent must request exactly one session")
     }
 
     func testStartIntentOpensAppWhenRun() {
         // The intent must foreground the app so the mic can run and dictation can appear.
         XCTAssertTrue(StartThoughtStreamIntent.openAppWhenRun)
-        XCTAssertTrue(NewNoteIntent.openAppWhenRun)
+        XCTAssertTrue(NewThoughtIntent.openAppWhenRun)
     }
 
     // MARK: - The route drives the same fresh open the Record button does
@@ -157,16 +157,16 @@ final class SessionStartTests: XCTestCase {
     // MARK: - App Shortcuts are registered, one per hands-free intent
 
     func testShortcutsAreRegisteredForBothIntents() {
-        // Two shortcuts register: one for starting a stream, one for a new note.
+        // Two shortcuts register: one for starting a stream, one for a new thought.
         let shortcuts = ThoughtStreamShortcuts.appShortcuts
-        XCTAssertEqual(shortcuts.count, 2, "one App Shortcut for start-a-stream, one for new-note")
+        XCTAssertEqual(shortcuts.count, 2, "one App Shortcut for start-a-stream, one for new-thought")
     }
 
     func testShortcutPhrasesAreNaturalAndPrependTheAppName() {
         // The spoken text is authored as the phrase leads; each real phrase is "<lead> <app name>",
         // so every phrase references the app name (Apple's requirement) and reads naturally. Assert
         // both the wording and that the app name is appended, since `AppShortcut.phrases` is opaque.
-        let leads = ThoughtStreamShortcuts.startPhraseLeads + ThoughtStreamShortcuts.newNotePhraseLeads
+        let leads = ThoughtStreamShortcuts.startPhraseLeads + ThoughtStreamShortcuts.newThoughtPhraseLeads
         XCTAssertGreaterThanOrEqual(leads.count, 4, "several natural phrases across the shortcuts")
 
         // Start-a-stream wording.
@@ -174,9 +174,9 @@ final class SessionStartTests: XCTestCase {
                       "a start phrase should mention a stream")
         XCTAssertTrue(ThoughtStreamShortcuts.startPhraseLeads.contains { $0.contains("dictating") },
                       "a start phrase should offer 'dictating'")
-        // New-note wording.
-        XCTAssertTrue(ThoughtStreamShortcuts.newNotePhraseLeads.contains { $0.contains("note") },
-                      "a new-note phrase should mention a note")
+        // New-thought wording.
+        XCTAssertTrue(ThoughtStreamShortcuts.newThoughtPhraseLeads.contains { $0.contains("thought") },
+                      "a new-thought phrase should mention a thought")
 
         // Every phrase is built as "<lead> \(.applicationName)", so the rendered phrase ends with the
         // app name. Prove the construction prepends the lead and appends the app name.

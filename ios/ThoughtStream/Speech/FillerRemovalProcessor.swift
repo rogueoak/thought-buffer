@@ -1,7 +1,7 @@
 import Foundation
 
 /// A `TextProcessor` that removes standalone hesitation ("filler") tokens from committed dictation
-/// text (spec 0016), so a saved note reads like written notes without changing what the user said in
+/// text (spec 0016), so a saved thought reads like written thoughts without changing what the user said in
 /// substance. Only ever runs on DICTATION text: `CompositeTextProcessor` composes it AFTER the Mira
 /// command split and spelling overrides, so it never touches the command portion of a segment.
 ///

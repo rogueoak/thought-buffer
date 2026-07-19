@@ -5,7 +5,7 @@ import Foundation
 /// composition root reads when it builds a session's text processor.
 ///
 /// Local only: backed by `UserDefaults` in production (`UserDefaultsSettingsStore`). No cloud
-/// sync or per-note settings (see spec 0006). Changes apply to the NEXT dictation session, since
+/// sync or per-thought settings (see spec 0006). Changes apply to the NEXT dictation session, since
 /// the processor is built per session from these values.
 protocol SettingsStoring: AnyObject {
     /// The word that must lead a voice command (default "Mira"). Reads back validated through the
@@ -16,7 +16,7 @@ protocol SettingsStoring: AnyObject {
 
     /// The ordered list of alias trigger words (spec 0018): extra single-token spellings that also
     /// fire command mode, so a recognizer mishearing of the control word ("mirror" for "Mira") still
-    /// triggers a command instead of being written into the note. Reads back validated through the
+    /// triggers a command instead of being written into the thought. Reads back validated through the
     /// shared `ControlPhrase.validatedAliases` seam: each alias trimmed to a single token, empty and
     /// multi-word entries dropped, de-duplicated case-insensitively, and never colliding with the
     /// primary word. A fresh install (nothing ever stored) reads back `ControlPhrase.defaultAliases`
@@ -28,13 +28,13 @@ protocol SettingsStoring: AnyObject {
     /// The ordered list of spelling fixes applied to dictated text before commit.
     var spellingOverrides: [SpellingOverride] { get set }
 
-    /// How long a note's voice recording is kept (spec 0007). Defaults to `.keep`. The capture path
+    /// How long a thought's voice recording is kept (spec 0007). Defaults to `.keep`. The capture path
     /// reads this to decide whether to record at all; the auto-delete sweep reads it to expire old
     /// recordings. Persisted as a small string tag so an unknown value falls back to `.keep`.
     var audioRetention: AudioRetention { get set }
 
     /// What title a playing recording shows on the lock screen / Control Center / CarPlay (spec
-    /// 0008). Defaults to `.noteTitle` (the note's own first line); `.generic` hides it behind a
+    /// 0008). Defaults to `.noteTitle` (the thought's own first line); `.generic` hides it behind a
     /// fixed label so a sensitive first line does not appear on a system Now Playing surface.
     /// Persisted as a small string tag so an unknown value falls back to `.noteTitle`.
     var lockScreenTitle: LockScreenTitle { get set }
@@ -43,10 +43,10 @@ protocol SettingsStoring: AnyObject {
     /// `.newest` (the app's original flat stream). The sort menu binds to this and the list re-sorts
     /// live; the choice is persisted globally so it survives a launch. Persisted as a small string
     /// tag so an unknown value falls back to `.newest`.
-    var noteSortOrder: NoteSortOrder { get set }
+    var thoughtSortOrder: ThoughtSortOrder { get set }
 
     /// Whether to refine the transcript (spec 0016): remove filler words live during dictation, and
-    /// reflow continuation lines when an edited note is saved. Defaults to `true`. It NEVER changes the
+    /// reflow continuation lines when an edited thought is saved. Defaults to `true`. It NEVER changes the
     /// recorded audio - only the transcript text. When off, dictation commits verbatim (the pre-0016
     /// behavior) and no reflow runs on save. The filler stage is built into the per-session text
     /// processor from this value, so a change takes effect on the next dictation session, like the
@@ -73,7 +73,7 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         static let spellingOverrides = "settings.spellingOverrides"
         static let audioRetention = "settings.audioRetention"
         static let lockScreenTitle = "settings.lockScreenTitle"
-        static let noteSortOrder = "settings.noteSortOrder"
+        static let thoughtSortOrder = "settings.noteSortOrder"
         static let refineTranscript = "settings.refineTranscript"
         static let trimSilence = "settings.trimSilence"
     }
@@ -151,7 +151,7 @@ final class UserDefaultsSettingsStore: SettingsStoring {
 
     var lockScreenTitle: LockScreenTitle {
         // Stored as a small string tag so a value written by a newer build never fails to decode;
-        // an absent or unknown tag falls back to `.noteTitle` (the safe default: showing the note's
+        // an absent or unknown tag falls back to `.noteTitle` (the safe default: showing the thought's
         // own title is the current behavior).
         get {
             guard let tag = defaults.string(forKey: Key.lockScreenTitle) else { return .default }
@@ -160,14 +160,14 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         set { defaults.set(newValue.storageTag, forKey: Key.lockScreenTitle) }
     }
 
-    var noteSortOrder: NoteSortOrder {
+    var thoughtSortOrder: ThoughtSortOrder {
         // Stored as a small string tag so a value written by a newer build never fails to decode; an
         // absent or unknown tag falls back to `.newest` (the app's original flat stream order).
         get {
-            guard let tag = defaults.string(forKey: Key.noteSortOrder) else { return .default }
-            return NoteSortOrder(tag: tag)
+            guard let tag = defaults.string(forKey: Key.thoughtSortOrder) else { return .default }
+            return ThoughtSortOrder(tag: tag)
         }
-        set { defaults.set(newValue.storageTag, forKey: Key.noteSortOrder) }
+        set { defaults.set(newValue.storageTag, forKey: Key.thoughtSortOrder) }
     }
 
     var refineTranscript: Bool {

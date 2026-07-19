@@ -1,16 +1,16 @@
 import XCTest
 @testable import ThoughtStream
 
-/// Command execution in the view model: note mutations, new note (save + reset), read-back
+/// Command execution in the view model: thought mutations, new thought (save + reset), read-back
 /// (Speaker + capture pause/resume), and TextProcessor result routing (command consumed vs text
 /// committed). Driven without live audio by injecting finalized segments.
 @MainActor
 final class MiraCommandExecutionTests: XCTestCase {
-    private var store: RecordingNoteStore!
+    private var store: RecordingThoughtStore!
 
     override func setUp() {
         super.setUp()
-        store = RecordingNoteStore()
+        store = RecordingThoughtStore()
     }
 
     private func makeModel(
@@ -31,7 +31,7 @@ final class MiraCommandExecutionTests: XCTestCase {
         let model = makeModel()
         model.injectFinalized("First paragraph.")
         model.injectFinalized("Mira remove the last paragraph")
-        // The command phrase never lands in the note, and it removed the one paragraph.
+        // The command phrase never lands in the thought, and it removed the one paragraph.
         XCTAssertEqual(model.paragraphs, [])
     }
 
@@ -57,7 +57,7 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(model.paragraphs, [])
     }
 
-    func testRemoveLastSentenceOnEmptyNoteIsNoOp() {
+    func testRemoveLastSentenceOnEmptyThoughtIsNoOp() {
         let model = makeModel()
         model.injectFinalized("Mira remove the last sentence")
         XCTAssertEqual(model.paragraphs, [])
@@ -73,37 +73,37 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(model.paragraphs, ["First."])
     }
 
-    func testRemoveLastParagraphOnEmptyNoteIsNoOp() {
+    func testRemoveLastParagraphOnEmptyThoughtIsNoOp() {
         let model = makeModel()
         model.injectFinalized("Mira remove the last paragraph")
         XCTAssertEqual(model.paragraphs, [])
     }
 
-    // MARK: - New note
+    // MARK: - New thought
 
-    func testNewNoteSavesCurrentAndResets() {
+    func testNewThoughtSavesCurrentAndResets() {
         let model = makeModel()
-        model.injectFinalized("A note worth keeping.")
-        model.injectFinalized("Mira new note")
+        model.injectFinalized("A thought worth keeping.")
+        model.injectFinalized("Mira new thought")
 
         XCTAssertEqual(store.saved.count, 1)
-        XCTAssertEqual(store.saved.first?.paragraphs, ["A note worth keeping."])
-        XCTAssertEqual(model.paragraphs, [], "the note should reset after new note")
+        XCTAssertEqual(store.saved.first?.paragraphs, ["A thought worth keeping."])
+        XCTAssertEqual(model.paragraphs, [], "the thought should reset after new thought")
 
-        // The fresh note is independent: a second save writes a new file with a new id.
-        model.injectFinalized("A second, separate note.")
-        model.injectFinalized("Mira new note")
+        // The fresh thought is independent: a second save writes a new file with a new id.
+        model.injectFinalized("A second, separate thought.")
+        model.injectFinalized("Mira new thought")
         XCTAssertEqual(store.saved.count, 2)
         XCTAssertNotEqual(store.saved[0].id, store.saved[1].id)
     }
 
-    func testNewNoteFoldsLivePartialIntoSavedNote() {
+    func testNewThoughtFoldsLivePartialIntoSavedThought() {
         let model = makeModel()
         model.injectFinalized("First finalized paragraph.")
-        // A partial phrase is live (never finalized) when "Mira new note" fires; it must fold into
-        // the saved note rather than being dropped.
+        // A partial phrase is live (never finalized) when "Mira new thought" fires; it must fold into
+        // the saved thought rather than being dropped.
         model.simulatePartial("A trailing partial thought")
-        model.injectFinalized("Mira new note")
+        model.injectFinalized("Mira new thought")
 
         XCTAssertEqual(store.saved.count, 1)
         XCTAssertEqual(store.saved.first?.paragraphs, [
@@ -113,9 +113,9 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(model.paragraphs, [])
     }
 
-    func testNewNoteWithEmptyNoteSavesNothing() {
+    func testNewThoughtWithEmptyThoughtSavesNothing() {
         let model = makeModel()
-        model.injectFinalized("Mira new note")
+        model.injectFinalized("Mira new thought")
         XCTAssertEqual(store.saved.count, 0)
         XCTAssertEqual(model.paragraphs, [])
     }
@@ -146,7 +146,7 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(service.resumeCount, 1)
     }
 
-    func testReadThatBackOnEmptyNoteDoesNotSpeak() {
+    func testReadThatBackOnEmptyThoughtDoesNotSpeak() {
         let speaker = StubSpeaker()
         let model = makeModel(speaker: speaker)
         model.injectFinalized("Mira read that back")
@@ -201,11 +201,11 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(model.commandBanner, "Mira - removed last paragraph")
     }
 
-    func testNewNoteFiresBanner() {
+    func testNewThoughtFiresBanner() {
         let model = makeModel()
-        model.injectFinalized("A note worth keeping.")
-        model.injectFinalized("Mira new note")
-        XCTAssertEqual(model.commandBanner, "Mira - new note")
+        model.injectFinalized("A thought worth keeping.")
+        model.injectFinalized("Mira new thought")
+        XCTAssertEqual(model.commandBanner, "Mira - new thought")
     }
 
     func testReadThatBackFiresBanner() {
@@ -217,15 +217,15 @@ final class MiraCommandExecutionTests: XCTestCase {
 
     // MARK: - Device accumulating-segment: command lands mid/end of one segment (feedback 0006)
 
-    /// (a) "here is my note Mira new note" -> commits "here is my note" AND fires newNote.
-    func testAccumulatingSegmentCommitsPreTextAndFiresNewNote() {
+    /// (a) "here is my thought Mira new thought" -> commits "here is my thought" AND fires newThought.
+    func testAccumulatingSegmentCommitsPreTextAndFiresNewThought() {
         let model = makeModel()
-        model.injectFinalized("here is my note Mira new note")
-        // newNote saved the pre-text note and reset, so the current note is empty again.
+        model.injectFinalized("here is my thought Mira new thought")
+        // newThought saved the pre-text thought and reset, so the current thought is empty again.
         XCTAssertEqual(store.saved.count, 1)
-        XCTAssertEqual(store.saved.first?.paragraphs, ["here is my note"])
+        XCTAssertEqual(store.saved.first?.paragraphs, ["here is my thought"])
         XCTAssertEqual(model.paragraphs, [])
-        XCTAssertEqual(model.commandBanner, "Mira - new note")
+        XCTAssertEqual(model.commandBanner, "Mira - new thought")
     }
 
     /// (b) "remember the milk Mira read that back to me" -> commits "remember the milk" AND fires
@@ -239,12 +239,12 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertEqual(model.commandBanner, "Mira - read that back")
     }
 
-    /// (c) "here is my note Mira flibber" (keyword + gibberish) -> commits the pre-text, drops the
+    /// (c) "here is my thought Mira flibber" (keyword + gibberish) -> commits the pre-text, drops the
     /// command tail, shows the chip.
     func testAccumulatingSegmentKeywordGibberishCommitsPreTextAndChips() {
         let model = makeModel()
-        model.injectFinalized("here is my note Mira flibber")
-        XCTAssertEqual(model.paragraphs, ["here is my note"], "pre-text is kept")
+        model.injectFinalized("here is my thought Mira flibber")
+        XCTAssertEqual(model.paragraphs, ["here is my thought"], "pre-text is kept")
         XCTAssertEqual(model.commandBanner, "Sorry, I didn't catch that command")
     }
 
@@ -293,7 +293,7 @@ final class MiraCommandExecutionTests: XCTestCase {
 
     // MARK: - No banner for a no-op command (no actual effect)
 
-    func testNoOpRemoveOnEmptyNoteShowsNoBanner() {
+    func testNoOpRemoveOnEmptyThoughtShowsNoBanner() {
         let model = makeModel()
         model.injectFinalized("Mira remove the last paragraph")
         XCTAssertNil(model.commandBanner)
@@ -301,82 +301,82 @@ final class MiraCommandExecutionTests: XCTestCase {
         XCTAssertNil(model.commandBanner)
     }
 
-    func testNoOpReadBackOnEmptyNoteShowsNoBanner() {
+    func testNoOpReadBackOnEmptyThoughtShowsNoBanner() {
         let model = makeModel()
         model.injectFinalized("Mira read that back")
         XCTAssertNil(model.commandBanner)
     }
 
-    func testNewNoteOnEmptyNoteShowsNoBanner() {
+    func testNewThoughtOnEmptyThoughtShowsNoBanner() {
         let model = makeModel()
-        model.injectFinalized("Mira new note")
+        model.injectFinalized("Mira new thought")
         XCTAssertNil(model.commandBanner)
     }
 
-    // MARK: - New note save failure: preserve content, surface error, no success banner
+    // MARK: - New thought save failure: preserve content, surface error, no success banner
 
-    func testNewNoteSaveFailurePreservesContentAndSurfacesError() {
-        let failing = ThrowingNoteStore()
+    func testNewThoughtSaveFailurePreservesContentAndSurfacesError() {
+        let failing = ThrowingThoughtStore()
         let model = DictationViewModel(
             service: StubCaptureService(),
             store: failing,
             processor: MiraTextProcessor(),
             speaker: StubSpeaker()
         )
-        model.injectFinalized("A note that cannot be saved.")
-        model.injectFinalized("Mira new note")
+        model.injectFinalized("A thought that cannot be saved.")
+        model.injectFinalized("Mira new thought")
 
-        // Content is preserved (not bled into a fresh note), the error is surfaced, and NO success
+        // Content is preserved (not bled into a fresh thought), the error is surfaced, and NO success
         // banner is shown.
-        XCTAssertEqual(model.paragraphs, ["A note that cannot be saved."])
-        XCTAssertEqual(model.commandError, .newNoteSaveFailed)
+        XCTAssertEqual(model.paragraphs, ["A thought that cannot be saved."])
+        XCTAssertEqual(model.commandError, .newThoughtSaveFailed)
         XCTAssertNil(model.commandBanner)
 
-        // A follow-up sentence appends to the SAME preserved note, not a bled-together one.
-        model.injectFinalized("Still the same note.")
+        // A follow-up sentence appends to the SAME preserved thought, not a bled-together one.
+        model.injectFinalized("Still the same thought.")
         XCTAssertEqual(model.paragraphs, [
-            "A note that cannot be saved.",
-            "Still the same note."
+            "A thought that cannot be saved.",
+            "Still the same thought."
         ])
     }
 
-    func testNewNoteSaveSuccessResetsAndClearsError() {
+    func testNewThoughtSaveSuccessResetsAndClearsError() {
         let model = makeModel()
-        model.injectFinalized("A note worth keeping.")
-        model.injectFinalized("Mira new note")
+        model.injectFinalized("A thought worth keeping.")
+        model.injectFinalized("Mira new thought")
         XCTAssertEqual(store.saved.count, 1)
         XCTAssertEqual(model.paragraphs, [])
         XCTAssertNil(model.commandError)
-        XCTAssertEqual(model.commandBanner, "Mira - new note")
+        XCTAssertEqual(model.commandBanner, "Mira - new thought")
     }
 }
 
 // MARK: - Test doubles
 
-/// A `NoteStoring` stub that records saves in memory and never fails. `@unchecked Sendable`: it is
-/// only touched from the test's single actor, but `NoteStoring: Sendable` requires the annotation
+/// A `ThoughtStoring` stub that records saves in memory and never fails. `@unchecked Sendable`: it is
+/// only touched from the test's single actor, but `ThoughtStoring: Sendable` requires the annotation
 /// for its mutable buffer.
-private final class RecordingNoteStore: NoteStoring, @unchecked Sendable {
-    private(set) var saved: [Note] = []
+private final class RecordingThoughtStore: ThoughtStoring, @unchecked Sendable {
+    private(set) var saved: [Thought] = []
 
     @discardableResult
-    func save(_ note: Note) throws -> URL {
-        saved.append(note)
+    func save(_ thought: Thought) throws -> URL {
+        saved.append(thought)
         return URL(fileURLWithPath: "/dev/null")
     }
 
-    func loadAll() -> [Note] { saved }
+    func loadAll() -> [Thought] { saved }
     func delete(id: UUID) throws {
         saved.removeAll { $0.id == id }
     }
 }
 
-/// A `NoteStoring` stub whose `save` always throws, to exercise the "new note" save-failure path.
-private final class ThrowingNoteStore: NoteStoring {
+/// A `ThoughtStoring` stub whose `save` always throws, to exercise the "new thought" save-failure path.
+private final class ThrowingThoughtStore: ThoughtStoring {
     struct SaveError: Error {}
 
-    func save(_ note: Note) throws -> URL { throw SaveError() }
-    func loadAll() -> [Note] { [] }
+    func save(_ thought: Thought) throws -> URL { throw SaveError() }
+    func loadAll() -> [Thought] { [] }
     func delete(id: UUID) throws {}
 }
 

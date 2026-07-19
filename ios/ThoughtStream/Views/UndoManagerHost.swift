@@ -17,11 +17,11 @@ import UIKit
 /// so a shake resolves against the wrong (or nil) manager and shake-to-undo silently breaks - the exact
 /// bug this PR fixes. So the host RE-CLAIMS first responder whenever focus should return to it: on
 /// keyboard hide, on a text field ending editing, and on the app becoming active. That keeps the shake
-/// reaching `NoteDeletionController`'s injected manager after any in-app editing.
+/// reaching `ThoughtDeletionController`'s injected manager after any in-app editing.
 ///
 /// Kept as a small, separable component (the host view + a coordinator holding the manager) so the
 /// injection reads clearly: `StreamListView` overlays it and hands the vended manager to
-/// `NoteDeletionController`, replacing the unreliable environment manager.
+/// `ThoughtDeletionController`, replacing the unreliable environment manager.
 struct UndoManagerHost: UIViewControllerRepresentable {
     /// Called once with the stable `UndoManager` the hosted controller vends, so the composition root can
     /// inject it into the deletion controller. Fires on make (and is idempotent-safe for the caller).

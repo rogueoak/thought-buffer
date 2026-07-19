@@ -2,7 +2,7 @@ import XCTest
 @testable import ThoughtStream
 
 /// The stale "x mins ago" bug (feedback 0011) came from a relative-time label that never recomputed
-/// against a current reference. The `NoteCard` fix wraps the label in a `TimelineView` and passes the
+/// against a current reference. The `ThoughtCard` fix wraps the label in a `TimelineView` and passes the
 /// live `context.date` as `relativeTo`. These tests pin the contract that fix depends on: the label
 /// is a function of the reference instant, not a constant - so a label rendered at save time cannot
 /// be correct forever.

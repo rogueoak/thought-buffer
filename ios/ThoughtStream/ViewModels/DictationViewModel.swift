@@ -1,8 +1,8 @@
 import Foundation
 import SwiftUI
 
-/// Drives the dictation screen: holds the growing note, the live partial phrase, the mic level,
-/// and the capture phase, and coordinates the speech service and the note store.
+/// Drives the dictation screen: holds the growing thought, the live partial phrase, the mic level,
+/// and the capture phase, and coordinates the speech service and the thought store.
 @MainActor
 final class DictationViewModel: ObservableObject {
     /// Where capture is in its lifecycle, which the view uses to pick its content and controls.
@@ -57,7 +57,7 @@ final class DictationViewModel: ObservableObject {
         var detail: String {
             switch self {
             case .speechNotAuthorized:
-                return "Thought Stream needs speech recognition to turn your voice into notes. "
+                return "Thought Stream needs speech recognition to turn your voice into thoughts. "
                     + "Turn it on in Settings, under Thought Stream."
             case .microphoneNotAuthorized:
                 return "Thought Stream needs the microphone to hear you. Turn it on in Settings, "
@@ -78,14 +78,14 @@ final class DictationViewModel: ObservableObject {
     enum CommandBanner: Equatable {
         case removedLastSentence
         case removedLastParagraph
-        case newNote
+        case newThought
         case readThatBack
 
         init(_ command: MiraCommand) {
             switch command {
             case .removeLastSentence: self = .removedLastSentence
             case .removeLastParagraph: self = .removedLastParagraph
-            case .newNote: self = .newNote
+            case .newThought: self = .newThought
             case .readThatBack: self = .readThatBack
             }
         }
@@ -96,14 +96,14 @@ final class DictationViewModel: ObservableObject {
             switch self {
             case .removedLastSentence: return "removed last sentence"
             case .removedLastParagraph: return "removed last paragraph"
-            case .newNote: return "new note"
+            case .newThought: return "new thought"
             case .readThatBack: return "read that back"
             }
         }
     }
 
     @Published private(set) var phase: Phase = .idle
-    /// Finalized paragraphs committed to the note so far.
+    /// Finalized paragraphs committed to the thought so far.
     @Published private(set) var paragraphs: [String] = []
     /// The in-progress phrase for the current task, shown live with a caret.
     @Published private(set) var partial: String = ""
@@ -113,18 +113,18 @@ final class DictationViewModel: ObservableObject {
     /// cleared after a moment. Assembled here (where the active control word is known) so the view
     /// renders a plain string and stays correct when Settings makes the control word configurable.
     @Published private(set) var commandBanner: String?
-    /// Set when a voice command (currently "Mira new note") fails to save, so the view surfaces an
+    /// Set when a voice command (currently "Mira new thought") fails to save, so the view surfaces an
     /// error rather than the success chip. The current content is preserved on screen.
     @Published private(set) var commandError: CommandError?
 
     /// A voice command that could not complete, surfaced to the view instead of a success chip.
     enum CommandError: Equatable {
-        /// "Mira new note" could not save the current note; its content is preserved on screen.
-        case newNoteSaveFailed
+        /// "Mira new thought" could not save the current thought; its content is preserved on screen.
+        case newThoughtSaveFailed
     }
 
     private let service: SpeechCaptureService
-    private let store: NoteStoring
+    private let store: ThoughtStoring
     private let processor: TextProcessor
     private let speaker: Speaker
     /// Whether to record the session's audio (spec 0007). Read from settings at construction so it
@@ -132,45 +132,45 @@ final class DictationViewModel: ObservableObject {
     private let recordsAudio: Bool
     /// The dead-air trimmer, or nil when trimming is OFF (spec 0019). When nil, NO code path touches
     /// the saved recording - it is the byte-for-byte untrimmed capture. When present, a freshly saved
-    /// recording is trimmed off the main actor after `finish()`, its silences cut and the note's
-    /// timings remapped onto the shortened timeline, then the note is re-saved. Injected from the
+    /// recording is trimmed off the main actor after `finish()`, its silences cut and the thought's
+    /// timings remapped onto the shortened timeline, then the thought is re-saved. Injected from the
     /// composition root only for a session that RECORDS new audio; a resumed/text append never trims
     /// (it keeps the original recording).
     private let audioTrimmer: AudioTrimming?
-    /// The active control word, used to assemble the command chip label (e.g. "Mira - new note") and
+    /// The active control word, used to assemble the command chip label (e.g. "Mira - new thought") and
     /// shown on the cheat sheet (feedback 0008). Injected so it stays in sync with the processor's
     /// control word once Settings makes it configurable, keeping the chip prefix out of the view.
     let controlWord: String
     private var createdAt = Date()
-    private var noteID = UUID()
-    /// The folder the note is saved into (spec 0010). A fresh session is created at the TOP LEVEL
-    /// (empty) - notes are filed into folders afterward via PR B's move action. A RESUMED note keeps
+    private var thoughtID = UUID()
+    /// The folder the thought is saved into (spec 0010). A fresh session is created at the TOP LEVEL
+    /// (empty) - thoughts are filed into folders afterward via PR B's move action. A RESUMED thought keeps
     /// the folder it already lives in, so continuing it re-saves it in place rather than yanking it
-    /// back to the root. Reset to top level when "new note" starts a fresh note mid-session.
+    /// back to the root. Reset to top level when "new thought" starts a fresh thought mid-session.
     private var folderPath: [String] = []
 
-    /// A user-set title carried over when RESUMING a note (spec 0009). A fresh session always
-    /// auto-derives its title, but resuming a note the user titled must keep that title rather than
+    /// A user-set title carried over when RESUMING a thought (spec 0009). A fresh session always
+    /// auto-derives its title, but resuming a thought the user titled must keep that title rather than
     /// re-deriving it from the (now longer) body. Nil / false for a fresh session.
     private var hasCustomTitle = false
     private var customTitle: String?
 
-    /// The recording filename carried over when RESUMING an existing note (feedback 0008): a resumed
-    /// session does not record new audio, so the note keeps its original recording. Nil for a fresh
+    /// The recording filename carried over when RESUMING an existing thought (feedback 0008): a resumed
+    /// session does not record new audio, so the thought keeps its original recording. Nil for a fresh
     /// session, where any recording comes from the live capture instead.
     private var existingAudioFileName: String?
 
     /// One timing per committed paragraph, in lockstep with `paragraphs` (spec 0007). A finalized
     /// segment appends its range here as its text is committed; a paragraph committed without a range
     /// (a command-folded partial, or recording off) appends a nil placeholder so the arrays stay
-    /// aligned. Trailing nils are trimmed when the note is built.
+    /// aligned. Trailing nils are trimmed when the thought is built.
     private var paragraphTimings: [ParagraphTiming?] = []
 
     /// Decides whether a finalized segment flows into the current paragraph or starts a new one, by the
     /// silence gap between segments (feedback 0012). All the policy lives in the pure grouper; the view
-    /// model only routes on its decision. Its anchor spans one NOTE's dictation and is RESET at a note
-    /// boundary (`resetForNewNote`, called from `startNewNote`) so the gap never carries over from the
-    /// previous note's last segment into the fresh note's first; a pause/resume seam within a note is
+    /// model only routes on its decision. Its anchor spans one THOUGHT's dictation and is RESET at a thought
+    /// boundary (`resetForNewThought`, called from `startNewThought`) so the gap never carries over from the
+    /// previous thought's last segment into the fresh thought's first; a pause/resume seam within a thought is
     /// handled by the service's analysis-start flag.
     private var grouper = ParagraphGrouper()
 
@@ -188,14 +188,14 @@ final class DictationViewModel: ObservableObject {
 
     init(
         service: SpeechCaptureService? = nil,
-        store: NoteStoring,
+        store: ThoughtStoring,
         processor: TextProcessor = PassthroughTextProcessor(),
         speaker: Speaker? = nil,
         recordsAudio: Bool = false,
         audioTrimmer: AudioTrimming? = nil,
         controlWord: String = MiraTextProcessor.defaultControlWord,
         folderPath: [String] = [],
-        resuming: Note? = nil
+        resuming: Thought? = nil
     ) {
         // Build the production service here (on the main actor) when none is injected, so the
         // service's main-actor-isolated initializer is not called from a nonisolated default.
@@ -207,21 +207,21 @@ final class DictationViewModel: ObservableObject {
         self.audioTrimmer = audioTrimmer
         self.controlWord = controlWord
         // A brand-new session started while browsing a folder files its thought THERE, not at the root
-        // (feedback: the record + new-thought actions must be contextual). A resuming note overrides this
+        // (feedback: the record + new-thought actions must be contextual). A resuming thought overrides this
         // below with the folder it already lives in.
         self.folderPath = folderPath
-        // Resuming an existing note (feedback 0008): keep its id, creation time, and text so the
-        // session continues that note (saving overwrites the same file) rather than starting a new
+        // Resuming an existing thought (feedback 0008): keep its id, creation time, and text so the
+        // session continues that thought (saving overwrites the same file) rather than starting a new
         // one. New spoken content is appended as text; the original recording and its per-paragraph
         // timings are preserved for the existing paragraphs (a resumed session records no new audio,
         // so the caller passes recordsAudio: false), and anything appended is text-only on playback.
         if let resuming {
-            noteID = resuming.id
+            thoughtID = resuming.id
             createdAt = resuming.createdAt
             paragraphs = resuming.paragraphs
             paragraphTimings = Self.seedTimings(for: resuming)
             existingAudioFileName = resuming.audioFileName
-            // Keep the resumed note in the folder it already lives in, so continuing it re-saves in
+            // Keep the resumed thought in the folder it already lives in, so continuing it re-saves in
             // place rather than relocating it to the top level. Overrides the `folderPath` argument (a
             // resume ignores any browsing-context path). `self.` because the init parameter shadows it.
             self.folderPath = resuming.folderPath
@@ -241,11 +241,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    /// The per-paragraph timing slots to seed when resuming a note, aligned 1:1 with its paragraphs:
-    /// each paragraph keeps its recorded range (or nil when the note had no timing for it), so the
+    /// The per-paragraph timing slots to seed when resuming a thought, aligned 1:1 with its paragraphs:
+    /// each paragraph keeps its recorded range (or nil when the thought had no timing for it), so the
     /// preserved recording still maps to the original paragraphs after resume.
-    private static func seedTimings(for note: Note) -> [ParagraphTiming?] {
-        note.paragraphs.indices.map { note.timing(forParagraphAt: $0) }
+    private static func seedTimings(for thought: Thought) -> [ParagraphTiming?] {
+        thought.paragraphs.indices.map { thought.timing(forParagraphAt: $0) }
     }
 
     /// The full transcript so far, including the live partial, for display.
@@ -303,11 +303,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    /// Stop capture and save the note. Returns the saved note, or nil if nothing was captured.
-    /// Throws if the store fails to persist the note, so the caller can surface the failure
+    /// Stop capture and save the thought. Returns the saved thought, or nil if nothing was captured.
+    /// Throws if the store fails to persist the thought, so the caller can surface the failure
     /// instead of silently reporting success.
     @discardableResult
-    func finish() throws -> Note? {
+    func finish() throws -> Thought? {
         service.stop()
         speaker.stop()
         // Fold any live partial into the committed paragraphs before saving. The partial is
@@ -323,69 +323,69 @@ final class DictationViewModel: ObservableObject {
             return nil
         }
 
-        // The session's recording (finalized by `service.stop()` above) belongs to this final note.
+        // The session's recording (finalized by `service.stop()` above) belongs to this final thought.
         didAdoptNewRecording = false
-        let note = try saveCurrentNote(adoptingRecording: true)
+        let thought = try saveCurrentThought(adoptingRecording: true)
         // A successful adopt MOVES the temp file into storage; if adopting was skipped or failed, a
         // temp file may linger. Clean it up so no orphan recording is left on disk.
         discardPendingRecording()
         phase = .saved
-        // Dead-air removal (spec 0019): only for a note that just adopted a NEW recording, and only
+        // Dead-air removal (spec 0019): only for a thought that just adopted a NEW recording, and only
         // when trimming is on (a nil trimmer means OFF - no code path touches the audio). Runs OFF the
         // main actor so a slow trim never freezes the UI; on success it remaps timings and re-saves.
-        // `finish()` returns immediately with the untrimmed note; the trim re-saves in the background.
+        // `finish()` returns immediately with the untrimmed thought; the trim re-saves in the background.
         if didAdoptNewRecording {
-            scheduleTrim(for: note)
+            scheduleTrim(for: thought)
         }
-        return note
+        return thought
     }
 
-    /// Whether the most recent `saveCurrentNote` adopted a freshly captured recording (as opposed to
-    /// a resumed note keeping its existing one, or a text-only save). Gates the post-save trim so a
-    /// resumed note's original recording is never re-trimmed.
+    /// Whether the most recent `saveCurrentThought` adopted a freshly captured recording (as opposed to
+    /// a resumed thought keeping its existing one, or a text-only save). Gates the post-save trim so a
+    /// resumed thought's original recording is never re-trimmed.
     private var didAdoptNewRecording = false
 
-    /// Called on the main actor after a background dead-air trim finishes and the note's timings were
+    /// Called on the main actor after a background dead-air trim finishes and the thought's timings were
     /// re-saved (spec 0019), so the host can reload its feed and drop the stale (un-remapped) in-memory
-    /// note. Nil when no host wired it (tests, screenshot tooling). Set by the view.
+    /// thought. Nil when no host wired it (tests, screenshot tooling). Set by the view.
     ///
-    /// KNOWN LIMITATION (feedback 0017): this reloads the LIST feed, but an ALREADY-OPEN `NoteDetailView`
-    /// pushed on the stack keeps its own un-remapped note snapshot until it is popped and reopened.
+    /// KNOWN LIMITATION (feedback 0017): this reloads the LIST feed, but an ALREADY-OPEN `ThoughtDetailView`
+    /// pushed on the stack keeps its own un-remapped thought snapshot until it is popped and reopened.
     /// Harmless today because detail playback is whole-file (the total duration is unchanged by trimming
     /// only interior silence), so a stale per-paragraph timing is never consulted. A future PER-PARAGRAPH
     /// SEEK feature MUST revisit this - it would seek against timings that no longer match the shorter
-    /// audio - by refreshing the open detail's note here (or re-reading it at seek time).
+    /// audio - by refreshing the open detail's thought here (or re-reading it at seek time).
     var onTrimmed: (() -> Void)?
 
-    /// Trim dead air from a just-saved note's recording OFF the main actor, then adopt the trimmed
-    /// audio and remap the note's timings (spec 0019). Non-blocking: `finish()` has already returned
-    /// the untrimmed note. On any trim failure the original recording and timings are left in place, so
-    /// the note is never lost. The task is detached so it outlives the view dismissed after `finish()`.
+    /// Trim dead air from a just-saved thought's recording OFF the main actor, then adopt the trimmed
+    /// audio and remap the thought's timings (spec 0019). Non-blocking: `finish()` has already returned
+    /// the untrimmed thought. On any trim failure the original recording and timings are left in place, so
+    /// the thought is never lost. The task is detached so it outlives the view dismissed after `finish()`.
     ///
     /// Three review-driven safeguards. First, the swap is done through the store's COORDINATED
     /// `replaceAudio` (not a bare `replaceItemAt`), so an iCloud recording is not raced against the sync
-    /// daemon. Second, the note is re-read FRESH from disk by id and CONFIRMED to still exist BEFORE the
-    /// audio is swapped: the user may soft-delete (spec 0020 trash) the note between `finish()` and this
-    /// trim landing, and after a delete the note's `.md` is hidden in trash so its audio slot resolves to
+    /// daemon. Second, the thought is re-read FRESH from disk by id and CONFIRMED to still exist BEFORE the
+    /// audio is swapped: the user may soft-delete (spec 0020 trash) the thought between `finish()` and this
+    /// trim landing, and after a delete the thought's `.md` is hidden in trash so its audio slot resolves to
     /// a non-existent root path - adopting the trimmed temp there would leave an orphan raw-voice `.m4a`,
-    /// invisible to `loadAll` and never purged, defeating the delete. If the note is gone we delete the
+    /// invisible to `loadAll` and never purged, defeating the delete. If the thought is gone we delete the
     /// trimmed temp and bail. (`replaceAudio` also refuses to create a file when the slot is absent, so
-    /// this is belt-and-suspenders.) Third, the timings re-save only replaces the fresh note's timings -
+    /// this is belt-and-suspenders.) Third, the timings re-save only replaces the fresh thought's timings -
     /// it does NOT re-save the stale snapshot captured at `finish()` - so a concurrent rename/move is
     /// preserved.
-    private func scheduleTrim(for note: Note) {
-        guard let audioTrimmer, note.hasAudio,
-              let audioURL = store.audioURL(for: note.id) else { return }
+    private func scheduleTrim(for thought: Thought) {
+        guard let audioTrimmer, thought.hasAudio,
+              let audioURL = store.audioURL(for: thought.id) else { return }
         let store = self.store
-        let noteID = note.id
+        let thoughtID = thought.id
         Task.detached { [weak self] in
             let result = await audioTrimmer.trim(fileAt: audioURL)
             guard case .trimmed(let trimmedFileURL, let removedRanges) = result else { return }
 
-            // Re-read the note FRESH and confirm it still exists BEFORE touching any audio. If it was
+            // Re-read the thought FRESH and confirm it still exists BEFORE touching any audio. If it was
             // soft-deleted/moved during the trim, discard the trimmed temp and bail - never adopt it
             // (which would orphan a copy of the just-deleted recording).
-            guard let current = store.loadAll().first(where: { $0.id == noteID }) else {
+            guard let current = store.loadAll().first(where: { $0.id == thoughtID }) else {
                 try? FileManager.default.removeItem(at: trimmedFileURL)
                 return
             }
@@ -394,50 +394,50 @@ final class DictationViewModel: ObservableObject {
             // clean up the temp and leave the original recording + timings untouched (never lost). A nil
             // return means the recording slot vanished in the tiny window since the re-read (a delete
             // that raced the swap): `replaceAudio` created NO orphan and consumed the temp, so bail
-            // without re-saving the timings (which would resurrect the just-deleted note).
+            // without re-saving the timings (which would resurrect the just-deleted thought).
             let replaced: URL?
             do {
-                replaced = try store.replaceAudio(from: trimmedFileURL, for: noteID)
+                replaced = try store.replaceAudio(from: trimmedFileURL, for: thoughtID)
             } catch {
                 try? FileManager.default.removeItem(at: trimmedFileURL)
                 return
             }
             guard replaced != nil else { return }
 
-            // Remap only the fresh note's timings (its edits are preserved). A save failure leaves the
-            // note with its original timings against the shorter recording - a seek slip, not data loss.
-            let remappedNote = current.withTimings(
+            // Remap only the fresh thought's timings (its edits are preserved). A save failure leaves the
+            // thought with its original timings against the shorter recording - a seek slip, not data loss.
+            let remappedThought = current.withTimings(
                 TimingRemapper.remap(timings: current.timings, removedRanges: removedRanges)
             )
-            try? store.save(remappedNote)
+            try? store.save(remappedThought)
 
-            // Hop back to the main actor so the host reloads and drops the stale in-memory note.
+            // Hop back to the main actor so the host reloads and drops the stale in-memory thought.
             await MainActor.run { self?.onTrimmed?() }
         }
     }
 
-    /// Build and save the current note, optionally adopting the session's recording into storage.
+    /// Build and save the current thought, optionally adopting the session's recording into storage.
     ///
     /// When `adoptingRecording` is true and the capture service produced a recording, the temp file
-    /// is moved into the note's audio slot and the note is saved WITH its audio filename and
-    /// timings. If adopting the audio fails, the note is still saved text-only (the words are never
-    /// lost for the sake of the recording). Without a recording, the note saves exactly as before.
+    /// is moved into the thought's audio slot and the thought is saved WITH its audio filename and
+    /// timings. If adopting the audio fails, the thought is still saved text-only (the words are never
+    /// lost for the sake of the recording). Without a recording, the thought saves exactly as before.
     @discardableResult
-    private func saveCurrentNote(adoptingRecording: Bool) throws -> Note {
-        // A resumed note the user titled keeps that title (spec 0009); everything else derives from
+    private func saveCurrentThought(adoptingRecording: Bool) throws -> Thought {
+        // A resumed thought the user titled keeps that title (spec 0009); everything else derives from
         // the first sentence.
         let title = hasCustomTitle
-            ? (customTitle ?? Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt))
-            : Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
+            ? (customTitle ?? Thought.deriveTitle(paragraphs: paragraphs, createdAt: createdAt))
+            : Thought.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
 
-        // Save the note FILE FIRST, before adopting any recording (spec 0010). The store places the
-        // recording BESIDE the note's `.md` (it locates the note file to find the folder), so the
+        // Save the thought FILE FIRST, before adopting any recording (spec 0010). The store places the
+        // recording BESIDE the thought's `.md` (it locates the thought file to find the folder), so the
         // `.md` must exist in its folder before the `.m4a` is moved in - otherwise, with subfolders,
-        // the recording would land at the root instead of beside its note. A text-only note is written
-        // now; if a recording is then adopted, the note is re-saved with its audio metadata. The file
-        // is already in the note's `folderPath`, so the re-save is an in-place overwrite, not a move.
-        let textOnlyNote = Note(
-            id: noteID,
+        // the recording would land at the root instead of beside its thought. A text-only thought is written
+        // now; if a recording is then adopted, the thought is re-saved with its audio metadata. The file
+        // is already in the thought's `folderPath`, so the re-save is an in-place overwrite, not a move.
+        let textOnlyThought = Thought(
+            id: thoughtID,
             title: title,
             paragraphs: paragraphs,
             createdAt: createdAt,
@@ -446,11 +446,11 @@ final class DictationViewModel: ObservableObject {
             timings: [],
             folderPath: folderPath
         )
-        try store.save(textOnlyNote)
+        try store.save(textOnlyThought)
 
-        // Only the FINAL note (Stop) adopts the recording: mid-session "new note" saves text-only,
+        // Only the FINAL thought (Stop) adopts the recording: mid-session "new thought" saves text-only,
         // because the one continuous session file is not finalized until Stop. Never discard the
-        // recording here - the writer may still be live for a following note; `finish()` owns
+        // recording here - the writer may still be live for a following thought; `finish()` owns
         // discarding a recording that ends up attached to nothing.
         var audioFileName: String?
         var timings: [ParagraphTiming] = []
@@ -461,22 +461,22 @@ final class DictationViewModel: ObservableObject {
             audioFileName = attached.fileName
             timings = attached.timings
             // Mark this as a freshly captured recording so `finish()` schedules the dead-air trim for
-            // it (spec 0019). A resumed note that keeps its existing recording is never re-trimmed.
+            // it (spec 0019). A resumed thought that keeps its existing recording is never re-trimmed.
             didAdoptNewRecording = true
         } else if let existingAudioFileName {
-            // Resumed note (feedback 0008): keep the original recording and its per-paragraph timings.
+            // Resumed thought (feedback 0008): keep the original recording and its per-paragraph timings.
             // Appended paragraphs have no recorded range, so `resolvedTimings` pads them and they play
             // back via text-to-speech; the original paragraphs still map to the preserved audio.
             audioFileName = existingAudioFileName
             timings = resolvedTimings()
         }
 
-        // No recording to attach: the text-only note already on disk is the final note.
-        guard audioFileName != nil else { return textOnlyNote }
+        // No recording to attach: the text-only thought already on disk is the final thought.
+        guard audioFileName != nil else { return textOnlyThought }
 
         // Re-save with the recording metadata now that the `.m4a` sits beside the `.md`.
-        let note = Note(
-            id: noteID,
+        let thought = Thought(
+            id: thoughtID,
             title: title,
             paragraphs: paragraphs,
             createdAt: createdAt,
@@ -485,26 +485,26 @@ final class DictationViewModel: ObservableObject {
             timings: timings,
             folderPath: folderPath
         )
-        try store.save(note)
-        return note
+        try store.save(thought)
+        return thought
     }
 
-    /// Move the session's recording into the note's audio slot and build its per-paragraph timings.
+    /// Move the session's recording into the thought's audio slot and build its per-paragraph timings.
     /// Returns nil (so the caller falls back to a text-only save) when the store keeps no audio.
     private func attachRecording(_ recordingURL: URL) throws -> (fileName: String, timings: [ParagraphTiming])? {
-        guard let destination = store.audioURL(for: noteID) else { return nil }
-        try store.saveAudio(from: recordingURL, for: noteID)
-        // Trailing nils (partials, command-folded text) carry no timing; a note with no real timing
-        // at all is effectively text-only, so return nil and let the note save without audio.
+        guard let destination = store.audioURL(for: thoughtID) else { return nil }
+        try store.saveAudio(from: recordingURL, for: thoughtID)
+        // Trailing nils (partials, command-folded text) carry no timing; a thought with no real timing
+        // at all is effectively text-only, so return nil and let the thought save without audio.
         let resolved = resolvedTimings()
         guard resolved.contains(where: { $0.duration > 0 }) else {
-            try? store.deleteAudio(for: noteID)
+            try? store.deleteAudio(for: thoughtID)
             return nil
         }
         return (destination.lastPathComponent, resolved)
     }
 
-    /// The per-paragraph timings for the note, one per paragraph. A paragraph with no recorded range
+    /// The per-paragraph timings for the thought, one per paragraph. A paragraph with no recorded range
     /// gets a zero-length placeholder so the array lines up 1:1 with `paragraphs` and an old index
     /// never maps to the wrong paragraph.
     private func resolvedTimings() -> [ParagraphTiming] {
@@ -525,9 +525,9 @@ final class DictationViewModel: ObservableObject {
     /// paragraphs and the live partial is cleared (its content is now part of the edited text).
     /// Hand-edited text no longer lines up with the recorded ranges, so any timing slots past the new
     /// paragraph count are dropped; remaining paragraphs whose text changed simply fall back to
-    /// text-to-speech on playback (the note model tolerates a timing that does not match its text).
+    /// text-to-speech on playback (the thought model tolerates a timing that does not match its text).
     func applyEditedTranscript(_ text: String) {
-        paragraphs = Note.splitParagraphs(text)
+        paragraphs = Thought.splitParagraphs(text)
         partial = ""
         if paragraphTimings.count > paragraphs.count {
             paragraphTimings = Array(paragraphTimings.prefix(paragraphs.count))
@@ -563,7 +563,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Set the live partial as if speech recognition had reported it. Test hook mirroring
-    /// `injectFinalized`, used to prove a partial present at `finish()` lands in the saved note.
+    /// `injectFinalized`, used to prove a partial present at `finish()` lands in the saved thought.
     /// A partial is only ever shown as text: a half-spoken command must not fire until it
     /// finalizes, so non-text results are ignored here.
     func simulatePartial(_ text: String) {
@@ -659,13 +659,13 @@ final class DictationViewModel: ObservableObject {
             commitParagraph(preText, range: nil)
             // When the split had pre-text, clear the live partial: on device the accumulating segment
             // finalizes while its own partial still echoes the SAME pre-keyword words ("P1" for
-            // "P1 Mira new note"), so that partial is now a stale duplicate of the paragraph just
-            // committed. Leaving it would let a following command (`new note` / `read that back`) fold
+            // "P1 Mira new thought"), so that partial is now a stale duplicate of the paragraph just
+            // committed. Leaving it would let a following command (`new thought` / `read that back`) fold
             // it in and append "P1" a SECOND time, or make read-back target the wrong paragraph.
             //
             // When there was NO pre-text (the segment LED with the control word), the live partial is
             // separate, genuine user content from a prior in-progress phrase - NOT an echo - so it is
-            // left for `new note` / `read that back` to fold in as before.
+            // left for `new thought` / `read that back` to fold in as before.
             if hadPreText { partial = "" }
             switch outcome {
             case .command(let command):
@@ -698,11 +698,11 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    /// Reset the paragraph grouper at a NOTE boundary (feedback 0012, PR #24 review), so its running
-    /// gap anchor does not carry over from the previous note's last committed segment into the fresh
-    /// note. The first committed segment of the new note is then always its own paragraph. Called from
-    /// `startNewNote`; a fresh view model already starts with a clean grouper.
-    private func resetForNewNote() {
+    /// Reset the paragraph grouper at a THOUGHT boundary (feedback 0012, PR #24 review), so its running
+    /// gap anchor does not carry over from the previous thought's last committed segment into the fresh
+    /// thought. The first committed segment of the new thought is then always its own paragraph. Called from
+    /// `startNewThought`; a fresh view model already starts with a clean grouper.
+    private func resetForNewThought() {
         grouper = ParagraphGrouper()
     }
 
@@ -720,8 +720,8 @@ final class DictationViewModel: ObservableObject {
     ///
     /// The caller only reaches here on an `.appendToCurrent` decision, and the grouper returns that
     /// only AFTER a prior segment committed text (it forces `.newParagraph` for the first committed
-    /// segment, and a fresh note resets the grouper - see `resetForNewNote`). So `paragraphs` is
-    /// guaranteed non-empty here; there is no empty-note fallback (it was dead once the grouper's anchor
+    /// segment, and a fresh thought resets the grouper - see `resetForNewThought`). So `paragraphs` is
+    /// guaranteed non-empty here; there is no empty-thought fallback (it was dead once the grouper's anchor
     /// tracks committed text). The caller pre-guards the text is non-empty.
     ///
     /// Timings merge through the pure `ParagraphTiming.merged`, so an append never silently degrades a
@@ -739,24 +739,24 @@ final class DictationViewModel: ObservableObject {
 
     // MARK: - Command execution
 
-    /// Run a recognized Mira command against the in-progress note. Surfaces the success chip only
-    /// when the command had an actual effect (a no-op on an empty note shows nothing), and surfaces
-    /// an error indication instead of the chip when "new note" fails to save.
+    /// Run a recognized Mira command against the in-progress thought. Surfaces the success chip only
+    /// when the command had an actual effect (a no-op on an empty thought shows nothing), and surfaces
+    /// an error indication instead of the chip when "new thought" fails to save.
     private func execute(_ command: MiraCommand) {
         switch command {
         case .removeLastSentence:
             if removeLastSentence() { showBanner(CommandBanner(command)) }
         case .removeLastParagraph:
             if removeLastParagraph() { showBanner(CommandBanner(command)) }
-        case .newNote:
-            switch startNewNote() {
+        case .newThought:
+            switch startNewThought() {
             case .saved:
                 showBanner(CommandBanner(command))
             case .emptyReset:
-                // No content to save: a fresh empty note is not a user-visible effect, so no chip.
+                // No content to save: a fresh empty thought is not a user-visible effect, so no chip.
                 break
             case .saveFailed:
-                commandError = .newNoteSaveFailed
+                commandError = .newThoughtSaveFailed
             }
         case .readThatBack:
             if readThatBack() { showBanner(CommandBanner(command)) }
@@ -764,7 +764,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Drop the last sentence of the last paragraph; drop the paragraph if it empties. Returns
-    /// true when it removed something (an actual effect), false on an empty note.
+    /// true when it removed something (an actual effect), false on an empty thought.
     @discardableResult
     private func removeLastSentence() -> Bool {
         guard let last = paragraphs.last else { return false }
@@ -780,7 +780,7 @@ final class DictationViewModel: ObservableObject {
         return true
     }
 
-    /// Drop the last committed paragraph. Returns true when it removed one, false on an empty note.
+    /// Drop the last committed paragraph. Returns true when it removed one, false on an empty thought.
     @discardableResult
     private func removeLastParagraph() -> Bool {
         guard !paragraphs.isEmpty else { return false }
@@ -789,50 +789,50 @@ final class DictationViewModel: ObservableObject {
         return true
     }
 
-    /// The outcome of a "new note" command, so `execute` can pick the right feedback.
-    private enum NewNoteOutcome {
-        case saved       // saved the current note and reset to a fresh one
-        case emptyReset  // nothing to save, reset a fresh empty note (no user-visible effect)
+    /// The outcome of a "new thought" command, so `execute` can pick the right feedback.
+    private enum NewThoughtOutcome {
+        case saved       // saved the current thought and reset to a fresh one
+        case emptyReset  // nothing to save, reset a fresh empty thought (no user-visible effect)
         case saveFailed  // store threw: content is PRESERVED, surface an error
     }
 
-    /// Save the current note (if any) and reset to a fresh one, keeping the session running.
+    /// Save the current thought (if any) and reset to a fresh one, keeping the session running.
     ///
-    /// On a save FAILURE the current content is PRESERVED (paragraphs/partial/noteID untouched) so
-    /// it is not lost or bled into the next note, and the caller surfaces an error instead of the
-    /// success chip. On SUCCESS the note resets and the caller shows the success chip.
-    private func startNewNote() -> NewNoteOutcome {
+    /// On a save FAILURE the current content is PRESERVED (paragraphs/partial/thoughtID untouched) so
+    /// it is not lost or bled into the next thought, and the caller surfaces an error instead of the
+    /// success chip. On SUCCESS the thought resets and the caller shows the success chip.
+    private func startNewThought() -> NewThoughtOutcome {
         foldPartialIntoParagraphs()
         let hadContent = !paragraphs.isEmpty
         if hadContent {
             do {
-                // Mid-session "new note" saves the transcript only: the session's recording is one
-                // continuous file, finalized at Stop and attached to the FINAL note, so an
-                // intermediate note cannot claim a finished recording. The words are always kept.
-                try saveCurrentNote(adoptingRecording: false)
+                // Mid-session "new thought" saves the transcript only: the session's recording is one
+                // continuous file, finalized at Stop and attached to the FINAL thought, so an
+                // intermediate thought cannot claim a finished recording. The words are always kept.
+                try saveCurrentThought(adoptingRecording: false)
             } catch {
                 // Preserve content: do NOT reset. Surfacing the failure lets the user retry (or
-                // Stop) without silently double-saving or bleeding this note into the next.
+                // Stop) without silently double-saving or bleeding this thought into the next.
                 return .saveFailed
             }
         }
         paragraphs = []
         paragraphTimings = []
         partial = ""
-        resetForNewNote()
-        noteID = UUID()
+        resetForNewThought()
+        thoughtID = UUID()
         createdAt = Date()
-        // A fresh note is created at the top level; it is filed into a folder afterward (spec 0010).
+        // A fresh thought is created at the top level; it is filed into a folder afterward (spec 0010).
         folderPath = []
-        // Clear the resumed note's recording reference too: the just-saved note kept it, but the fresh
-        // note is a NEW recording (or none). Leaving it set would attach the original recording to the
-        // new note on Stop, so two notes would point at the same file (engineer review, feedback 0008).
+        // Clear the resumed thought's recording reference too: the just-saved thought kept it, but the fresh
+        // thought is a NEW recording (or none). Leaving it set would attach the original recording to the
+        // new thought on Stop, so two thoughts would point at the same file (engineer review, feedback 0008).
         existingAudioFileName = nil
         return hadContent ? .saved : .emptyReset
     }
 
     /// Speak the last paragraph aloud, pausing capture so the audio does not feed back in.
-    /// Returns true if there was something to read (an actual effect), false on a no-op empty note.
+    /// Returns true if there was something to read (an actual effect), false on a no-op empty thought.
     @discardableResult
     private func readThatBack() -> Bool {
         foldPartialIntoParagraphs()
@@ -854,7 +854,7 @@ final class DictationViewModel: ObservableObject {
         // In-session read-back speaks via text-to-speech. The session's recording is a LIVE `.m4a`
         // still open for writing - the writer is finalized only at `stop()`, never on the `pause()`
         // this path uses - so it has no finalized container `AVAudioPlayer` could open. Recorded
-        // playback of the ACTUAL voice happens from a SAVED note's detail view (`NotePlaybackModel`),
+        // playback of the ACTUAL voice happens from a SAVED thought's detail view (`ThoughtPlaybackModel`),
         // where the file is finalized. `speaker.onFinish` and `audioPlayer.onFinish` share
         // `readBackDidFinish`, so the resume handshake is identical whichever plays.
         speaker.speak(last)
@@ -891,7 +891,7 @@ final class DictationViewModel: ObservableObject {
     }
 
     /// Show the command chip and auto-dismiss it after a moment. The full label (control word plus
-    /// the effect, e.g. "Mira - new note") is assembled here so the view renders a plain string.
+    /// the effect, e.g. "Mira - new thought") is assembled here so the view renders a plain string.
     private func showBanner(_ banner: CommandBanner) {
         showBannerLabel("\(controlWord) - \(banner.label)")
     }

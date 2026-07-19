@@ -26,7 +26,7 @@ protocol SpeechCaptureService: AnyObject {
     /// The URL of the recording written for the session, or nil when there is no recording to adopt
     /// (recording disabled, or capture never wrote a frame). Only guaranteed FINALIZED after `stop()`
     /// - the writer is closed at `stop()`, not at `pause()` - so a caller must not play or copy this
-    /// file mid-session; it is meant to be adopted into storage via `NoteStoring.saveAudio(from:for:)`
+    /// file mid-session; it is meant to be adopted into storage via `ThoughtStoring.saveAudio(from:for:)`
     /// once `stop()` has run.
     func recordingURL() -> URL?
 
@@ -38,7 +38,7 @@ protocol SpeechCaptureService: AnyObject {
     /// Begin capturing. Assumes authorization has already been granted.
     func start()
 
-    /// Pause capture, keeping any note the caller is holding.
+    /// Pause capture, keeping any thought the caller is holding.
     func pause()
 
     /// Resume after a pause.
@@ -52,11 +52,11 @@ protocol SpeechCaptureService: AnyObject {
 enum SpeechCaptureEvent {
     /// The in-progress phrase for the current task (replaces the last partial).
     case partial(String)
-    /// A finalized phrase that should be committed to the note (spec 0007), carrying both its ABSOLUTE
+    /// A finalized phrase that should be committed to the thought (spec 0007), carrying both its ABSOLUTE
     /// recording range and the RAW analysis-relative timing the view model needs to decide paragraph
     /// grouping (feedback 0012).
     ///
-    /// NOTE: this one segment carries its timing in TWO coordinate systems, both describing the SAME
+    /// THOUGHT: this one segment carries its timing in TWO coordinate systems, both describing the SAME
     /// segment: `range` is ABSOLUTE recording time (offset-anchored, for playback seek), while
     /// `startSeconds` / `durationSeconds` are ANALYSIS-RELATIVE (reset to ~0 at each analysis, for the
     /// grouper's gap math). They are not interchangeable - use `range` for playback and the raw seconds

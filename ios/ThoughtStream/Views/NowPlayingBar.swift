@@ -1,34 +1,34 @@
 import SwiftUI
 
-/// A compact now-playing bar (spec 0015) bound to the ONE shared `NotePlaybackController`, shown above
+/// A compact now-playing bar (spec 0015) bound to the ONE shared `ThoughtPlaybackController`, shown above
 /// the Record button on every folder screen while something plays from the list. It renders the
 /// current recording's title, a play/pause toggle, a stop button, and - only while a queue has a next
-/// item - a Next button. Tapping the title opens that note.
+/// item - a Next button. Tapping the title opens that thought.
 ///
-/// It observes the shared controller directly (the controller publishes `currentNote`, `isPlaying`,
+/// It observes the shared controller directly (the controller publishes `currentThought`, `isPlaying`,
 /// and `hasNext`), so it appears when a swipe starts playback, updates its title as a queue advances,
 /// and hides the instant playback stops or the queue ends - no second audio path, no second Now
 /// Playing writer. The controller is optional so a screenshot / preview build with no shared
 /// controller simply shows nothing.
 struct NowPlayingBar: View {
-    @ObservedObject var controller: NotePlaybackController
-    /// Route to the tapped note's detail page, wired by the host to append `.note(currentNote)` to the
+    @ObservedObject var controller: ThoughtPlaybackController
+    /// Route to the tapped thought's detail page, wired by the host to append `.thought(currentThought)` to the
     /// navigation path.
-    let onOpenNote: (Note) -> Void
+    let onOpenThought: (Thought) -> Void
 
     var body: some View {
         // Shown only while a recording is loaded; otherwise the bar collapses to nothing so the Record
         // button sits alone.
-        if let note = controller.currentNote {
+        if let thought = controller.currentThought {
             HStack(spacing: CanopySpacing.x3) {
                 Button {
-                    onOpenNote(note)
+                    onOpenThought(thought)
                 } label: {
                     HStack(spacing: CanopySpacing.x2) {
                         Image(systemName: "waveform")
                             .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
                             .foregroundStyle(CanopyColor.primary)
-                        Text(controller.currentTitle ?? note.title)
+                        Text(controller.currentTitle ?? thought.title)
                             .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
                             .foregroundStyle(CanopyColor.text)
                             .lineLimit(1)
@@ -36,7 +36,7 @@ struct NowPlayingBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Now playing: \(controller.currentTitle ?? note.title)")
+                .accessibilityLabel("Now playing: \(controller.currentTitle ?? thought.title)")
 
                 Button {
                     controller.togglePlayPause()

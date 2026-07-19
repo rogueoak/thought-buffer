@@ -13,7 +13,7 @@ speech for a physical device.
 
 ## Keep persisted files tolerant from day one (spec 0002)
 
-Notes are Markdown files that outlive any single app version. The parser ignores unknown
+Thoughts are Markdown files that outlive any single app version. The parser ignores unknown
 frontmatter keys and still loads a body without frontmatter, so later fields (tags, source,
 edits) can be added without a migration and an old or hand-edited file never fails to load.
 
@@ -33,7 +33,7 @@ iCloud may be absent (not signed in, no provisioning, the Simulator with no acco
 as a first-class branch selected once in the composition root - a factory resolves the ubiquity
 container off the main actor (the lookup can block) and returns a store plus a `kind`, falling
 back to the local store when nil - not as a thrown error the callers must catch. The rest of the
-app depends only on the `NoteStoring` seam and never re-runs availability logic, so the offline
+app depends only on the `ThoughtStoring` seam and never re-runs availability logic, so the offline
 path stays identical to before and the choice is observable for a later Settings status. This
 generalizes to any optional backend (a future server, a share extension): decide once, expose the
 choice, keep the seam narrow.
@@ -52,7 +52,7 @@ plist in XcodeGen rather than the flat `INFOPLIST_KEY_*` build settings.
 
 A store that shares files with the iCloud sync daemon must wrap every read, write, and delete
 (and directory creation) in `NSFileCoordinator`, or it races the daemon writing the same file.
-Keep the file format identical to the local store (same `Note` Markdown) so a file written by
+Keep the file format identical to the local store (same `Thought` Markdown) so a file written by
 either backend loads through either - that is what makes switching backends lossless. Put the
 `NSMetadataQuery` live-update behind a protocol with a pure mapping so the enumeration and
 download-trigger logic is unit-testable with stub items, with no real iCloud.
@@ -60,7 +60,7 @@ download-trigger logic is unit-testable with stub items, with no real iCloud.
 ## Blocking storage reads belong off the main actor, in a testable feed model (spec 0004)
 
 The same off-main discipline applied to iCloud container resolution has to extend to the store
-read: `ICloudNoteStore.loadAll()` is a chain of `NSFileCoordinator` reads that can block on the
+read: `ICloudThoughtStore.loadAll()` is a chain of `NSFileCoordinator` reads that can block on the
 sync daemon and fires on every metadata change, so running it on the main actor stutters the UI.
 Put the load and the live-update observer wiring in a small `@MainActor` model (`StreamFeed`) that
 loads on a detached task and only hops back to main to publish - not inline in the SwiftUI view.
@@ -102,7 +102,7 @@ recording is NOT a readable file, even though it exists on disk with content. Th
 play the session's own recording for in-session "read that back" - fails: the writer is finalized at
 `stop()`, not at the `pause()` read-back uses, so the player gets an unfinalized file and silently
 degrades. The fix respects the boundary: play recorded audio only where the file IS finalized (a
-SAVED note) and use the already-available text-to-speech path for the in-session case. Encode the
+SAVED thought) and use the already-available text-to-speech path for the in-session case. Encode the
 boundary in the seam's contract too - the "give me the recording URL" method documents that the file
 is finalized only after `stop()`, and a separate `discardRecording()` cleans up an orphan (including
 a zero-frame file the content-gated URL getter would not even report), so the next consumer (a
@@ -113,9 +113,9 @@ and the seam should say so rather than leave the lifetime implicit.
 ## Push an existence/availability check behind the storage seam, not a bare fileExists (spec 0007)
 
 Deciding "is there a recording to play?" with `FileManager.fileExists` in the view leaks storage
-internals and is wrong for a coordinated backend: `ICloudNoteStore` wraps IO in `NSFileCoordinator`,
+internals and is wrong for a coordinated backend: `ICloudThoughtStore` wraps IO in `NSFileCoordinator`,
 so a bare `fileExists` races the sync daemon and mis-reports a synced-but-not-downloaded file as
-absent (the Play affordance silently vanishes). Put the question on the `NoteStoring` seam
+absent (the Play affordance silently vanishes). Put the question on the `ThoughtStoring` seam
 (`audioExists(for:)`, coordinated on iCloud, plain on local) so the view asks "is there a recording?"
 without knowing how storage answers - and the same coordinated check is ready for the future headless
 consumer. Generalizes: any "does X exist / is X available" decision over a store belongs on the
@@ -141,9 +141,9 @@ meter, or analyzer teed onto a stream whose primary consumer restarts under it.
 
 When an operation both (a) tears down current state to make room and (b) can abort early on a guard,
 run the guard BEFORE the teardown - otherwise the abort path strands half-cleared state. The playback
-controller stopped the current recording and then bailed on a no-audio note, leaving the OLD note in
+controller stopped the current recording and then bailed on a no-audio thought, leaving the OLD thought in
 `MPNowPlayingInfoCenter` with live remote handlers wired to a stopped controller. The same shape bit
-the failed-resolve branch (cleared the note but not the system Now Playing / remote wiring). Two rules
+the failed-resolve branch (cleared the thought but not the system Now Playing / remote wiring). Two rules
 generalize past playback: for any "validate, then mutate shared state" sequence, the validation gate
 comes first; and give the stop/switch path ONE unambiguous helper that fully clears everything, rather
 than a "stop but keep the wiring to re-use" helper that is easy to call on an abort. The coverage twin:
@@ -156,8 +156,8 @@ that mutates shared OS/system state on stop.
 ## Weigh every system-surfaced value against the app's privacy posture (spec 0008)
 
 Standard platform UX can leak content on a privacy-forward app. `MPNowPlayingInfoCenter` shows the
-track title on the LOCKED lock screen and Control Center; for a private voice-notes app whose title is
-the note's first line, that is note content visible without authentication - a real regression from a
+track title on the LOCKED lock screen and Control Center; for a private voice-thoughts app whose title is
+the thought's first line, that is thought content visible without authentication - a real regression from a
 "nothing leaves the device" posture, even though nothing does leave the device. When you add any value
 to a system surface (Now Playing, notifications, widgets, share sheets, Spotlight), weigh it against
 the posture: keep it generic, gate it behind a setting, or at minimum disclose the tradeoff in the
@@ -194,7 +194,7 @@ to any auto-restart loop over a continuous source (speech, network reconnection,
 
 The control-word parser was made strict (spec 0003) to avoid misfiring on a passing mention. But
 rejecting a keyword-led near-miss BACK INTO the transcript is itself a failure the user notices:
-"Mira read that back to me" got written into the note verbatim. When the user's stated intent is
+"Mira read that back to me" got written into the thought verbatim. When the user's stated intent is
 "anything starting with my keyword is a command", make keyword-led the trigger, parse the remainder
 tolerantly (strip outer/inner filler), and DROP an unrecognized keyword-led phrase with visible
 feedback (a chip) rather than transcribing it - no wrong action fires, and no command phrase is
@@ -285,7 +285,7 @@ problem is inherent or just an artifact of an API that predates a better one.
 
 ## A SwiftUI label built from "now" is frozen at render, not live (feedback 0011)
 
-The note card's "x mins ago" read the note's own recording length and never updated, while the same
+The thought card's "x mins ago" read the thought's own recording length and never updated, while the same
 code in the detail view looked correct. There was no data difference: `RelativeTime.label(for:)`
 defaults its reference to `Date()` and is evaluated ONCE when the view body is built. SwiftUI has no
 wall-clock dependency to invalidate on, so the string freezes - and the list most recently rendered
@@ -301,20 +301,20 @@ put; and when two screens share the same time-derived code but disagree, suspect
 
 ## Make a location positional, not a serialized field, and let a re-save be the move (spec 0010)
 
-Grouping notes into folders is a STORAGE LOCATION, so it belongs in WHERE the file sits, not in the
-file's bytes. Modeling `Note.folderPath` as a positional directory (derived on load from the relative
+Grouping thoughts into folders is a STORAGE LOCATION, so it belongs in WHERE the file sits, not in the
+file's bytes. Modeling `Thought.folderPath` as a positional directory (derived on load from the relative
 path, consumed on save to place the file) - never a frontmatter key - keeps the Markdown byte-identical
-between a top-level and a foldered note, so every existing file, other app, and the cross-backend
+between a top-level and a foldered thought, so every existing file, other app, and the cross-backend
 "either store reads either file" invariant is untouched (proved with a bytes-equal test). Two shape
-choices made the rest cheap and non-rippling. First: a note being re-filed is just a `save` with a new
+choices made the rest cheap and non-rippling. First: a thought being re-filed is just a `save` with a new
 `folderPath`; `save` detects the change (its file is located in a different directory than the
 destination) and relocates BOTH the `.md` and the sibling `.m4a`, deleting the old copies, so the move
 leaves nothing behind - there is no separate "move" API to keep in sync. Second: keep the id-only audio
 surface (`audioURL`/`saveAudio`/`deleteAudio`/`audioExists`) id-only by having them SCAN the tree for
-`<id>.md` (`locateFile`), so the folder feature does not widen the `NoteStoring` seam and nothing
+`<id>.md` (`locateFile`), so the folder feature does not widen the `ThoughtStoring` seam and nothing
 downstream (the `AudioURLResolving` resolver, playback controller, recordings browser) changes or even
 recompiles differently. A consequence for the writer ordering: because audio now lands BESIDE the
-located note file, the note `.md` must be written to its folder BEFORE its recording is adopted -
+located thought file, the thought `.md` must be written to its folder BEFORE its recording is adopted -
 otherwise, with subfolders, `locateFile` finds nothing and the recording falls back to the root. And
 mirror every new tree walk / move / cascade / dir-create through `NSFileCoordinator` on the iCloud
 path, exactly as the existing file IO, or a folder op races the sync daemon. Generalizes: when a
@@ -325,7 +325,7 @@ save/scan operations carry it, rather than adding a field, a second API, and a w
 
 The first `renameFolder` did `if destination exists { removeItem(destination) }` before moving - so
 renaming folder "A" to "B" when "B" already existed silently DELETED B and everything in it. A
-"replace" is the right primitive when the destination is the SAME logical object (overwriting a note's
+"replace" is the right primitive when the destination is the SAME logical object (overwriting a thought's
 own `<id>.m4a` on a re-save), but WRONG when it is a different one (a sibling folder that happens to
 share the target name): there the safe answer is to reject the operation and let the UI report the
 conflict, never to cascade-delete a bystander. The tell is destructive teardown guarded only by "does
@@ -352,19 +352,19 @@ a key, or a query fed to a destructive or escaping operation.
 
 ## Two concurrent edit modes over one model must be mutually exclusive (spec 0009)
 
-The note page grew a second inline editor (title) beside the existing one (body). Each had its own
+The thought page grew a second inline editor (title) beside the existing one (body). Each had its own
 `isEditing*` flag, they were independent, and a single Done button branched on which was set. Nothing
 stopped BOTH being active at once: with the body editor open you could still tap the title, and Done
-then committed the title through `currentNote` - which is rebuilt from the committed `paragraphs`, not
+then committed the title through `currentThought` - which is rebuilt from the committed `paragraphs`, not
 the body editor's in-flight `draft` - silently dropping everything freshly typed in the body. The
 symptom only appears when a user does the unusual thing (edit one, tap the other), so happy-path use
 and happy-path tests never surface it. Two rules generalize. First: when a view hosts more than one
 editor committing into the SAME model, the modes must be mutually exclusive - gate each editor's
 "begin edit" on the other not being active (or commit/exit the active one first), so there is always
 exactly one in-flight buffer. Second: a commit must read from the ACTIVE editor's buffer, never from
-the model's already-committed fields; a derived-from-model snapshot (`currentNote`) is safe to persist
+the model's already-committed fields; a derived-from-model snapshot (`currentThought`) is safe to persist
 only once every open editor has folded its buffer back into the model. Extracting the pure commit
-decision (here `Note.resolveTitleEdit`) also lifts the rule out of view state so it can be unit-tested
+decision (here `Thought.resolveTitleEdit`) also lifts the rule out of view state so it can be unit-tested
 instead of only device-verified. Generalizes to any screen with multiple simultaneous editors.
 
 ## The app-icon asset cannot be loaded by name in SwiftUI (spec 0012)
@@ -382,13 +382,13 @@ parameter".
 
 ## A derived change-token must cover every change it gates a refresh on (spec 0010)
 
-The folder screen re-fetched its child-folder names with `.task(id: feed.notes.count)` - using the
-note COUNT as a "something changed, reload" token. But the count is a lossy projection of the state:
+The folder screen re-fetched its child-folder names with `.task(id: feed.thoughts.count)` - using the
+thought COUNT as a "something changed, reload" token. But the count is a lossy projection of the state:
 a rename, a move between two existing folders, and an iCloud-synced EMPTY folder all change what
 should be on screen while leaving the count identical, so sibling and ancestor screens silently went
 stale. A change-token has to be a monotonic signal that ticks on EVERY mutation of the underlying
 state, not a value that merely tends to change with it. The fix put a `reloadGeneration` counter on
-the driver that bumps wherever the notes list is (re)published (so it catches the observer path too)
+the driver that bumps wherever the thoughts list is (re)published (so it catches the observer path too)
 and keyed the refresh on that. Generalizes to any `onChange`/`.task(id:)`/cache-key/equatable-diff
 that watches a summary (a count, a hash of a subset, a "last item id") to decide when to recompute:
 if two distinct states can share the token, the refresh is lossy - drive it off a real version
@@ -396,27 +396,27 @@ counter bumped at the single write point instead.
 
 ## When you add a field to a value type, audit every REBUILD site, not just constructors (spec 0013)
 
-`NoteDetailView.currentNote` rebuilds a `Note` from the view's edited fields and hands it to
-`store.save`. When folders (spec 0010) added `Note.folderPath`, that rebuild was never updated, so it
-defaulted `folderPath` to `[]` - and because the store files a note by its `folderPath`, editing ANY
-note that lived in a folder silently RE-FILED it to the root. The feature that added the field had
+`ThoughtDetailView.currentThought` rebuilds a `Thought` from the view's edited fields and hands it to
+`store.save`. When folders (spec 0010) added `Thought.folderPath`, that rebuild was never updated, so it
+defaulted `folderPath` to `[]` - and because the store files a thought by its `folderPath`, editing ANY
+thought that lived in a folder silently RE-FILED it to the root. The feature that added the field had
 green tests and shipped; the regression hid in an unrelated view's rebuild. A fresh `init` with a
 default is fine for NEW values, but a REBUILD/copy of an existing value that omits the new field is a
 silent data-mutation: it doesn't fail to compile and it doesn't fail a test that only checks the
 fields it does set. Two defenses: when adding a field to a shared value type, grep for every site that
 reconstructs it (`TypeName(` with an existing instance in scope, `.init(`, "edited copy" helpers) and
 carry the field through; and prefer a single `editedCopy(changing:)`-style mutator on the type over
-ad-hoc `Note(...)` rebuilds scattered across views, so there is ONE place that must know all the
+ad-hoc `Thought(...)` rebuilds scattered across views, so there is ONE place that must know all the
 fields. Generalizes to any immutable model that is copied-with-changes in more than one place.
 
 ## A shared teardown that clears everything is wrong when one caller must keep some state (spec 0015)
 
-`NotePlaybackController.play(note:)` calls `clearPlayback()` before loading a note - it stops the
+`ThoughtPlaybackController.play(thought:)` calls `clearPlayback()` before loading a thought - it stops the
 player and drops Now Playing / remote wiring so no stale playback survives a switch. Adding a queue
 (a folder swipe that auto-advances) meant the queue had to SURVIVE that same teardown on each advance:
-advancing IS a `play(note:)` under the hood, but it must not wipe the `queue`/`hasNext` it is walking.
-The fix split the start path in two - a public `play(note:)` that clears the queue (a deliberate new
-selection ends any queue) and a private `loadAndPlay(note:)` that does NOT, which the queue advance
+advancing IS a `play(thought:)` under the hood, but it must not wipe the `queue`/`hasNext` it is walking.
+The fix split the start path in two - a public `play(thought:)` that clears the queue (a deliberate new
+selection ends any queue) and a private `loadAndPlay(thought:)` that does NOT, which the queue advance
 and `playQueue` call. The natural-finish advance is told apart from a user stop by the pre-existing
 `suppressFinish` flag: a user `stop()` sets it (via `clearPlayback`) AND clears the queue, so
 `handleFinish` returns early and cannot advance; only a real end-of-track reaches the advance.
@@ -439,14 +439,14 @@ empty) paired with an error/early-return branch that quietly drops out without r
 Generalizes to any state machine or iterator with a "success -> next" step and a separate "couldn't
 do this one" branch: route both through the same advance/cleanup, or the error branch strands state
 the success branch would have cleaned. And it needs a test that makes ONE middle item fail (here a
-per-note nil-resolving stub), not just start/first-item failure.
+per-thought nil-resolving stub), not just start/first-item failure.
 
 ## Per-finalization is the wrong grain for a paragraph; group on the signal the platform gives you (feedback 0012)
 
 "One finalized `SpeechTranscriber.Result` = one paragraph" read cleanly (the iOS 26 API hands you an
 explicit finalized boundary, so it looked like the paragraph boundary), but it was the WRONG grain:
 the transcriber finalizes on a SHORT mid-thought breath, so a single spoken sentence split into
-several paragraphs and dictation felt nothing like the native Notes app. The right paragraph boundary
+several paragraphs and dictation felt nothing like the native Thoughts app. The right paragraph boundary
 is a real SILENCE gap, not a finalization event - a coarser signal that has to be COMPUTED from the
 finer one. The fix reads the recognizer's `CMTimeRange` (which is analysis-relative and present even
 for a text-only session, because it is independent of the audio tee) and groups consecutive segments
@@ -536,7 +536,7 @@ cheaper and simpler.
 The filler-removal default set first included `mm`/`mmm`/`er`/`ah`. Each is a plausible hesitation, but
 `mm` is the millimetre UNIT ("20 mm of rain" -> "20 of rain", a factual change) and `ah`/`er` are real
 interjections/words ("Ah, finally!" -> "Finally!"). The trap: the feature ships ON BY DEFAULT, so every
-user's notes pass through it silently - a token that is "usually a filler" is not good enough, because
+user's thoughts pass through it silently - a token that is "usually a filler" is not good enough, because
 the rare real-word case is a silent content edit the user never opted into and may not notice. The bar
 for a default-on, content-mutating transform is therefore "can this token EVER be a real word, unit, or
 name in normal use" - if yes, it is out of the default, no matter how often it is a filler. The same
@@ -554,12 +554,12 @@ verbatim/quoted span. Ship the pure core with negative tests for the exact real-
 ## Factor a repeated action surface before it forks, and tie its transient confirmation to the view (spec 0017)
 
 The Share + Copy menu, the copy-to-pasteboard-and-flash routine, and the "Copied to clipboard" chip
-were written twice - once in the note detail toolbar, once in the list-row context menu - because the
+were written twice - once in the thought detail toolbar, once in the list-row context menu - because the
 second site was easy to reach by pasting the first. Two identical action surfaces are a drift trap: a
 later change (the queued Delete-in-this-menu work) has to be made in both, and one will be missed. The
-fix factors ONE `NoteActionsMenu(note:onCopied:)` that emits the shared items and accepts optional
+fix factors ONE `ThoughtActionsMenu(thought:onCopied:)` that emits the shared items and accepts optional
 trailing content, so a caller appends its own item (Move, later Delete) without re-forking, plus one
-`NoteClipboard.copy` and one `CopiedConfirmation` chip. The rule: when the SAME interactive affordance
+`ThoughtClipboard.copy` and one `CopiedConfirmation` chip. The rule: when the SAME interactive affordance
 appears on two screens, extract it at the first duplication - and design the shared piece to be
 EXTENDED (a trailing-content slot) rather than copied when a caller needs one extra item. The paired
 lesson is the confirmation's timer: a detached `DispatchQueue.asyncAfter` to hide a transient chip has
@@ -578,10 +578,10 @@ directory plus a `restore`/`purge` pair, returning a lightweight token (id + for
 filenames) that is enough to put the files back OR commit their removal - the files are never gone
 until the undo window closes. Three shape choices made it safe and non-duplicative. First: the trash
 is a HIDDEN subdirectory inside the store root (`.trash/`), so the existing tree walks that already
-`skipsHiddenFiles` never surface a trashed note and nothing downstream changed; keeping it inside the
+`skipsHiddenFiles` never surface a trashed thought and nothing downstream changed; keeping it inside the
 root means the reused path-safety guard still holds (a soft-delete only ever moves within the tree).
 Second: restore needs its OWN destination guard, subtly different from the delete-time one - a
-top-level note legitimately restores to the ROOT, so the guard is "at or BELOW root" where the folder
+top-level thought legitimately restores to the ROOT, so the guard is "at or BELOW root" where the folder
 delete/rename guard is "strictly below root"; copying the strict guard verbatim would reject every
 top-level restore, and dropping the guard would let a crafted former-folder path escape the tree. When
 you reuse a safety check for a new operation, re-derive its exact predicate for that operation rather
@@ -599,7 +599,7 @@ direction rather than reusing the delete-direction one.
 
 ## A move-to-quarantine delete must be atomic, and its coordinator must clear pending before awaiting (spec 0020, PR review)
 
-Two defects surfaced in review of the undoable delete, both about a multi-step operation observed mid-flight. First, DATA LOSS: `softDelete` moved the `.md` to trash, then the `.m4a`; if the second move threw, the note was already in trash but the function threw WITHOUT returning a token, so the note vanished from the list, had no undo, and the launch sweep destroyed it. A "move several files into quarantine" is only safe if it is all-or-nothing: on any failure, ROLL BACK the moves already done so the note ends up fully in place (throw, no token, still listed) - never half-quarantined-with-no-recovery-handle. Second, a REENTRANCY leak in the coordinator: `delete` read `pending`, then `await feed.purge(previous)`, then cleared `pending` - so a second delete arriving while the first was suspended read the same stale token and both raced to purge it, stranding the loser's trash. The fix is the same shape the sibling `undo()`/`commitWindow()` already used: capture-and-CLEAR the shared in-flight state SYNCHRONOUSLY before the first `await`, so no reentrant call sees it. The general rule for an async coordinator over shared mutable state: never leave a field readable across an await that will act on it - snapshot and null it out first. And keep the two undo channels (the system `UndoManager` stack and the in-app affordance) on ONE stack: route the in-app Undo through `undoManager.undo()` and drop settled actions with `removeAllActions(withTarget:)` on commit, or a later shake re-runs a closure for an already-settled delete. Generalizes to any quarantine-style destructive op (atomic move + rollback) and any async single-flight coordinator (clear-before-await).
+Two defects surfaced in review of the undoable delete, both about a multi-step operation observed mid-flight. First, DATA LOSS: `softDelete` moved the `.md` to trash, then the `.m4a`; if the second move threw, the thought was already in trash but the function threw WITHOUT returning a token, so the thought vanished from the list, had no undo, and the launch sweep destroyed it. A "move several files into quarantine" is only safe if it is all-or-nothing: on any failure, ROLL BACK the moves already done so the thought ends up fully in place (throw, no token, still listed) - never half-quarantined-with-no-recovery-handle. Second, a REENTRANCY leak in the coordinator: `delete` read `pending`, then `await feed.purge(previous)`, then cleared `pending` - so a second delete arriving while the first was suspended read the same stale token and both raced to purge it, stranding the loser's trash. The fix is the same shape the sibling `undo()`/`commitWindow()` already used: capture-and-CLEAR the shared in-flight state SYNCHRONOUSLY before the first `await`, so no reentrant call sees it. The general rule for an async coordinator over shared mutable state: never leave a field readable across an await that will act on it - snapshot and null it out first. And keep the two undo channels (the system `UndoManager` stack and the in-app affordance) on ONE stack: route the in-app Undo through `undoManager.undo()` and drop settled actions with `removeAllActions(withTarget:)` on commit, or a later shake re-runs a closure for an already-settled delete. Generalizes to any quarantine-style destructive op (atomic move + rollback) and any async single-flight coordinator (clear-before-await).
 
 ## Reuse a validation seam by widening it for the collection, not by pasting the scalar rule (spec 0018)
 
@@ -607,16 +607,20 @@ Aliases extended the single control-word setting to an ordered LIST, and it was 
 
 ## A non-reversible rewrite is verify-then-atomic-replace, and the numeric core must be pure and separately proven (spec 0019)
 
-Dead-air removal REPLACES a recording with no kept original, so a botched trim is unrecoverable data loss. The safe shape is never "overwrite the file": write the trimmed audio to a TEMP file, VERIFY it is a real non-empty audio file (it opens via `AVAudioFile` and has frames), and only THEN swap it in atomically - and swallow EVERY failure (unreadable source, nothing to trim, a write/verify slip, an empty result) into a "not trimmed" fallback that leaves the original untouched and lets the note save anyway. The recording is never sacrificed for the sake of the trim. Building it, and the four-persona PR review, added several rules. First: carve the risky logic into PURE cores tested without audio - `SilenceTrimmer` (windowed RMS -> keep-ranges, named `silenceFloor`/`minPauseSeconds`/`breathGapSeconds` constants, every edge: silence at start/middle/end, back-to-back, none, all-silent, sub-threshold, AND the strict-boundary case exactly at the floor) and `TimingRemapper` (shift paragraph starts by removed duration, durations unchanged) - so the AVFoundation glue stays thin and the parts that corrupt data are provable in CI. Second: `AVAssetExportSession` + `AVURLAsset.tracks(...)` is a trap on modern iOS - the synchronous track accessor is load-gated and the export returned a bare `nilError`, so the composition-and-export path silently failed to `notTrimmed`; concatenating the kept frame ranges by straight `AVAudioFile` read/write is deterministic, self-contained, and has no async load/export to lose. Third: the atomic replace of a user file that a backend COORDINATES (the iCloud `.m4a` goes through `NSFileCoordinator`) must ALSO be coordinated - a bare `FileManager.replaceItemAt` on a ubiquity-container file races the sync daemon on a non-reversible op. So the destructive swap is a STORE seam (`replaceAudio`, `replaceItemAt` inside the coordination block on iCloud), not something the pure-ish trimmer does itself; the trimmer only produces + verifies the temp and hands it back. Fourth: the temp copy of raw voice must be created PROTECTED (`completeUnlessOpen`) before any audio is written into it, exactly like `RecordingWriter` - a full copy of sensitive audio sitting unprotected in the shared temp dir for the write+verify window is a real posture gap. Fifth: a background task that re-saves a record it captured EARLIER must RE-READ the current version and apply only its delta, never persist the stale snapshot - during a slow off-main trim the user can rename/move/delete the note on the detail screen, and re-saving the finish()-time snapshot would clobber the edit or resurrect a deleted note (a last-writer-wins race two personas flagged independently); read fresh by id, apply only the timings remap (`Note.withTimings`), skip if the note is gone, and reload the feed after so the stale in-memory copy is dropped. Sixth: a merge/remap that is only correct because two thresholds sit on a particular side of each other (trim floor 2.0s > paragraph-gap 1.5s, so a trimmable silence is always a paragraph boundary and never inside a paragraph) needs a GUARD TEST asserting the inequality, so a later tweak to either constant is forced to reconsider the remap rather than silently break the paragraph<->time mapping. Seventh (independent round-2 review, the round-1 self-review missed it): a "REPLACE this artifact's file" primitive over a slot that a DELETE can VACATE must refuse to create the slot - a bare `saveAudio`-style fallback that materializes the file when the slot is absent RESURRECTS a just-deleted artifact as an orphan (here a soft-delete hides the note's `.md` in trash, so the audio slot resolves to a non-existent root path, and the deferred trim's `replaceAudio` re-created the raw-voice `.m4a` there - invisible to `loadAll`, never purged, defeating the delete AND leaking sensitive audio). Fix at BOTH layers: the caller re-reads and confirms the record still EXISTS before invoking replace (and skips the follow-up save when replace reports nothing was replaced, so a delete racing the swap does not resurrect it), and the primitive returns "nothing to replace" (nil) + cleans up its input rather than creating a file. Generalizes to any destructive/lossy transform of a user artifact: keep the numeric decision pure and exhaustively tested; do the mutation as verify-then-atomic-replace with a total-failure fallback, routed through whatever seam already coordinates that file, and clean up the intermediate on EVERY exit path with a `defer`; write any sensitive intermediate protected from byte zero; prefer a direct read/write over a load-gated framework pipeline when the transform is simple; when a deferred task re-persists a record, re-read-and-delta rather than re-save-a-snapshot AND make its "replace" primitive refuse to re-create a slot the record's deletion vacated (gate both the caller and the primitive); and pin any cross-constant invariant the transform depends on with its own assertion.
+Dead-air removal REPLACES a recording with no kept original, so a botched trim is unrecoverable data loss. The safe shape is never "overwrite the file": write the trimmed audio to a TEMP file, VERIFY it is a real non-empty audio file (it opens via `AVAudioFile` and has frames), and only THEN swap it in atomically - and swallow EVERY failure (unreadable source, nothing to trim, a write/verify slip, an empty result) into a "not trimmed" fallback that leaves the original untouched and lets the thought save anyway. The recording is never sacrificed for the sake of the trim. Building it, and the four-persona PR review, added several rules. First: carve the risky logic into PURE cores tested without audio - `SilenceTrimmer` (windowed RMS -> keep-ranges, named `silenceFloor`/`minPauseSeconds`/`breathGapSeconds` constants, every edge: silence at start/middle/end, back-to-back, none, all-silent, sub-threshold, AND the strict-boundary case exactly at the floor) and `TimingRemapper` (shift paragraph starts by removed duration, durations unchanged) - so the AVFoundation glue stays thin and the parts that corrupt data are provable in CI. Second: `AVAssetExportSession` + `AVURLAsset.tracks(...)` is a trap on modern iOS - the synchronous track accessor is load-gated and the export returned a bare `nilError`, so the composition-and-export path silently failed to `notTrimmed`; concatenating the kept frame ranges by straight `AVAudioFile` read/write is deterministic, self-contained, and has no async load/export to lose. Third: the atomic replace of a user file that a backend COORDINATES (the iCloud `.m4a` goes through `NSFileCoordinator`) must ALSO be coordinated - a bare `FileManager.replaceItemAt` on a ubiquity-container file races the sync daemon on a non-reversible op. So the destructive swap is a STORE seam (`replaceAudio`, `replaceItemAt` inside the coordination block on iCloud), not something the pure-ish trimmer does itself; the trimmer only produces + verifies the temp and hands it back. Fourth: the temp copy of raw voice must be created PROTECTED (`completeUnlessOpen`) before any audio is written into it, exactly like `RecordingWriter` - a full copy of sensitive audio sitting unprotected in the shared temp dir for the write+verify window is a real posture gap. Fifth: a background task that re-saves a record it captured EARLIER must RE-READ the current version and apply only its delta, never persist the stale snapshot - during a slow off-main trim the user can rename/move/delete the thought on the detail screen, and re-saving the finish()-time snapshot would clobber the edit or resurrect a deleted thought (a last-writer-wins race two personas flagged independently); read fresh by id, apply only the timings remap (`Thought.withTimings`), skip if the thought is gone, and reload the feed after so the stale in-memory copy is dropped. Sixth: a merge/remap that is only correct because two thresholds sit on a particular side of each other (trim floor 2.0s > paragraph-gap 1.5s, so a trimmable silence is always a paragraph boundary and never inside a paragraph) needs a GUARD TEST asserting the inequality, so a later tweak to either constant is forced to reconsider the remap rather than silently break the paragraph<->time mapping. Seventh (independent round-2 review, the round-1 self-review missed it): a "REPLACE this artifact's file" primitive over a slot that a DELETE can VACATE must refuse to create the slot - a bare `saveAudio`-style fallback that materializes the file when the slot is absent RESURRECTS a just-deleted artifact as an orphan (here a soft-delete hides the thought's `.md` in trash, so the audio slot resolves to a non-existent root path, and the deferred trim's `replaceAudio` re-created the raw-voice `.m4a` there - invisible to `loadAll`, never purged, defeating the delete AND leaking sensitive audio). Fix at BOTH layers: the caller re-reads and confirms the record still EXISTS before invoking replace (and skips the follow-up save when replace reports nothing was replaced, so a delete racing the swap does not resurrect it), and the primitive returns "nothing to replace" (nil) + cleans up its input rather than creating a file. Generalizes to any destructive/lossy transform of a user artifact: keep the numeric decision pure and exhaustively tested; do the mutation as verify-then-atomic-replace with a total-failure fallback, routed through whatever seam already coordinates that file, and clean up the intermediate on EVERY exit path with a `defer`; write any sensitive intermediate protected from byte zero; prefer a direct read/write over a load-gated framework pipeline when the transform is simple; when a deferred task re-persists a record, re-read-and-delta rather than re-save-a-snapshot AND make its "replace" primitive refuse to re-create a slot the record's deletion vacated (gate both the caller and the primitive); and pin any cross-constant invariant the transform depends on with its own assertion.
 
 ## Do not stack multiple .alert modifiers on one node, and lock the working seam with a test when the store is correct but the feature does nothing (feedback 0018)
 
-Folder rename looked broken while the STORE was correct (sanitize -> no-clobber guard -> `moveItem`, and create worked). The fault was in the VIEW: three `.alert(...)` modifiers stacked on ONE view node (New folder / Rename / Delete), with the rename alert presented straight from a `.contextMenu` action via a bool binding. Stacked alerts on one node and context-menu-triggered bool alerts are both classic SwiftUI flakiness sources - a sibling alert can swallow another's presentation, so the rename alert may not present (or its TextField may not commit), and the working store call is never reached. The fix drives all three dialogs from ONE `FolderDialog` enum and hosts each alert on its OWN hidden `Color.clear` background anchor via a per-case binding, so no two share a node and none can lose the race; the text field lives in a separate `@State` so editing it does not churn the enum identity. Two rules generalize. First: never stack multiple `.alert`/`.confirmationDialog` modifiers on one SwiftUI node, and be wary of presenting a bool-driven alert directly from a `.contextMenu` action - drive a screen's dialogs from one state and host each on its own anchor (or use item-driven presentation) so presentation is deterministic. Second: when a "store logic is correct but the feature does nothing" bug appears, suspect the presentation/interaction layer, and lock the working seam with a DRIVER-level test (`StreamFeed.renameFolder(at:to:)` renames on disk, moves the notes, returns the name, republishes) so a later view regression cannot silently disable it again. Generalizes to any feature whose backend is proven but whose UI trigger is flaky.
+Folder rename looked broken while the STORE was correct (sanitize -> no-clobber guard -> `moveItem`, and create worked). The fault was in the VIEW: three `.alert(...)` modifiers stacked on ONE view node (New folder / Rename / Delete), with the rename alert presented straight from a `.contextMenu` action via a bool binding. Stacked alerts on one node and context-menu-triggered bool alerts are both classic SwiftUI flakiness sources - a sibling alert can swallow another's presentation, so the rename alert may not present (or its TextField may not commit), and the working store call is never reached. The fix drives all three dialogs from ONE `FolderDialog` enum and hosts each alert on its OWN hidden `Color.clear` background anchor via a per-case binding, so no two share a node and none can lose the race; the text field lives in a separate `@State` so editing it does not churn the enum identity. Two rules generalize. First: never stack multiple `.alert`/`.confirmationDialog` modifiers on one SwiftUI node, and be wary of presenting a bool-driven alert directly from a `.contextMenu` action - drive a screen's dialogs from one state and host each on its own anchor (or use item-driven presentation) so presentation is deterministic. Second: when a "store logic is correct but the feature does nothing" bug appears, suspect the presentation/interaction layer, and lock the working seam with a DRIVER-level test (`StreamFeed.renameFolder(at:to:)` renames on disk, moves the thoughts, returns the name, republishes) so a later view regression cannot silently disable it again. Generalizes to any feature whose backend is proven but whose UI trigger is flaky.
 
 ## @Environment(\.undoManager) is unreliable; vend a first-responder-backed UndoManager and inject it (feedback 0018)
 
-Shake to Undo did nothing because `NoteDeletionController` took its `UndoManager` from `@Environment(\.undoManager)`, which in a plain SwiftUI tree is frequently NIL (no UIKit responder vends one) - so the delete registered with a nil manager, and the system shake gesture (which invokes the FIRST RESPONDER's `UndoManager`) found no action. The fix is a small, separable `UndoManagerHost` (`UIViewControllerRepresentable`) embedding a zero-size `UIViewController` that `canBecomeFirstResponder`, becomes first responder, and vends a STABLE `UndoManager` from its `undoManager` override; the composition root injects THAT manager into the controller, so registerUndo/undo/redo operate on the manager the shake resolves. TWO PR-review follow-ups (found independently by two reviewers) hardened it. First: becoming first responder ONCE in `viewDidAppear` is NOT enough - once a text field takes first responder (and the search field is now on every screen, so this happens constantly), it does not return to the host on resign, and the shake silently breaks again; the host must RE-CLAIM first responder whenever focus should return to it (keyboard-hide / text end-editing / app-did-become-active notifications), deferred a runloop tick and skipped while a field is actively edited so it never fights the keyboard. Second, on testing: driving `UndoManager.undo()` synchronously in a unit test corrupts the harness heap (the registered closure hops onto an async Task that re-registers the redo outside the manager's undoing state, with no run loop to close the group) - so make the controller's own undo/redo work seams (`undoDelete`/`redoDelete`) internal and drive THEM directly with the injected manager present; that proves the shake channel RESTORES, the redo RE-DELETES, and the stale-pending leak guard commits a prior pending, while the literal `UndoManager.undo()` call and the physical shake stay manual-verify. Generalizes: if a SwiftUI feature depends on the system Undo/Shake gesture, do not trust `@Environment(\.undoManager)` - vend a stable manager from a first-responder-backed controller AND re-claim first responder after any text field takes it (not just once on appear); and treat run-loop-coupled system objects (UndoManager grouping) as manual-verify at the top, seam-tested (drive the work functions directly) underneath.
+Shake to Undo did nothing because `ThoughtDeletionController` took its `UndoManager` from `@Environment(\.undoManager)`, which in a plain SwiftUI tree is frequently NIL (no UIKit responder vends one) - so the delete registered with a nil manager, and the system shake gesture (which invokes the FIRST RESPONDER's `UndoManager`) found no action. The fix is a small, separable `UndoManagerHost` (`UIViewControllerRepresentable`) embedding a zero-size `UIViewController` that `canBecomeFirstResponder`, becomes first responder, and vends a STABLE `UndoManager` from its `undoManager` override; the composition root injects THAT manager into the controller, so registerUndo/undo/redo operate on the manager the shake resolves. TWO PR-review follow-ups (found independently by two reviewers) hardened it. First: becoming first responder ONCE in `viewDidAppear` is NOT enough - once a text field takes first responder (and the search field is now on every screen, so this happens constantly), it does not return to the host on resign, and the shake silently breaks again; the host must RE-CLAIM first responder whenever focus should return to it (keyboard-hide / text end-editing / app-did-become-active notifications), deferred a runloop tick and skipped while a field is actively edited so it never fights the keyboard. Second, on testing: driving `UndoManager.undo()` synchronously in a unit test corrupts the harness heap (the registered closure hops onto an async Task that re-registers the redo outside the manager's undoing state, with no run loop to close the group) - so make the controller's own undo/redo work seams (`undoDelete`/`redoDelete`) internal and drive THEM directly with the injected manager present; that proves the shake channel RESTORES, the redo RE-DELETES, and the stale-pending leak guard commits a prior pending, while the literal `UndoManager.undo()` call and the physical shake stay manual-verify. Generalizes: if a SwiftUI feature depends on the system Undo/Shake gesture, do not trust `@Environment(\.undoManager)` - vend a stable manager from a first-responder-backed controller AND re-claim first responder after any text field takes it (not just once on appear); and treat run-loop-coupled system objects (UndoManager grouping) as manual-verify at the top, seam-tested (drive the work functions directly) underneath.
 
 ## Thread the create-context's location into the create path so a new artifact lands where the user is (feedback 0018)
 
-Recording a thought while browsing a folder created it at the ROOT, because the record action routed through the shared session seam with no folder context and the dictation view model defaulted `folderPath = []`; the dictation cover is presented at the root, decoupled from which folder requested it, so the browsing context was lost. The fix threads a `folderPath` through `DictationViewModel.init` (a resuming note still overrides it with its own folder) and captures the current folder at the moment Record/mic is tapped (the folder screen and note page both know it), handing it to the model so the thought lands where the user was; hands-free entry points (Siri/CarPlay) keep passing `[]`. A companion lesson: a title-placement choice made for ONE screen (feedback 0016's inline root title) should be checked against the OTHER screens sharing the chrome before it ships - it read as cramped on folder screens, so both root and folder now use one consistent large title below the toolbar. Generalizes: when a "create" action is reachable from a scoped context (a folder, project, board), thread that scope into the create path rather than defaulting to the root and forcing a move - and if the create is decoupled from its trigger (a root-presented sheet), capture the context at trigger time and carry it through; and prefer one consistent presentation across a navigation stack over a per-screen local optimization.
+Recording a thought while browsing a folder created it at the ROOT, because the record action routed through the shared session seam with no folder context and the dictation view model defaulted `folderPath = []`; the dictation cover is presented at the root, decoupled from which folder requested it, so the browsing context was lost. The fix threads a `folderPath` through `DictationViewModel.init` (a resuming thought still overrides it with its own folder) and captures the current folder at the moment Record/mic is tapped (the folder screen and thought page both know it), handing it to the model so the thought lands where the user was; hands-free entry points (Siri/CarPlay) keep passing `[]`. A companion lesson: a title-placement choice made for ONE screen (feedback 0016's inline root title) should be checked against the OTHER screens sharing the chrome before it ships - it read as cramped on folder screens, so both root and folder now use one consistent large title below the toolbar. Generalizes: when a "create" action is reachable from a scoped context (a folder, project, board), thread that scope into the create path rather than defaulting to the root and forcing a move - and if the create is decoupled from its trigger (a root-presented sheet), capture the context at trigger time and carry it through; and prefer one consistent presentation across a navigation stack over a per-screen local optimization.
+
+## A product-wide term rename is a symbol rename with a frozen persistence + behavior boundary (spec 0024)
+
+Renaming the domain term "note" -> "thought" across the whole app (types, files, members, tests, UI copy, docs) was safe only because one boundary was drawn and held: the on-disk and settings SERIALIZATION, plus the live voice-recognition GRAMMAR, are contracts that a rename must not touch. The Swift TYPE `Note` becomes `Thought`, but the strings it persists stay byte-identical: the Markdown frontmatter KEYS (`id`, `title`, `titleCustom`, `created`, `audio`, `timings`), the `<id>.md`/`<id>.m4a` filename scheme, the `.trash/` and `ThoughtStream` directory names, the UserDefaults key VALUES (`settings.noteSortOrder` kept even though its Swift accessor became `thoughtSortOrder`), the `ThoughtSortOrder` rawValue tags (`newest`/`oldest`/`titleAZ`/`titleZA`), and the `LockScreenTitle.noteTitle` case (its rawValue is a stored `storageTag`). Renaming any of those would ORPHAN every saved thought or reset every setting - the type name is code, the string it writes is data. The mechanical rename ran as a case-preserving whole-word/camelCase substitution with those exact literals MASKED first and restored after, so a blind pass could never rewrite a persisted string; the one prose "Note:" (N.B.) comment and the "Note that" doc sentence were masked too, since only the DOMAIN noun is the target. Two decisions were judgment calls worth recording. First, the Mira voice-editing grammar ("Mira new note" spoken mid-dictation) and the Siri phrases ARE product vocabulary, not persisted data, so they moved to "thought" together with the cheat-sheet and the tests that lock them - a matched set that must change in lockstep or the on-screen hint stops matching what fires. Second, the ONLY hard verifications that matter for a pure rename are: the full suite stays green at the SAME test count (renamed, not removed), a test loads an EXISTING on-disk file with the frozen keys and round-trips it, and a grep of the built strings shows no "note" left in UI copy. Generalizes to any product-wide term or symbol rename: enumerate the persistence + external-contract literals FIRST and freeze them explicitly (mask-and-restore, not trust-the-boundary), separate "code identifier" from "the string that identifier serializes", decide up front which user-facing vocabulary is product copy (rename) versus a stored/parsed contract (freeze), and prove the frozen format with an existing-artifact load test rather than only a fresh round-trip.

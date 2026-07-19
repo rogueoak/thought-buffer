@@ -3,56 +3,56 @@ import SwiftUI
 /// The folder-aware Thoughts screen at ONE folder path (spec 0010). Root is `path: []`; a folder
 /// pushed on the stack renders another instance at its own path, so this view recurses.
 ///
-/// It shows the child folders at `currentPath` and the notes whose `folderPath == currentPath`,
-/// INTERLEAVED into one list sorted by the chosen `NoteSortOrder` (via `FolderListModel`). Folder rows
-/// navigate (tap = push); note rows navigate to detail. Folder rows carry Rename / Delete; note rows
+/// It shows the child folders at `currentPath` and the thoughts whose `folderPath == currentPath`,
+/// INTERLEAVED into one list sorted by the chosen `ThoughtSortOrder` (via `FolderListModel`). Folder rows
+/// navigate (tap = push); thought rows navigate to detail. Folder rows carry Rename / Delete; thought rows
 /// carry Move-to-folder and swipe-to-delete.
 ///
-/// Spec 0021 gives it the persistent bottom bar (search field + icon-only new-note + record) and
-/// GLOBAL full-text search: typing filters `feed.notes` across the WHOLE tree to a flat results list
-/// (via `NoteSearch`); tapping a result opens it; clearing restores the normal folder list. An empty
-/// store shows a centered record + new-note CTA instead of an empty list; a non-empty store filtered to
+/// Spec 0021 gives it the persistent bottom bar (search field + icon-only new-thought + record) and
+/// GLOBAL full-text search: typing filters `feed.thoughts` across the WHOLE tree to a flat results list
+/// (via `ThoughtSearch`); tapping a result opens it; clearing restores the normal folder list. An empty
+/// store shows a centered record + new-thought CTA instead of an empty list; a non-empty store filtered to
 /// zero matches shows a "no matches" state with the field still visible. The state selection is the
 /// pure `FolderScreenState`.
 struct FolderContentsView: View {
     @ObservedObject var feed: StreamFeed
-    /// This screen's folder path (root = []). Notes shown are those whose `folderPath` equals this;
+    /// This screen's folder path (root = []). Thoughts shown are those whose `folderPath` equals this;
     /// folders shown are its children.
     let currentPath: [String]
     /// The shared sort order, bound so the toolbar menu here re-sorts the whole app live.
-    @Binding var sortOrder: NoteSortOrder
+    @Binding var sortOrder: ThoughtSortOrder
     /// The live search query for the persistent bottom bar (spec 0021). Non-whitespace text switches the
     /// screen to the flat global results list; clearing it restores the normal folder view. Bound from
-    /// the root (`StreamListView`) so a search initiated on the note-detail page can pop back and land in
+    /// the root (`StreamListView`) so a search initiated on the thought-detail page can pop back and land in
     /// the ROOT folder screen's field, driving the same global results.
     @Binding var searchQuery: String
 
-    /// The ONE shared playback controller (spec 0008), threaded down so a leading swipe can play a note
+    /// The ONE shared playback controller (spec 0008), threaded down so a leading swipe can play a thought
     /// or a folder's queue through the same path the detail view, CarPlay, and the now-playing bar
     /// drive (spec 0015). Optional so a preview / screenshot build without shared playback still
     /// renders; the swipe Play actions are simply omitted when nil.
-    let playbackController: NotePlaybackController?
+    let playbackController: ThoughtPlaybackController?
 
     let onOpenFolder: ([String]) -> Void
-    let onOpenNote: (Note) -> Void
-    /// Create a blank keyboard note filed in this screen's folder (spec 0013). Carries `currentPath`
-    /// so the new note lands in the folder the user is currently browsing.
-    let onNewNote: ([String]) -> Void
+    let onOpenThought: (Thought) -> Void
+    /// Create a blank keyboard thought filed in this screen's folder (spec 0013). Carries `currentPath`
+    /// so the new thought lands in the folder the user is currently browsing.
+    let onNewKeyboardThought: ([String]) -> Void
     /// Start a new dictation session (the mic / Record action), filed into the folder path passed in so
     /// a thought recorded while browsing a folder lands in THAT folder, not at the root (feedback: the
-    /// record action must be contextual, like the new-note action). Carries `currentPath`.
+    /// record action must be contextual, like the new-thought action). Carries `currentPath`.
     let onNewThought: ([String]) -> Void
     let onOpenSettings: () -> Void
-    /// Soft-delete a note by id through the shared undoable path (spec 0020), so the list swipe and the
-    /// list-row context-menu Delete both route through the composition root's `NoteDeletionController`
+    /// Soft-delete a thought by id through the shared undoable path (spec 0020), so the list swipe and the
+    /// list-row context-menu Delete both route through the composition root's `ThoughtDeletionController`
     /// (which registers undo + shows the affordance) rather than deleting the store directly.
-    let onDeleteNote: (UUID) -> Void
+    let onDeleteThought: (UUID) -> Void
     /// The shared undoable-delete coordinator (spec 0020), owned by the root and observed here so the
-    /// "Note deleted - Undo" affordance renders in THIS screen's bottom stack, ABOVE the now-playing bar
+    /// "Thought deleted - Undo" affordance renders in THIS screen's bottom stack, ABOVE the now-playing bar
     /// and persistent bottom bar (spec 0021 reconciliation) - so the three compose via one VStack rather
     /// than a hardcoded overlay clearance. Optional so a preview / bare call site without a coordinator
     /// simply omits the chip; the root still owns the UndoManager wiring and the window timer.
-    @ObservedObject var deletion: NoteDeletionController
+    @ObservedObject var deletion: ThoughtDeletionController
 
     /// The child folder names at this path, loaded off-main (the store walk can coordinate on iCloud)
     /// and refreshed after a folder edit. Kept local to this screen so each path shows its own folders.
@@ -72,22 +72,22 @@ struct FolderContentsView: View {
     /// read when its action runs, kept out of the enum so editing it does not churn the item identity.
     @State private var folderNameField = ""
 
-    // Move-to-folder sheet (targets a specific note).
-    @State private var moveNote: Note?
+    // Move-to-folder sheet (targets a specific thought).
+    @State private var moveThought: Thought?
 
     // A transient message for a rejected/conflicting folder name.
     @State private var folderError: String?
 
-    // Drives the shared "Copied to clipboard" confirmation after a note-row Copy text (spec 0017):
+    // Drives the shared "Copied to clipboard" confirmation after a thought-row Copy text (spec 0017):
     // `copiedTrigger` is bumped on each copy so the lifecycle-tied confirmation re-arms its auto-hide,
     // and `showCopiedConfirmation` holds its visibility.
     @State private var copiedTrigger = 0
     @State private var showCopiedConfirmation = false
 
-    /// The interleaved, sorted rows for this screen: child folders + notes at this path.
+    /// The interleaved, sorted rows for this screen: child folders + thoughts at this path.
     private var items: [FolderListItem] {
         FolderListModel.items(
-            allNotes: feed.notes,
+            allThoughts: feed.thoughts,
             childFolderNames: childFolderNames,
             currentPath: currentPath,
             sortOrder: sortOrder
@@ -95,18 +95,18 @@ struct FolderContentsView: View {
     }
 
     /// Resolve the screen state AND the search results in ONE pass (architect review): the search scan is
-    /// `notes x paragraphs`, so it must run at most ONCE per render, not once in the body and again inside
+    /// `thoughts x paragraphs`, so it must run at most ONCE per render, not once in the body and again inside
     /// a separate `screenState` computed property (which re-scanned per keystroke). When no search is
     /// active the scan is skipped entirely. Gated on the initial load so a not-yet-loaded feed does not
-    /// flash the empty CTA. `storeHasNotes` is the WHOLE store (search is global), so the empty-state CTA
+    /// flash the empty CTA. `storeHasThoughts` is the WHOLE store (search is global), so the empty-state CTA
     /// shows only when there is genuinely nothing anywhere.
-    private func resolveContent() -> (state: FolderScreenState, results: [Note]) {
+    private func resolveContent() -> (state: FolderScreenState, results: [Thought]) {
         guard feed.didLoad, folderLoaded else { return (.normal, []) }
-        let active = NoteSearch.isActive(searchQuery)
+        let active = ThoughtSearch.isActive(searchQuery)
         // Only scan when a search is active; the normal/empty states never look at results.
-        let results = active ? NoteSearch.results(in: feed.notes, query: searchQuery) : []
+        let results = active ? ThoughtSearch.results(in: feed.thoughts, query: searchQuery) : []
         let state = FolderScreenState.select(
-            storeHasNotes: !feed.notes.isEmpty,
+            storeHasThoughts: !feed.thoughts.isEmpty,
             searchActive: active,
             hasSearchMatches: !results.isEmpty
         )
@@ -121,14 +121,14 @@ struct FolderContentsView: View {
     /// The screen body for a resolved `state`/`results` (computed once per render in `body`), so the
     /// search scan is not repeated. `state` drives which view shows; `results` feeds the search list.
     @ViewBuilder
-    private func bodyContent(state screenState: FolderScreenState, results searchResults: [Note]) -> some View {
+    private func bodyContent(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
         Group {
             switch screenState {
             case .emptyStore:
                 FolderEmptyStateCTA(
                     isRoot: currentPath.isEmpty,
                     onRecord: { onNewThought(currentPath) },
-                    onNewNote: { onNewNote(currentPath) }
+                    onNewKeyboardThought: { onNewKeyboardThought(currentPath) }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .searchResults:
@@ -175,13 +175,13 @@ struct FolderContentsView: View {
         .background(newFolderAlertAnchor)
         .background(renameFolderAlertAnchor)
         .background(deleteFolderAlertAnchor)
-        .sheet(item: $moveNote) { note in
+        .sheet(item: $moveThought) { thought in
             MoveToFolderSheet(
-                note: note,
+                thought: thought,
                 childFolders: { await feed.childFolders(at: $0) },
                 createFolder: { name, path in await feed.createFolder(named: name, at: path) },
                 onMove: { folderPath in
-                    await feed.move(note, to: folderPath)
+                    await feed.move(thought, to: folderPath)
                     await reloadFolders()
                 }
             )
@@ -189,7 +189,7 @@ struct FolderContentsView: View {
         .task(id: feed.reloadGeneration) {
             // Reload this path's child folders whenever the feed republishes (a folder edit, a save, or
             // an external iCloud change). `reloadGeneration` bumps on EVERY republish, so it catches
-            // changes the note count would miss: a rename, a move between two existing folders, or a
+            // changes the thought count would miss: a rename, a move between two existing folders, or a
             // synced-in empty folder.
             await reloadFolders()
         }
@@ -198,7 +198,7 @@ struct FolderContentsView: View {
     // MARK: - Bottom stack (spec 0021)
 
     /// The composed bottom safe-area stack (spec 0021 reconciliation of the three bottom affordances):
-    /// from top to bottom, the transient "Note deleted - Undo" chip (spec 0020), the now-playing bar
+    /// from top to bottom, the transient "Thought deleted - Undo" chip (spec 0020), the now-playing bar
     /// (spec 0015), then the persistent bottom bar (spec 0021), all in ONE inset so they stack cleanly
     /// via the SHARED VStack spacing and reserve real layout space - no hardcoded overlay clearance, and
     /// no overlap. Each element appears only when relevant (undo chip while a delete is pending,
@@ -211,18 +211,18 @@ struct FolderContentsView: View {
                 UndoDeleteAffordance(onUndo: { Task { await deletion.undo() } })
                     .transition(.opacity)
             }
-            // In a truly empty store the centered CTA already carries labeled Record + New-note buttons
+            // In a truly empty store the centered CTA already carries labeled Record + New-thought buttons
             // (spec 0021), so the bottom bar (which would only duplicate them, with no field to search)
-            // is omitted; the undo chip above can still show while a just-deleted note is pending.
+            // is omitted; the undo chip above can still show while a just-deleted thought is pending.
             if screenState != .emptyStore {
                 if let controller = playbackController {
-                    NowPlayingBar(controller: controller, onOpenNote: onOpenNote)
+                    NowPlayingBar(controller: controller, onOpenThought: onOpenThought)
                 }
                 BottomBar(query: $searchQuery, showsSearchField: screenState.showsSearchField) {
                     BottomBarIconButton(
                         systemImage: "square.and.pencil",
-                        accessibilityLabel: "New note"
-                    ) { onNewNote(currentPath) }
+                        accessibilityLabel: "New thought"
+                    ) { onNewKeyboardThought(currentPath) }
                     BottomBarRecordButton(accessibilityLabel: "Record") { onNewThought(currentPath) }
                 }
             }
@@ -249,8 +249,8 @@ struct FolderContentsView: View {
                 switch item {
                 case let .folder(name, folderPath):
                     folderRow(name: name, folderPath: folderPath)
-                case let .note(note):
-                    noteRow(note: note)
+                case let .thought(thought):
+                    thoughtRow(thought: thought)
                 }
             }
         }
@@ -259,14 +259,14 @@ struct FolderContentsView: View {
         .padding(.top, CanopySpacing.x2)
     }
 
-    /// The flat GLOBAL search results (spec 0021): every matching note anywhere in the tree, as note
-    /// rows. Tapping opens the note; the rows keep their swipe/context actions so a match can be played,
+    /// The flat GLOBAL search results (spec 0021): every matching thought anywhere in the tree, as thought
+    /// rows. Tapping opens the thought; the rows keep their swipe/context actions so a match can be played,
     /// moved, shared, or deleted in place. `results` is computed ONCE per render in `body` (not rescanned
-    /// here) so a keystroke does not re-run the notes x paragraphs scan.
-    private func searchResultsList(_ results: [Note]) -> some View {
+    /// here) so a keystroke does not re-run the thoughts x paragraphs scan.
+    private func searchResultsList(_ results: [Thought]) -> some View {
         List {
-            ForEach(results) { note in
-                noteRow(note: note)
+            ForEach(results) { thought in
+                thoughtRow(thought: thought)
             }
         }
         .listStyle(.plain)
@@ -280,8 +280,8 @@ struct FolderContentsView: View {
         } label: {
             FolderRow(
                 name: name,
-                countLabel: FolderListModel.noteCountLabel(
-                    FolderListModel.descendantNoteCount(of: folderPath, in: feed.notes)
+                countLabel: FolderListModel.thoughtCountLabel(
+                    FolderListModel.descendantThoughtCount(of: folderPath, in: feed.thoughts)
                 )
             )
         }
@@ -301,7 +301,7 @@ struct FolderContentsView: View {
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             // A full leading swipe plays the folder's recordings as a queue (spec 0015): every recorded
-            // note anywhere in this folder's subtree, in the current sort order, auto-advancing. A
+            // thought anywhere in this folder's subtree, in the current sort order, auto-advancing. A
             // folder with no recordings plays nothing (the controller no-ops on an empty queue).
             if let controller = playbackController {
                 Button {
@@ -327,58 +327,58 @@ struct FolderContentsView: View {
         }
     }
 
-    /// The play queue for a folder swipe (spec 0015): every note anywhere in `folderPath`'s subtree
+    /// The play queue for a folder swipe (spec 0015): every thought anywhere in `folderPath`'s subtree
     /// (its `folderPath` has `folderPath` as a prefix) that carries a recording, ordered by the current
-    /// `NoteSortOrder` via the shared comparator - so a folder plays in the same order its notes appear
+    /// `ThoughtSortOrder` via the shared comparator - so a folder plays in the same order its thoughts appear
     /// in the list. The controller filters to recordings too, but filtering here keeps the ordering
-    /// honest (it sorts only the notes that will actually play).
-    private func folderQueue(for folderPath: [String]) -> [Note] {
-        let inSubtree = feed.notes.filter { note in
-            note.hasAudio && FolderListModel.isDescendant(note.folderPath, of: folderPath)
+    /// honest (it sorts only the thoughts that will actually play).
+    private func folderQueue(for folderPath: [String]) -> [Thought] {
+        let inSubtree = feed.thoughts.filter { thought in
+            thought.hasAudio && FolderListModel.isDescendant(thought.folderPath, of: folderPath)
         }
         return sortOrder.sort(inSubtree)
     }
 
-    private func noteRow(note: Note) -> some View {
+    private func thoughtRow(thought: Thought) -> some View {
         Button {
-            onOpenNote(note)
+            onOpenThought(thought)
         } label: {
-            NoteCard(note: note)
+            ThoughtCard(thought: thought)
         }
         .buttonStyle(.plain)
         .rowInsets()
         .contextMenu {
-            // Long-press a note row for Share + Copy from the ONE shared `NoteActionsMenu` (spec 0017),
+            // Long-press a thought row for Share + Copy from the ONE shared `ThoughtActionsMenu` (spec 0017),
             // with this screen's Move-to-folder appended after them. `onCopied` bumps the trigger that
-            // flashes the shared confirmation. Folder rows get no share/copy - only notes.
-            NoteActionsMenu(note: note, onCopied: { copiedTrigger += 1 }) {
+            // flashes the shared confirmation. Folder rows get no share/copy - only thoughts.
+            ThoughtActionsMenu(thought: thought, onCopied: { copiedTrigger += 1 }) {
                 Button {
-                    moveNote = note
+                    moveThought = thought
                 } label: {
                     Label("Move to folder", systemImage: "folder")
                 }
                 // Delete via the shared undoable path (spec 0020): the same route the swipe uses, so
                 // every entry point registers undo and shows the affordance. Destructive role tints it.
                 Button(role: .destructive) {
-                    onDeleteNote(note.id)
+                    onDeleteThought(thought.id)
                 } label: {
                     Label("Delete", systemImage: "trash")
                 }
             }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
-            // A full leading swipe plays a recorded note immediately through the shared controller
-            // (spec 0015); a text-only note gets no Play action, only Move.
-            if note.hasAudio, let controller = playbackController {
+            // A full leading swipe plays a recorded thought immediately through the shared controller
+            // (spec 0015); a text-only thought gets no Play action, only Move.
+            if thought.hasAudio, let controller = playbackController {
                 Button {
-                    controller.play(note: note)
+                    controller.play(thought: thought)
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
                 .tint(CanopyColor.success)
             }
             Button {
-                moveNote = note
+                moveThought = thought
             } label: {
                 Label("Move", systemImage: "folder")
             }
@@ -388,7 +388,7 @@ struct FolderContentsView: View {
             // The swipe deletes through the SAME undoable path (spec 0020) as the menus, so it registers
             // undo and shows the affordance instead of hard-deleting the store.
             Button(role: .destructive) {
-                onDeleteNote(note.id)
+                onDeleteThought(thought.id)
             } label: {
                 Label("Delete", systemImage: "trash")
             }
@@ -411,7 +411,7 @@ struct FolderContentsView: View {
         ToolbarItem(placement: .topBarLeading) {
             Menu {
                 Picker("Sort", selection: $sortOrder) {
-                    ForEach(NoteSortOrder.allCases, id: \.self) { order in
+                    ForEach(ThoughtSortOrder.allCases, id: \.self) { order in
                         Text(order.label).tag(order)
                     }
                 }
@@ -420,7 +420,7 @@ struct FolderContentsView: View {
             }
             .tint(CanopyColor.primary)
         }
-        // The new-note + record actions moved to the persistent bottom bar (spec 0021); the top-right
+        // The new-thought + record actions moved to the persistent bottom bar (spec 0021); the top-right
         // keeps only Settings so the gear stays where it always was.
         ToolbarItem(placement: .topBarTrailing) {
             Button { onOpenSettings() } label: {
@@ -442,7 +442,7 @@ struct FolderContentsView: View {
             Text("No matches")
                 .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
                 .foregroundStyle(CanopyColor.text)
-            Text("No note's title or text contains \"\(trimmedQuery)\".")
+            Text("No thought's title or text contains \"\(trimmedQuery)\".")
                 .font(.system(size: CanopyFont.sizeSm))
                 .foregroundStyle(CanopyColor.textMuted)
                 .multilineTextAlignment(.center)
@@ -502,7 +502,7 @@ struct FolderContentsView: View {
                 Button("Delete", role: .destructive) { Task { await deleteFolder() } }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             } message: {
-                Text("This deletes the folder and everything inside it - notes, recordings, and subfolders. This can't be undone.")
+                Text("This deletes the folder and everything inside it - thoughts, recordings, and subfolders. This can't be undone.")
             }
     }
 
@@ -572,36 +572,36 @@ enum FolderDialog: Identifiable, Equatable {
     var isDeleteFolder: Bool { if case .deleteFolder = self { return true }; return false }
 }
 
-/// The empty-state call to action (spec 0021): when a list or folder has no notes anywhere, show the
-/// RECORD button in the middle of the screen WITH its text label, and a NEW-NOTE button directly below
-/// it. This is the ONE place record/new-note keep their labels (the persistent bottom bar drops them).
+/// The empty-state call to action (spec 0021): when a list or folder has no thoughts anywhere, show the
+/// RECORD button in the middle of the screen WITH its text label, and a NEW-THOUGHT button directly below
+/// it. This is the ONE place record/new-thought keep their labels (the persistent bottom bar drops them).
 struct FolderEmptyStateCTA: View {
     /// Whether this is the root list (vs a folder), only for the supporting copy.
     let isRoot: Bool
     let onRecord: () -> Void
-    let onNewNote: () -> Void
+    let onNewKeyboardThought: () -> Void
 
     var body: some View {
         VStack(spacing: CanopySpacing.x4) {
             Image(systemName: "waveform")
                 .font(.system(size: CanopyFont.sizeX4xl, weight: .semibold))
                 .foregroundStyle(CanopyColor.primary)
-            Text(isRoot ? "No notes yet" : "This folder is empty")
+            Text(isRoot ? "No thoughts yet" : "This folder is empty")
                 .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
                 .foregroundStyle(CanopyColor.text)
-            Text("Tap Record and start talking, or make a note with the keyboard.")
+            Text("Tap Record and start talking, or make a thought with the keyboard.")
                 .font(.system(size: CanopyFont.sizeSm))
                 .foregroundStyle(CanopyColor.textMuted)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, CanopySpacing.x8)
 
-            // Record in the middle WITH its label, new-note directly below it (spec 0021).
+            // Record in the middle WITH its label, new-thought directly below it (spec 0021).
             RecordButton(action: onRecord)
                 .padding(.top, CanopySpacing.x2)
-            Button(action: onNewNote) {
+            Button(action: onNewKeyboardThought) {
                 HStack(spacing: CanopySpacing.x2) {
                     Image(systemName: "square.and.pencil")
-                    Text("New note")
+                    Text("New thought")
                         .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
                 }
                 .foregroundStyle(CanopyColor.primary)
@@ -611,7 +611,7 @@ struct FolderEmptyStateCTA: View {
                     Capsule().stroke(CanopyColor.primary, lineWidth: 1)
                 )
             }
-            .accessibilityLabel("New note")
+            .accessibilityLabel("New thought")
         }
     }
 }

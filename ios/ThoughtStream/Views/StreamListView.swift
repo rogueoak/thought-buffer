@@ -2,41 +2,41 @@ import SwiftUI
 
 /// A destination on the Thoughts navigation stack (spec 0010). The stack is folder-aware: pushing a
 /// `.folder(path)` opens that folder's contents screen (which recurses via `FolderContentsView`), and
-/// pushing a `.note(note)` opens the existing note detail page. One enum route keeps folder navigation
-/// and note navigation on the SAME stack, so the record-finished / resume flows still land on a note by
-/// setting the path, and a back gesture walks folders and notes uniformly.
+/// pushing a `.thought(thought)` opens the existing thought detail page. One enum route keeps folder navigation
+/// and thought navigation on the SAME stack, so the record-finished / resume flows still land on a thought by
+/// setting the path, and a back gesture walks folders and thoughts uniformly.
 enum StreamRoute: Hashable {
     case folder([String])
-    case note(Note)
-    /// A brand-new, not-yet-persisted note (spec 0013) opened straight into the keyboard editor. It is
-    /// a separate route from `.note` so the detail view knows to start in edit mode and to discard the
-    /// note if the user backs out without typing. It becomes an ordinary saved note on first commit.
-    case newNote(Note)
+    case thought(Thought)
+    /// A brand-new, not-yet-persisted thought (spec 0013) opened straight into the keyboard editor. It is
+    /// a separate route from `.thought` so the detail view knows to start in edit mode and to discard the
+    /// thought if the user backs out without typing. It becomes an ordinary saved thought on first commit.
+    case newThought(Thought)
 }
 
-/// The notes feed: a folder-aware, sortable list of real saved notes on the River Mist palette, with
+/// The thoughts feed: a folder-aware, sortable list of real saved thoughts on the River Mist palette, with
 /// a toolbar (new-folder + sort + mic + gear) and a prominent record button that presents dictation.
-/// Notes and folders load from the `NoteStore` and refresh after a dictation session or a folder edit.
+/// Thoughts and folders load from the `ThoughtStore` and refresh after a dictation session or a folder edit.
 ///
 /// This is the ROOT of the Thoughts `NavigationStack`. It owns the shared session/settings/playback
 /// wiring and renders the root folder (`FolderContentsView(path: [])`) plus the `navigationDestination`
 /// for both routes. `FolderContentsView` renders the same folder-list screen at any path, so a folder
 /// pushed on the stack recurses into another instance of it.
 struct StreamListView: View {
-    private let store: NoteStoring
+    private let store: ThoughtStoring
     private let makeTextProcessor: () -> TextProcessor
     private let settingsStore: SettingsStoring
-    private let noteStoreKind: NoteStoreKind
-    private let playbackController: NotePlaybackController?
-    /// The feed model: owns the notes state, the off-main load, the iCloud observer wiring, and the
+    private let thoughtStoreKind: ThoughtStoreKind
+    private let playbackController: ThoughtPlaybackController?
+    /// The feed model: owns the thoughts state, the off-main load, the iCloud observer wiring, and the
     /// folder CRUD / move seams. Shared by every `FolderContentsView` on the stack so a folder edit
     /// anywhere reloads the one list.
     @StateObject private var feed: StreamFeed
     /// The undoable-delete coordinator (spec 0020): every delete entry point (list swipe, list/detail
     /// menu) routes through it so the delete is soft (trashed, restorable), registered with the system
     /// UndoManager for Shake to Undo, and shown with the in-app undo affordance. Owned here at the root
-    /// so the affordance is visible on the list even for a delete initiated from the note detail.
-    @StateObject private var deletion: NoteDeletionController
+    /// so the affordance is visible on the list even for a delete initiated from the thought detail.
+    @StateObject private var deletion: ThoughtDeletionController
     /// Whether the first-responder-backed `UndoManager` has been injected into the deletion controller
     /// yet (spec 0021 shake-to-undo fix), so the one-time injection from `UndoManagerHost` does not
     /// repeat. `@Environment(\.undoManager)` was unreliable (nil in plain SwiftUI), so a shake found no
@@ -50,13 +50,13 @@ struct StreamListView: View {
     @ObservedObject private var sessionRoute: PendingSessionRoute
     @State private var showSettings = false
     /// The navigation stack path, a list of `StreamRoute`. A finished recording / resume sets this to
-    /// land on the saved note (a fresh recording saves at top level, so we reset to just that note).
+    /// land on the saved thought (a fresh recording saves at top level, so we reset to just that thought).
     @State private var path: [StreamRoute] = []
-    /// Set when the user taps Resume on a note: presents a dictation session seeded with that note.
-    @State private var resumeNote: Note?
+    /// Set when the user taps Resume on a thought: presents a dictation session seeded with that thought.
+    @State private var resumeThought: Thought?
     /// The global search query (spec 0021), owned here at the root so it survives navigation and a search
-    /// started on the note-detail page can pop back to the root folder screen and drive the SAME flat
-    /// global results. Bound into every `FolderContentsView`; the note detail routes into it via
+    /// started on the thought-detail page can pop back to the root folder screen and drive the SAME flat
+    /// global results. Bound into every `FolderContentsView`; the thought detail routes into it via
     /// `onSearch`. Clearing it restores the normal folder view.
     @State private var searchQuery = ""
     /// The folder path a new dictation session should file its thought into (feedback: the record action
@@ -68,7 +68,7 @@ struct StreamListView: View {
     /// Drives the sort menu and the live re-sort. Seeded from persisted settings and written back on
     /// change so the choice survives a launch (spec 0010). Kept as view `@State` (not read straight
     /// off the store each render) so SwiftUI re-renders the list the instant it changes.
-    @State private var sortOrder: NoteSortOrder
+    @State private var sortOrder: ThoughtSortOrder
 
     private var showDictation: Binding<Bool> {
         Binding(
@@ -78,45 +78,45 @@ struct StreamListView: View {
     }
 
     init(
-        store: NoteStoring,
+        store: ThoughtStoring,
         makeTextProcessor: @escaping () -> TextProcessor,
         settingsStore: SettingsStoring,
-        noteStoreKind: NoteStoreKind = .local,
-        noteObserver: UbiquitousNoteObserving? = nil,
+        thoughtStoreKind: ThoughtStoreKind = .local,
+        thoughtObserver: UbiquitousThoughtObserving? = nil,
         sessionRoute: PendingSessionRoute,
-        playbackController: NotePlaybackController? = nil
+        playbackController: ThoughtPlaybackController? = nil
     ) {
         self.store = store
         self.makeTextProcessor = makeTextProcessor
         self.settingsStore = settingsStore
-        self.noteStoreKind = noteStoreKind
+        self.thoughtStoreKind = thoughtStoreKind
         self.playbackController = playbackController
         self.sessionRoute = sessionRoute
-        let feed = StreamFeed(store: store, observer: noteObserver)
+        let feed = StreamFeed(store: store, observer: thoughtObserver)
         _feed = StateObject(wrappedValue: feed)
-        _deletion = StateObject(wrappedValue: NoteDeletionController(feed: feed))
-        _sortOrder = State(initialValue: settingsStore.noteSortOrder)
+        _deletion = StateObject(wrappedValue: ThoughtDeletionController(feed: feed))
+        _sortOrder = State(initialValue: settingsStore.thoughtSortOrder)
     }
 
-    /// A fresh, empty note filed in `folderPath` (spec 0013), opened straight into the editor. It has
+    /// A fresh, empty thought filed in `folderPath` (spec 0013), opened straight into the editor. It has
     /// no paragraphs and no custom title (its shown title derives once the user types), and it is not
     /// saved until the first non-empty commit.
-    private func makeNewNote(in folderPath: [String]) -> Note {
+    private func makeNewThought(in folderPath: [String]) -> Thought {
         // Empty title -> the detail view derives one once the user types (spec 0009); non-custom.
-        Note(title: "", paragraphs: [], createdAt: Date(), folderPath: folderPath)
+        Thought(title: "", paragraphs: [], createdAt: Date(), folderPath: folderPath)
     }
 
-    /// Whether the note-detail resume icon applies for `note` per the audio-retention setting (spec
-    /// 0021): resuming an existing recording always applies; recording onto a text-only note applies
-    /// only when the retention policy records audio (a transcript-only note has no meaningful record
+    /// Whether the thought-detail resume icon applies for `thought` per the audio-retention setting (spec
+    /// 0021): resuming an existing recording always applies; recording onto a text-only thought applies
+    /// only when the retention policy records audio (a transcript-only thought has no meaningful record
     /// action). Computed here at the composition root so the setting is read in one place and the view
     /// stays a thin caller.
-    private func resumeApplies(for note: Note) -> Bool {
-        note.hasAudio || settingsStore.audioRetention.recordsAudio
+    private func resumeApplies(for thought: Thought) -> Bool {
+        thought.hasAudio || settingsStore.audioRetention.recordsAudio
     }
 
-    /// Route a search started on the note-detail page back to the list results (spec 0021): pop the
-    /// whole stack to the ROOT folder screen and set the shared query, so the note page's search shows
+    /// Route a search started on the thought-detail page back to the list results (spec 0021): pop the
+    /// whole stack to the ROOT folder screen and set the shared query, so the thought page's search shows
     /// the SAME flat global results the folder screens do. Search is global, so the root is the natural
     /// place to present it.
     private func routeSearch(_ query: String) {
@@ -133,12 +133,12 @@ struct StreamListView: View {
         sessionRoute.startNewSession()
     }
 
-    /// Apply the transcript reflow pass (spec 0016) to a note being SAVED AFTER AN EDIT. The gating -
+    /// Apply the transcript reflow pass (spec 0016) to a thought being SAVED AFTER AN EDIT. The gating -
     /// reflow only when `refineTranscript` is on, and only on this commit-edit path (never on load) -
     /// lives in the pure, tested `TranscriptCleanup.refinedForSave(_:refine:)`; this reads the current
-    /// setting and delegates, so a load path can never reach it and an untouched note is never rewritten.
-    private func refined(_ note: Note) -> Note {
-        TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)
+    /// setting and delegates, so a load path can never reach it and an untouched thought is never rewritten.
+    private func refined(_ thought: Thought) -> Thought {
+        TranscriptCleanup.refinedForSave(thought, refine: settingsStore.refineTranscript)
     }
 
     /// The dead-air trimmer for a new recording (spec 0019), or nil when the "Trim silences" setting is
@@ -150,14 +150,14 @@ struct StreamListView: View {
     }
 
     /// Build a dictation view model for this session and wire its `onTrimmed` callback to reload the
-    /// feed (spec 0019): a background dead-air trim re-saves the note's remapped timings off-main, so
-    /// after it lands the feed must reload to drop the stale (un-remapped) in-memory note - otherwise
-    /// playing the just-saved note would seek against timings that no longer match the shorter audio.
+    /// feed (spec 0019): a background dead-air trim re-saves the thought's remapped timings off-main, so
+    /// after it lands the feed must reload to drop the stale (un-remapped) in-memory thought - otherwise
+    /// playing the just-saved thought would seek against timings that no longer match the shorter audio.
     private func makeDictationModel(
         recordsAudio: Bool,
         audioTrimmer: AudioTrimming?,
         folderPath: [String] = [],
-        resuming: Note? = nil
+        resuming: Thought? = nil
     ) -> DictationViewModel {
         let model = DictationViewModel(
             store: store,
@@ -180,11 +180,11 @@ struct StreamListView: View {
                 searchQuery: $searchQuery,
                 playbackController: playbackController,
                 onOpenFolder: { childPath in path.append(.folder(childPath)) },
-                onOpenNote: { note in path.append(.note(note)) },
-                onNewNote: { folderPath in path.append(.newNote(makeNewNote(in: folderPath))) },
+                onOpenThought: { thought in path.append(.thought(thought)) },
+                onNewKeyboardThought: { folderPath in path.append(.newThought(makeNewThought(in: folderPath))) },
                 onNewThought: { folderPath in startNewThought(in: folderPath) },
                 onOpenSettings: { showSettings = true },
-                onDeleteNote: { id in Task { await deletion.delete(id: id) } },
+                onDeleteThought: { id in Task { await deletion.delete(id: id) } },
                 deletion: deletion
             )
             .navigationTitle("Thoughts")
@@ -204,25 +204,25 @@ struct StreamListView: View {
                         searchQuery: $searchQuery,
                         playbackController: playbackController,
                         onOpenFolder: { childPath in path.append(.folder(childPath)) },
-                        onOpenNote: { note in path.append(.note(note)) },
-                        onNewNote: { newPath in path.append(.newNote(makeNewNote(in: newPath))) },
+                        onOpenThought: { thought in path.append(.thought(thought)) },
+                        onNewKeyboardThought: { newPath in path.append(.newThought(makeNewThought(in: newPath))) },
                         onNewThought: { folderPath in startNewThought(in: folderPath) },
                         onOpenSettings: { showSettings = true },
-                        onDeleteNote: { id in Task { await deletion.delete(id: id) } },
+                        onDeleteThought: { id in Task { await deletion.delete(id: id) } },
                         deletion: deletion
                     )
                     .navigationTitle(folderPath.last ?? "Thoughts")
                     // The folder name sits BELOW the toolbar buttons as a large title (spec 0021),
                     // matching the root "Thoughts" title instead of being smooshed inline under them.
                     .navigationBarTitleDisplayMode(.large)
-                case let .note(note):
-                    NoteDetailView(
-                        note: note,
+                case let .thought(thought):
+                    ThoughtDetailView(
+                        thought: thought,
                         resolver: StoreAudioURLResolver(store: store),
                         controller: playbackController,
                         onNewThought: { folderPath in startNewThought(in: folderPath) },
                         onOpenSettings: { showSettings = true },
-                        onResume: { current in resumeNote = current },
+                        onResume: { current in resumeThought = current },
                         onCommitEdit: { edited in
                             Task {
                                 _ = try? store.save(refined(edited))
@@ -232,28 +232,28 @@ struct StreamListView: View {
                         onDelete: { id in
                             // Delete from detail (spec 0020): pop back to the list FIRST so the undo
                             // affordance shows there, then soft-delete through the shared undoable path.
-                            if case .note = path.last { path.removeLast() }
+                            if case .thought = path.last { path.removeLast() }
                             Task { await deletion.delete(id: id) }
                         },
-                        // Search from the note page routes to the SAME global results the list shows
+                        // Search from the thought page routes to the SAME global results the list shows
                         // (spec 0021): pop to root and set the shared query.
                         onSearch: { query in routeSearch(query) },
                         // The resume icon shows only when resuming applies per the retention setting
-                        // (spec 0021): always for a note that has audio, else only when audio is recorded.
-                        resumeApplies: resumeApplies(for: note)
+                        // (spec 0021): always for a thought that has audio, else only when audio is recorded.
+                        resumeApplies: resumeApplies(for: thought)
                     )
-                case let .newNote(note):
-                    // A fresh keyboard note (spec 0013): opens straight into the body editor. It is not
+                case let .newThought(thought):
+                    // A fresh keyboard thought (spec 0013): opens straight into the body editor. It is not
                     // on disk yet - `onCommitEdit` persists it on the first non-empty commit, and
                     // `onDiscardEmpty` deletes any provisional save and pops the route if the user backs
-                    // out without typing, so no blank note is left behind.
-                    NoteDetailView(
-                        note: note,
+                    // out without typing, so no blank thought is left behind.
+                    ThoughtDetailView(
+                        thought: thought,
                         resolver: StoreAudioURLResolver(store: store),
                         controller: playbackController,
                         onNewThought: { folderPath in startNewThought(in: folderPath) },
                         onOpenSettings: { showSettings = true },
-                        onResume: { current in resumeNote = current },
+                        onResume: { current in resumeThought = current },
                         onCommitEdit: { edited in
                             Task {
                                 _ = try? store.save(refined(edited))
@@ -264,13 +264,13 @@ struct StreamListView: View {
                             // Never persisted, so nothing to delete; just leave the stack. A guard on
                             // the top route avoids popping if the user already navigated elsewhere.
                             Task {
-                                try? store.delete(id: note.id)
+                                try? store.delete(id: thought.id)
                                 await feed.reload()
                             }
-                            if case .newNote = path.last { path.removeLast() }
+                            if case .newThought = path.last { path.removeLast() }
                         },
-                        // Search is reachable from a brand-new note too (spec 0021); the resume icon
-                        // stays hidden while the note is an unsaved empty draft (the view gates it).
+                        // Search is reachable from a brand-new thought too (spec 0021); the resume icon
+                        // stays hidden while the thought is an unsaved empty draft (the view gates it).
                         onSearch: { query in routeSearch(query) },
                         startInEdit: true
                     )
@@ -289,47 +289,47 @@ struct StreamListView: View {
                         // (feedback: the record action is contextual), captured in `startNewThought`.
                         folderPath: newThoughtFolderPath
                     )
-                ) { savedNote in
-                    // Land on the just-recorded thought by resetting the stack to just that note. It was
+                ) { savedThought in
+                    // Land on the just-recorded thought by resetting the stack to just that thought. It was
                     // filed in `newThoughtFolderPath` (the folder the user was in), so opening it and
                     // navigating back lands in that folder's list.
-                    if let savedNote {
+                    if let savedThought {
                         Task { await feed.reload() }
-                        path = [.note(savedNote)]
+                        path = [.thought(savedThought)]
                     }
                 }
             }
-            .fullScreenCover(item: $resumeNote) { note in
+            .fullScreenCover(item: $resumeThought) { thought in
                 DictationView(
                     model: makeDictationModel(
-                        // A note with NO recording captures real audio when the user records into it
-                        // (spec 0013), subject to the transcript-only retention setting; a note that
+                        // A thought with NO recording captures real audio when the user records into it
+                        // (spec 0013), subject to the transcript-only retention setting; a thought that
                         // already has audio stays text-only append so its original recording is intact.
-                        recordsAudio: !note.hasAudio && settingsStore.audioRetention.recordsAudio,
-                        // Only a note capturing a NEW recording (a text-only note recorded into) trims;
-                        // a note that already has audio keeps its original recording untouched, and the
+                        recordsAudio: !thought.hasAudio && settingsStore.audioRetention.recordsAudio,
+                        // Only a thought capturing a NEW recording (a text-only thought recorded into) trims;
+                        // a thought that already has audio keeps its original recording untouched, and the
                         // view model only trims a freshly adopted recording anyway (spec 0019).
-                        audioTrimmer: note.hasAudio ? nil : makeAudioTrimmer(),
-                        resuming: note
+                        audioTrimmer: thought.hasAudio ? nil : makeAudioTrimmer(),
+                        resuming: thought
                     )
-                ) { savedNote in
-                    if let savedNote {
+                ) { savedThought in
+                    if let savedThought {
                         Task { await feed.reload() }
-                        path = [.note(savedNote)]
+                        path = [.thought(savedThought)]
                     }
-                    resumeNote = nil
+                    resumeThought = nil
                 }
             }
             .sheet(isPresented: $showSettings) {
-                SettingsView(settings: settingsStore, storeKind: noteStoreKind)
+                SettingsView(settings: settingsStore, storeKind: thoughtStoreKind)
             }
         }
         .tint(CanopyColor.primary)
-        // The in-app "Note deleted - Undo" affordance (spec 0020) now renders INSIDE each folder screen's
+        // The in-app "Thought deleted - Undo" affordance (spec 0020) now renders INSIDE each folder screen's
         // bottom stack (see `FolderContentsView.bottomStack`), reconciled with the persistent bottom bar
         // and now-playing bar (spec 0021): the three compose top-to-bottom in ONE safe-area inset via a
         // shared VStack, so the chip sits ABOVE the bottom bar with no hardcoded clearance and never
-        // overlaps it. A delete from the note detail pops back to the list first (see `.note`'s onDelete),
+        // overlaps it. A delete from the thought detail pops back to the list first (see `.thought`'s onDelete),
         // where the affordance is visible. The window timer is lifecycle-tied there; the root keeps only
         // the UndoManager wiring (shake) and the background-commit below.
         //
@@ -347,13 +347,13 @@ struct StreamListView: View {
         )
         // Commit any pending delete when the app leaves the foreground (spec 0020): the undo window is a
         // wall-clock affordance whose timer is view-lifecycle-tied, so backgrounding must close it rather
-        // than leave the note un-committed in trash across a resume. Idempotent - a no-op with nothing
+        // than leave the thought un-committed in trash across a resume. Idempotent - a no-op with nothing
         // pending.
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active { Task { await deletion.commitWindow() } }
         }
         // Persist the sort choice whenever it changes, so it survives a launch (spec 0010).
-        .onChange(of: sortOrder) { _, newValue in settingsStore.noteSortOrder = newValue }
+        .onChange(of: sortOrder) { _, newValue in settingsStore.thoughtSortOrder = newValue }
         .task {
             await withTaskCancellationHandler {
                 // Opportunistically empty the trash on launch (spec 0020): any committed delete from a
@@ -391,12 +391,12 @@ struct RecordButton: View {
     }
 }
 
-/// A brief, non-blocking banner shown when a note delete fails, styled with Canopy danger tokens.
+/// A brief, non-blocking banner shown when a thought delete fails, styled with Canopy danger tokens.
 struct DeleteFailedBanner: View {
     var body: some View {
         HStack(spacing: CanopySpacing.x2) {
             Image(systemName: "exclamationmark.triangle.fill")
-            Text("Could not delete note")
+            Text("Could not delete thought")
                 .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
         }
         .foregroundStyle(CanopyColor.dangerForeground)
@@ -411,7 +411,7 @@ struct DeleteFailedBanner: View {
 
 #Preview {
     StreamListView(
-        store: NoteStore(),
+        store: ThoughtStore(),
         makeTextProcessor: { MiraTextProcessor() },
         settingsStore: UserDefaultsSettingsStore(),
         sessionRoute: PendingSessionRoute()

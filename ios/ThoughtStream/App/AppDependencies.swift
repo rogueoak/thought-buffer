@@ -1,19 +1,19 @@
 import Foundation
 
 /// The app's composition root: the single place that wires up concrete implementations of the
-/// app's seams (note storage today; more later). Created once in `ThoughtStreamApp` and passed
+/// app's seams (thought storage today; more later). Created once in `ThoughtStreamApp` and passed
 /// down, so no view or view model allocates its own concrete store.
 struct AppDependencies {
-    /// The note persistence backend used across the app.
-    let noteStore: NoteStoring
+    /// The thought persistence backend used across the app.
+    let thoughtStore: ThoughtStoring
 
     /// Which backend was selected (iCloud vs local). Observable so a later Settings status can
-    /// show where notes live without re-running the availability check.
-    let noteStoreKind: NoteStoreKind
+    /// show where thoughts live without re-running the availability check.
+    let thoughtStoreKind: ThoughtStoreKind
 
-    /// Watches the iCloud notes folder for external edits / synced-in files so the Stream list
+    /// Watches the iCloud thoughts folder for external edits / synced-in files so the Stream list
     /// refreshes. Nil when storage is local (nothing external to watch).
-    let noteObserver: UbiquitousNoteObserving?
+    let thoughtObserver: UbiquitousThoughtObserving?
 
     /// The user's configurable settings: control phrase and spelling overrides. Held so the
     /// Settings screen edits the same instance the processor factory reads. Local (`UserDefaults`)
@@ -32,31 +32,31 @@ struct AppDependencies {
     /// session identically. The root view observes it and opens `DictationView`.
     let sessionRoute: PendingSessionRoute
 
-    /// The ONE headless playback controller for a saved note's recording (spec 0008). Both the phone
-    /// detail view (through `NotePlaybackModel`) and the CarPlay scene drive and observe THIS shared
+    /// The ONE headless playback controller for a saved thought's recording (spec 0008). Both the phone
+    /// detail view (through `ThoughtPlaybackModel`) and the CarPlay scene drive and observe THIS shared
     /// instance, so there is exactly one writer of `MPNowPlayingInfoCenter` and one owner of the
     /// remote transport commands. Hoisted here (rather than per-surface) so that once the CarPlay
     /// entitlement ships, the two surfaces cannot race on the media center or clobber each other's
     /// transport observation - the observation is multi-observer safe on the controller itself.
     /// `@MainActor` because the controller is main-actor.
-    let playbackController: NotePlaybackController
+    let playbackController: ThoughtPlaybackController
 
     /// `@MainActor` because the session route is a main-actor `ObservableObject`; the composition
     /// root is built on the main actor at launch (see `resolve`), so this is not a constraint in
     /// practice.
     @MainActor
     init(
-        noteStore: NoteStoring = NoteStore(),
-        noteStoreKind: NoteStoreKind = .local,
-        noteObserver: UbiquitousNoteObserving? = nil,
+        thoughtStore: ThoughtStoring = ThoughtStore(),
+        thoughtStoreKind: ThoughtStoreKind = .local,
+        thoughtObserver: UbiquitousThoughtObserving? = nil,
         settingsStore: SettingsStoring = UserDefaultsSettingsStore(),
         makeTextProcessor: (() -> TextProcessor)? = nil,
         sessionRoute: PendingSessionRoute? = nil,
-        playbackController: NotePlaybackController? = nil
+        playbackController: ThoughtPlaybackController? = nil
     ) {
-        self.noteStore = noteStore
-        self.noteStoreKind = noteStoreKind
-        self.noteObserver = noteObserver
+        self.thoughtStore = thoughtStore
+        self.thoughtStoreKind = thoughtStoreKind
+        self.thoughtObserver = thoughtObserver
         self.settingsStore = settingsStore
         // Default factory reads current settings each call and builds a fresh composite, so an edit
         // in Settings applies to the next session. Injectable for tests that want a fixed processor.
@@ -82,8 +82,8 @@ struct AppDependencies {
         // The single shared controller, resolving recordings through the same store and reading the
         // current lock-screen-title preference at publish time (a Settings toggle applies next
         // update). Built here on the main actor for the same reason as the route.
-        self.playbackController = playbackController ?? NotePlaybackController(
-            resolver: StoreAudioURLResolver(store: noteStore),
+        self.playbackController = playbackController ?? ThoughtPlaybackController(
+            resolver: StoreAudioURLResolver(store: thoughtStore),
             lockScreenTitle: { settingsStore.lockScreenTitle }
         )
     }
@@ -117,13 +117,13 @@ struct AppDependencies {
     /// Publishes the result to `shared` so hands-free entry points can reach the session route.
     @MainActor
     static func resolve(
-        factory: NoteStoreFactory = NoteStoreFactory(),
+        factory: ThoughtStoreFactory = ThoughtStoreFactory(),
         settingsStore: SettingsStoring = UserDefaultsSettingsStore()
     ) async -> AppDependencies {
         let selection = await factory.make()
         // Sweep expired recordings once at launch, off the main actor (the store read/delete can
         // block on coordinated iCloud IO). A no-op unless retention is auto-delete. The text of a
-        // swept note is untouched; only its recording goes.
+        // swept thought is untouched; only its recording goes.
         let retention = settingsStore.audioRetention
         if retention.autoDeleteDays != nil {
             let sweeper = AudioRetentionSweeper(store: selection.store)
@@ -133,9 +133,9 @@ struct AppDependencies {
         // from `settingsStore` each session, so control-phrase and override edits take effect next
         // session.
         let dependencies = AppDependencies(
-            noteStore: selection.store,
-            noteStoreKind: selection.kind,
-            noteObserver: selection.observer,
+            thoughtStore: selection.store,
+            thoughtStoreKind: selection.kind,
+            thoughtObserver: selection.observer,
             settingsStore: settingsStore
         )
         shared = dependencies

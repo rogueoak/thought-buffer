@@ -3,16 +3,16 @@ import XCTest
 
 /// The dictation view model's capture-to-save path, exercised without live audio by injecting
 /// finalized text. Proves the flow that the simulator's mic cannot reliably drive: text lands
-/// in the note, stopping saves a `.md` file, and it reloads from the store.
+/// in the thought, stopping saves a `.md` file, and it reloads from the store.
 @MainActor
 final class DictationViewModelTests: XCTestCase {
     private var tempDir: URL!
-    private var store: NoteStore!
+    private var store: ThoughtStore!
 
     override func setUpWithError() throws {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("DictationVMTests-\(UUID().uuidString)", isDirectory: true)
-        store = NoteStore(directory: tempDir)
+        store = ThoughtStore(directory: tempDir)
     }
 
     override func tearDownWithError() throws {
@@ -28,24 +28,24 @@ final class DictationViewModelTests: XCTestCase {
 
         XCTAssertEqual(model.paragraphs.count, 2)
 
-        let note = try XCTUnwrap(try model.finish(), "expected a saved note")
-        XCTAssertEqual(note.paragraphs, [
+        let thought = try XCTUnwrap(try model.finish(), "expected a saved thought")
+        XCTAssertEqual(thought.paragraphs, [
             "Call the supplier before noon.",
             "Then draft the launch email."
         ])
-        XCTAssertEqual(note.title, "Call the supplier before noon")
+        XCTAssertEqual(thought.title, "Call the supplier before noon")
 
-        // The note round-trips through the store, newest first.
+        // The thought round-trips through the store, newest first.
         let reloaded = store.loadAll()
         XCTAssertEqual(reloaded.count, 1)
-        XCTAssertEqual(reloaded.first?.id, note.id)
-        XCTAssertEqual(reloaded.first?.paragraphs, note.paragraphs)
+        XCTAssertEqual(reloaded.first?.id, thought.id)
+        XCTAssertEqual(reloaded.first?.paragraphs, thought.paragraphs)
     }
 
-    func testResumingCustomTitledNotePreservesTitle() throws {
-        // Spec 0009: resuming a note the user titled must keep that title, not re-derive it from the
+    func testResumingCustomTitledThoughtPreservesTitle() throws {
+        // Spec 0009: resuming a thought the user titled must keep that title, not re-derive it from the
         // (now longer) body.
-        let original = Note(
+        let original = Thought(
             title: "My chosen title",
             paragraphs: ["Original body sentence."],
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -59,11 +59,11 @@ final class DictationViewModelTests: XCTestCase {
         XCTAssertEqual(saved.title, "My chosen title", "resume must not re-derive over a user title")
     }
 
-    func testResumingDerivedTitleNoteReDerivesFromFirstSentence() throws {
-        // A non-custom resumed note DERIVES its title from the body, ignoring the stored title. Seed a
+    func testResumingDerivedTitleThoughtReDerivesFromFirstSentence() throws {
+        // A non-custom resumed thought DERIVES its title from the body, ignoring the stored title. Seed a
         // stored title that differs from what the body derives to, so this proves re-derivation rather
         // than passing whether the code re-derives or carries the original title over (tester review).
-        let original = Note(
+        let original = Thought(
             title: "A stale stored title",
             paragraphs: ["The real opening sentence. More detail here."],
             createdAt: Date(timeIntervalSince1970: 1_700_000_000)
@@ -74,13 +74,13 @@ final class DictationViewModelTests: XCTestCase {
         let saved = try XCTUnwrap(try model.finish())
         XCTAssertFalse(saved.hasCustomTitle)
         XCTAssertEqual(saved.title, "The real opening sentence",
-                       "a non-custom note must re-derive, not carry over the stored title")
+                       "a non-custom thought must re-derive, not carry over the stored title")
     }
 
-    func testResumingFolderedNoteReSavesInSameFolder() throws {
-        // Spec 0010: continuing a note that lives in a folder must re-save it in place, not yank it
+    func testResumingFolderedThoughtReSavesInSameFolder() throws {
+        // Spec 0010: continuing a thought that lives in a folder must re-save it in place, not yank it
         // back to the top level.
-        let original = Note(
+        let original = Thought(
             title: "In work",
             paragraphs: ["Original."],
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -92,7 +92,7 @@ final class DictationViewModelTests: XCTestCase {
         model.injectFinalized("Appended.")
         let saved = try XCTUnwrap(try model.finish())
 
-        // The reloaded note is still in Work, with the appended paragraph.
+        // The reloaded thought is still in Work, with the appended paragraph.
         let reloaded = try XCTUnwrap(store.load(id: saved.id))
         XCTAssertEqual(reloaded.folderPath, ["Work"])
         XCTAssertEqual(reloaded.paragraphs, ["Original.", "Appended."])
@@ -133,35 +133,35 @@ final class DictationViewModelTests: XCTestCase {
     // MARK: - Save failure is surfaced, not swallowed
 
     func testFinishThrowsWhenStoreFails() {
-        let failing = ThrowingNoteStore()
+        let failing = ThrowingThoughtStore()
         let model = DictationViewModel(store: failing)
-        model.injectFinalized("A note that cannot be saved.")
+        model.injectFinalized("A thought that cannot be saved.")
 
         XCTAssertThrowsError(try model.finish(), "finish() must propagate store save failures") { error in
-            XCTAssertTrue(error is ThrowingNoteStore.SaveError)
+            XCTAssertTrue(error is ThrowingThoughtStore.SaveError)
         }
     }
 
     func testFinishSucceedsWithWorkingStore() throws {
-        let working = RecordingNoteStore()
+        let working = RecordingThoughtStore()
         let model = DictationViewModel(store: working)
-        model.injectFinalized("A note that saves fine.")
+        model.injectFinalized("A thought that saves fine.")
 
-        let note = try XCTUnwrap(try model.finish())
+        let thought = try XCTUnwrap(try model.finish())
         XCTAssertEqual(working.saved.count, 1)
-        XCTAssertEqual(working.saved.first?.id, note.id)
+        XCTAssertEqual(working.saved.first?.id, thought.id)
     }
 
     // MARK: - Partial-on-stop fold (test hook mirrors injectFinalized)
 
-    func testPartialPresentAtFinishLandsInSavedNote() throws {
+    func testPartialPresentAtFinishLandsInSavedThought() throws {
         let model = DictationViewModel(store: store)
         model.injectFinalized("First finalized paragraph.")
         // A partial phrase is on screen but was never finalized before the user hit Stop.
         model.simulatePartial("A trailing thought mid sentence")
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.paragraphs, [
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.paragraphs, [
             "First finalized paragraph.",
             "A trailing thought mid sentence"
         ])
@@ -174,38 +174,38 @@ final class DictationViewModelTests: XCTestCase {
         model.injectFinalized("keep it quiet")
         model.simulatePartial("and this too")
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.paragraphs, ["KEEP IT QUIET", "AND THIS TOO"])
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.paragraphs, ["KEEP IT QUIET", "AND THIS TOO"])
     }
 }
 
 // MARK: - Test doubles
 
-/// A `NoteStoring` stub whose `save` always throws, to exercise the error path.
-private final class ThrowingNoteStore: NoteStoring {
+/// A `ThoughtStoring` stub whose `save` always throws, to exercise the error path.
+private final class ThrowingThoughtStore: ThoughtStoring {
     struct SaveError: Error {}
 
-    func save(_ note: Note) throws -> URL {
+    func save(_ thought: Thought) throws -> URL {
         throw SaveError()
     }
 
-    func loadAll() -> [Note] { [] }
+    func loadAll() -> [Thought] { [] }
     func delete(id: UUID) throws {}
 }
 
-/// A `NoteStoring` stub that records saves in memory and never fails. `@unchecked Sendable`: it is
-/// only touched from the test's single actor, but `NoteStoring: Sendable` requires the annotation
+/// A `ThoughtStoring` stub that records saves in memory and never fails. `@unchecked Sendable`: it is
+/// only touched from the test's single actor, but `ThoughtStoring: Sendable` requires the annotation
 /// for its mutable buffer.
-private final class RecordingNoteStore: NoteStoring, @unchecked Sendable {
-    private(set) var saved: [Note] = []
+private final class RecordingThoughtStore: ThoughtStoring, @unchecked Sendable {
+    private(set) var saved: [Thought] = []
 
     @discardableResult
-    func save(_ note: Note) throws -> URL {
-        saved.append(note)
+    func save(_ thought: Thought) throws -> URL {
+        saved.append(thought)
         return URL(fileURLWithPath: "/dev/null")
     }
 
-    func loadAll() -> [Note] { saved }
+    func loadAll() -> [Thought] { saved }
     func delete(id: UUID) throws {
         saved.removeAll { $0.id == id }
     }

@@ -1,15 +1,15 @@
 import SwiftUI
 
-/// Live-capture screen. Requests permission, streams on-device speech into a note through
+/// Live-capture screen. Requests permission, streams on-device speech into a thought through
 /// `DictationViewModel`, shows finalized paragraphs plus the in-progress partial with a
 /// blinking caret, and drives the waveform from the real microphone level. Stopping saves the
-/// note and hands it back to the caller.
+/// thought and hands it back to the caller.
 struct DictationView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model: DictationViewModel
 
-    /// Called with the saved note (or nil when nothing was captured) as the screen dismisses.
-    private let onFinish: (Note?) -> Void
+    /// Called with the saved thought (or nil when nothing was captured) as the screen dismisses.
+    private let onFinish: (Thought?) -> Void
 
     /// Sample text injected in preview / screenshot mode so the design renders without a mic.
     private let previewInjection: String?
@@ -21,8 +21,8 @@ struct DictationView: View {
     @State private var caretVisible = true
     private let caretTimer = Timer.publish(every: 0.5, on: .main, in: .common).autoconnect()
 
-    /// Set when saving the note fails, so the screen surfaces an alert instead of reporting the
-    /// note as saved and dismissing.
+    /// Set when saving the thought fails, so the screen surfaces an alert instead of reporting the
+    /// thought as saved and dismissing.
     @State private var showSaveError = false
 
     /// Whether the command cheat-sheet drawer is up (feedback 0008).
@@ -35,13 +35,13 @@ struct DictationView: View {
     @State private var draftTranscript = ""
     @FocusState private var transcriptEditorFocused: Bool
 
-    /// Build the screen from an explicit view model. Callers wire the model (and thus its note
+    /// Build the screen from an explicit view model. Callers wire the model (and thus its thought
     /// store) from the composition root; see `StreamListView`.
     init(
         model: DictationViewModel,
         previewInjection: String? = nil,
         previewCommand: String? = nil,
-        onFinish: @escaping (Note?) -> Void = { _ in }
+        onFinish: @escaping (Thought?) -> Void = { _ in }
     ) {
         _model = StateObject(wrappedValue: model)
         self.previewInjection = previewInjection
@@ -99,10 +99,10 @@ struct DictationView: View {
         .animation(.easeInOut(duration: 0.2), value: model.commandBanner)
         .animation(.easeInOut(duration: 0.2), value: model.commandError)
         .onReceive(caretTimer) { _ in caretVisible.toggle() }
-        .alert("Could not save your note", isPresented: $showSaveError) {
+        .alert("Could not save your thought", isPresented: $showSaveError) {
             Button("OK", role: .cancel) { }
         } message: {
-            Text("Something went wrong writing the note to your device. Your words are still on "
+            Text("Something went wrong writing the thought to your device. Your words are still on "
                 + "screen. Tap Stop to try saving again.")
         }
         .sheet(isPresented: $showCheatSheet) {
@@ -270,7 +270,7 @@ struct DictationView: View {
         .clipShape(Capsule())
     }
 
-    /// The chip shown when a voice command could not complete (e.g. "new note" failed to save), so
+    /// The chip shown when a voice command could not complete (e.g. "new thought" failed to save), so
     /// the user sees the failure instead of a false success. Uses the danger accent.
     private func commandErrorChip(_ error: DictationViewModel.CommandError) -> some View {
         HStack(spacing: CanopySpacing.x2) {
@@ -288,8 +288,8 @@ struct DictationView: View {
 
     private func commandErrorLabel(_ error: DictationViewModel.CommandError) -> String {
         switch error {
-        case .newNoteSaveFailed:
-            return "Could not save - note kept"
+        case .newThoughtSaveFailed:
+            return "Could not save - thought kept"
         }
     }
 
@@ -352,11 +352,11 @@ struct DictationView: View {
     }
 
     private func finish() {
-        // Fold any hand-typed edit into the model before saving so it is included in the note.
+        // Fold any hand-typed edit into the model before saving so it is included in the thought.
         commitTranscriptEdit()
         do {
-            let note = try model.finish()
-            onFinish(note)
+            let thought = try model.finish()
+            onFinish(thought)
             dismiss()
         } catch {
             // Saving failed: keep the screen up with the transcript intact and surface an alert
@@ -474,7 +474,7 @@ struct CommandCheatSheet: View {
                         .font(.system(size: CanopyFont.sizeXl, weight: .bold))
                         .foregroundStyle(CanopyColor.text)
                     Text("Say \"\(controlWord)\" then a command. It runs the action instead of being "
-                        + "written into your note.")
+                        + "written into your thought.")
                         .font(.system(size: CanopyFont.sizeSm))
                         .foregroundStyle(CanopyColor.textMuted)
 
@@ -517,7 +517,7 @@ struct CommandCheatSheet: View {
 
 #Preview {
     DictationView(
-        model: DictationViewModel(store: NoteStore()),
+        model: DictationViewModel(store: ThoughtStore()),
         previewInjection:
             "Remember to call the supplier about the Shea butter order before noon. "
                 + "Then draft the launch email and keep it to three short paragraphs."

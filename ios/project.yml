@@ -25,7 +25,7 @@ targets:
     # iCloud Documents capability is currently DISABLED so the app provisions on a free/personal
     # Apple Developer team (personal teams cannot use the iCloud capability). The storage layer
     # falls back to local storage automatically when no iCloud container resolves, so the app is
-    # fully functional without it - notes are stored on device. To re-enable iCloud sync on a PAID
+    # fully functional without it - thoughts are stored on device. To re-enable iCloud sync on a PAID
     # Apple Developer account, restore the `entitlements:` block and the `NSUbiquitousContainers`
     # Info.plist entry below - the exact blocks are in docs/icloud-capability.md.
     # An explicit Info.plist (not the generated one) because NSUbiquitousContainers is a nested
@@ -36,7 +36,7 @@ targets:
       properties:
         CFBundleDisplayName: Thought Stream
         UILaunchScreen: {}
-        # Background audio (spec 0008): a note played on the phone keeps playing when the screen locks
+        # Background audio (spec 0008): a thought played on the phone keeps playing when the screen locks
         # or the app backgrounds, and shows on the lock screen / Control Center via the shared playback
         # controller's `MPNowPlayingInfoCenter` wiring. This is a real Audio-app trait and needs NO
         # entitlement, so the unsigned Simulator build and the App Store build stay green. It also
@@ -56,8 +56,8 @@ targets:
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-        NSMicrophoneUsageDescription: "Thought Stream uses the microphone to hear you and turn your words into notes. Audio stays on your device."
-        NSSpeechRecognitionUsageDescription: "Thought Stream turns your speech into notes on device. Nothing you say leaves your phone."
+        NSMicrophoneUsageDescription: "Thought Stream uses the microphone to hear you and turn your words into thoughts. Audio stays on your device."
+        NSSpeechRecognitionUsageDescription: "Thought Stream turns your speech into thoughts on device. Nothing you say leaves your phone."
         # NSUbiquitousContainers (Files-app visibility for the iCloud folder) is omitted while the
         # iCloud capability is disabled for personal-team builds. Restore it when re-enabling iCloud
         # on a paid account - see docs/icloud-capability.md.

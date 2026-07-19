@@ -7,14 +7,14 @@ import SwiftUI
 /// Two configurable features and a read-only status:
 /// - the assistant control phrase (validated; empty falls back to "Mira"),
 /// - an ordered list of spelling overrides (add / edit / delete), and
-/// - where notes are stored (iCloud vs on this device), read-only.
+/// - where thoughts are stored (iCloud vs on this device), read-only.
 ///
 /// Changes take effect on the NEXT dictation session, since the processor is built per session.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     private let settings: SettingsStoring
-    private let storeKind: NoteStoreKind
+    private let storeKind: ThoughtStoreKind
 
     /// Local editing copies. Written back to the store on change so persistence is immediate and
     /// SwiftUI drives the fields without fighting the protocol's plain properties.
@@ -27,14 +27,14 @@ struct SettingsView: View {
     /// mode is not auto-delete, so toggling back restores the last window instead of resetting).
     @State private var retentionMode: RetentionMode
     @State private var autoDeleteDays: Int
-    /// The chosen lock-screen title mode (note title vs a fixed generic label).
+    /// The chosen lock-screen title mode (thought title vs a fixed generic label).
     @State private var lockScreenTitle: LockScreenTitle
     /// Whether transcript refinement is on (spec 0016): filler removal live, reflow on edit-save.
     @State private var refineTranscript: Bool
     /// Whether dead-air removal is on (spec 0019): trim long pauses from a new recording on save.
     @State private var trimSilence: Bool
 
-    init(settings: SettingsStoring, storeKind: NoteStoreKind = .local) {
+    init(settings: SettingsStoring, storeKind: ThoughtStoreKind = .local) {
         self.settings = settings
         self.storeKind = storeKind
         _controlPhrase = State(initialValue: settings.controlPhrase)
@@ -101,7 +101,7 @@ struct SettingsView: View {
                 .foregroundStyle(CanopyColor.textMuted)
         } footer: {
             VStack(alignment: .leading, spacing: CanopySpacing.x1) {
-                Text("Say this word before a command, like \"\(effectiveControlPhrase) new note\".")
+                Text("Say this word before a command, like \"\(effectiveControlPhrase) new thought\".")
                 Text("Leave it blank to use \"\(ControlPhrase.defaultWord)\". Changes apply to your next session.")
             }
             .font(.system(size: CanopyFont.sizeXs))
@@ -288,7 +288,7 @@ struct SettingsView: View {
             Text("Voice recordings")
                 .foregroundStyle(CanopyColor.textMuted)
         } footer: {
-            Text("Keep the audio of each note (default), record the transcript only, or delete "
+            Text("Keep the audio of each thought (default), record the transcript only, or delete "
                 + "recordings automatically after a while. Audio stays on your device (or your "
                 + "iCloud, if enabled) and is never uploaded to us.")
                 .font(.system(size: CanopyFont.sizeXs))
@@ -334,7 +334,7 @@ struct SettingsView: View {
     /// A pickable label for each lock-screen title mode.
     private func lockScreenLabel(_ mode: LockScreenTitle) -> String {
         switch mode {
-        case .noteTitle: return "Note title"
+        case .noteTitle: return "Thought title"
         case .generic: return "Generic label"
         }
     }
@@ -353,7 +353,7 @@ struct SettingsView: View {
             Text("Lock screen")
                 .foregroundStyle(CanopyColor.textMuted)
         } footer: {
-            Text("Show the note's title while it plays on the lock screen, Control Center, and "
+            Text("Show the thought's title while it plays on the lock screen, Control Center, and "
                 + "CarPlay, or hide it behind \"\(LockScreenTitle.genericTitle)\" so a sensitive "
                 + "first line stays private.")
                 .font(.system(size: CanopyFont.sizeXs))
@@ -368,7 +368,7 @@ struct SettingsView: View {
             LabeledContent("Location", value: storageLabel)
             // Driven from the store's own format constant rather than a bare literal, so the row
             // stays truthful if the on-disk format ever changes.
-            LabeledContent("Format", value: NoteStore.storageFormatLabel)
+            LabeledContent("Format", value: ThoughtStore.storageFormatLabel)
         } header: {
             Text("Storage")
                 .foregroundStyle(CanopyColor.textMuted)
