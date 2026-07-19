@@ -711,3 +711,37 @@ contextual search that supersedes spec 0021's "the detail search field routes to
   mapping are the pure, unit-tested `ThoughtFind` + `ThoughtFindNavigator` - the per-thought counterpart to
   `ThoughtSearch`. The AttributedString highlight rendering and the actual scroll-into-view are
   device-verifiable.
+
+## Folder model redesign - top-level folders + All/Recents (spec 0026)
+
+The Thoughts home is now FOLDERS ONLY, one level deep, with two pinned virtual folders at the top. This
+supersedes spec 0010's nested folders + interleaved folders-and-thoughts and the feedback 0016/0020/0024
+fixed below-the-toolbar title placement.
+
+- **Top level = folders only.** The home screen lists two pinned ALIAS folders - **All Thoughts** and
+  **Recents** - then the user's folders. No loose thoughts and no folders-and-thoughts interleaving at the
+  top level. There is one level of nesting: a folder opens a flat list of its thoughts, and new sub-folders
+  cannot be created (the new-folder button and move-to-folder target the top level).
+- **Virtual alias folders.** All Thoughts and Recents are pure PROJECTIONS over the loaded thoughts, not
+  real directories: **All Thoughts** opens every thought (any folder + uncategorized) flat, honoring the
+  sort order; **Recents** opens the 10 most recent thoughts by created time, newest first (independent of
+  the chosen sort). They cannot be renamed or deleted.
+- **Uncategorized thoughts.** A thought not in any user folder (an `.md` at the store root) is
+  uncategorized: it appears in All Thoughts and Recents, in no user folder.
+- **New thought placement.** Creating a thought while INSIDE a user folder files it in that folder
+  (contextual, as feedback 0021 established); creating one from the top level, All Thoughts, or Recents
+  leaves it uncategorized - "it just goes under recents / all". The record and new-thought actions carry
+  the placement; hands-free Siri/CarPlay starts stay uncategorized.
+- **Legacy data still surfaces.** A thought that lived in an old nested folder is shown FLATTENED under its
+  top-level folder (its folder name is the first path component), so no thought is hidden by the redesign.
+  Storage is unchanged - thoughts stay `<id>.md`, folders stay directories, the root holds uncategorized
+  thoughts - so existing thoughts and folders load exactly as before.
+- **Title scrolls with the list; tighter rows.** Each screen's title ("Thoughts" at the top level; the
+  folder name / "All Thoughts" / "Recents" inside) is now the FIRST row of the scrollable list and scrolls
+  away, instead of a fixed title pinned below the toolbar. Rows are tighter (reduced inter-row padding) so
+  the list reads as a compact, dense list while staying legible and tappable. The search-field
+  focus-stability fix (feedback 0024) is preserved.
+- **Pure, tested core.** The alias projections (`allThoughts(sorted:)`, `recents(limit: 10)`), a user
+  folder's flattened thoughts, the uncategorized filter, and the new-thought placement decision are the
+  pure, unit-tested `TopLevelFolders` + `NewThoughtPlacement`. The list layout, the title-in-list, and the
+  tighter rows are device-verifiable.

@@ -378,6 +378,20 @@ How the system is built and why.
     comparator - no second copy of the ordering. `FolderMoveTargets` is a second pure builder: driven by a
     `children` closure (`store.folders(at:)`), it flattens the tree pre-order with depth for the
     move-to-folder picker, so an empty folder (never in any thought's `folderPath`) is still offered.
+  - **Folder model redesign - top-level folders + aliases (spec 0026).** The top level is FOLDERS ONLY, one
+    level deep, so `FolderListModel`'s interleaved folders-and-thoughts projection is SUPERSEDED for the
+    top-level and folder screens by the pure, UI-free `TopLevelFolders` (`FolderListModel` itself is kept
+    only for its existing tests). `TopLevelFolders` holds the alias projections `allThoughts(_:sorted:)` (every
+    thought flat, honoring sort) and `recents(_:limit:)` (the 10 most recent by `createdAt`, newest first,
+    independent of the chosen sort, deterministic on ties via the id tie-break), plus `folderThoughts(_:folder:sorted:)`
+    - a user folder's thoughts FLATTENED over any legacy nested subtree (a thought whose `folderPath.first`
+    equals the folder name, so old nesting still surfaces) - `uncategorized(_:sorted:)` (thoughts with an
+    empty `folderPath`), and the count/label/name helpers. The two virtual aliases are the `AliasFolder` enum
+    (`.allThoughts`, `.recents`); they are pure projections, never real dirs, and cannot be renamed/deleted.
+    `NewThoughtPlacement.folderPath(browsingFolder:)` is the pure placement decision: inside a user folder ->
+    that folder, from the top level / an alias -> uncategorized (`[]`). Storage is unchanged; `createFolder`
+    and move-to-folder target the top level only, and deeper legacy dirs keep loading (their thoughts surface
+    flattened). Both seams are unit-tested (`TopLevelFoldersTests`, `NewThoughtPlacementTests`).
   - **Shared playback + CarPlay browser (spec 0008).** `ThoughtPlaybackController` (`@MainActor
     ObservableObject`) is the ONE audio path: it owns an `AudioThoughtPlayer`, an `AudioURLResolving`
     (lazy off-main resolution at play time, as 0007's model did), and the Now Playing / remote-command
@@ -495,7 +509,24 @@ How the system is built and why.
   `Thought.editedCopy` so the title, recording, timings, and folder are preserved, and returns the thought
   unchanged when off or when nothing merges. That pure gate is the SINGLE enforcement of "reflow on
   edit-save when refine is on, never on load" - no load path calls it, so an untouched loaded thought is
-  never silently rewritten (unit-tested off/on/no-op). `SettingsView` edits the injected
+  never silently rewritten (unit-tested off/on/no-op).
+  - **Folder model redesign (spec 0026).** The interleaving `FolderContentsView` is RETIRED and replaced by
+    two screens over the pure `TopLevelFolders`: `TopLevelFoldersView` (the FOLDERS-ONLY top level - the two
+    `AliasFolder` rows then the user folders, owning the new-folder / rename / delete dialogs and the
+    top-level sort menu) and `FolderThoughtsView` (a FLAT thought list for a user folder or an alias). The
+    `StreamRoute` enum gains `.alias(AliasFolder)` and `.folder([String])` is now a one-level user folder;
+    the compact stack roots at `TopLevelFoldersView` and pushes `FolderThoughtsView` for a `.folder`/`.alias`,
+    and the split view puts `TopLevelFoldersView` in the sidebar and the selected subject's `FolderThoughtsView`
+    in the content column (a `FolderThoughtsView.Subject` = user folder or alias). The screen TITLE is now the
+    FIRST scrollable list row (`StreamListTitleRow`, same Canopy H3 size + bold as the old fixed title) and
+    scrolls away, superseding feedback 0016/0020/0024's fixed below-the-toolbar `.streamListTitle` (retained
+    but no longer applied to these screens). Rows use the tighter `tightRowInsets()` (vertical inset dropped
+    from `x1_5` to `x0_5`) for a dense list, keeping the card's own padding for tap targets. The feedback-0024
+    search-field-focus fix is preserved (the bottom `StreamBottomStack` hangs off the STABLE outer node; only
+    the content switches on state). Shared chrome (`FolderDialog`, `FolderEmptyStateCTA`, `FolderErrorBanner`,
+    `NoSearchMatchesState`, `tightRowInsets`) lives in `FolderScreenChrome`. Global search stays the same
+    `StreamSearchProjection`/`FolderScreenState` seam (it reaches every thought, folder or uncategorized).
+  `SettingsView` edits the injected
   `SettingsStoring` instance directly (control-phrase field with validation hint, a command-aliases
   editable list below it - spec 0018: an add field + plus button gated by the same
   `ControlPhrase.validatedAlias` rule the store uses, so an empty/multi-word/duplicate/primary-colliding
