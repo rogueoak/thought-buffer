@@ -44,6 +44,12 @@ only ever touches committed dictation text (never the command portion).
   filler was removed.
 - If removing fillers would empty a segment, the segment is dropped (no empty
   paragraph).
+- INTERACTION WITH FLOW GROUPING (feedback 0012): the paragraph grouper advances
+  its gap anchor ONLY on segments that commit dictation text. A filler-only segment
+  that this processor reduces to empty is dropped and MUST NOT advance the grouper
+  anchor or create a paragraph - preserve that ordering (process first, then group
+  on the committable result). Do not move filler removal ahead of the grouper in a
+  way that lets a dropped segment shift paragraph boundaries.
 - Risky words that are often meaningful ("like", "so", "you know", "yeah",
   "right") are NOT in the default set. Rationale documented inline: false
   positives silently change meaning, which is worse than leaving a filler in. A

@@ -12,6 +12,32 @@ struct ParagraphTiming: Hashable {
         self.start = start
         self.duration = duration
     }
+
+    /// The timing for a paragraph formed by MERGING an incoming segment's range into an existing one
+    /// (feedback 0012 pause-based grouping). Pure so the four cases are unit-testable without the view
+    /// model, and so an append never silently degrades a real range to text-only:
+    ///
+    /// - both nil -> nil (a text-only merged paragraph, plays back via text-to-speech).
+    /// - existing nil, incoming non-nil -> ADOPT the incoming range. This is the case the first
+    ///   implementation dropped: a paragraph that began text-only but gained a real recorded tail must
+    ///   keep that tail's range, not stay text-only.
+    /// - existing non-nil, incoming nil -> keep the existing range unchanged (the appended tail carries
+    ///   no timing; the paragraph still plays its existing portion and TTS covers the rest).
+    /// - both non-nil -> one contiguous range spanning `existing.start` through the incoming end, so the
+    ///   merged paragraph seeks correctly.
+    static func merged(_ existing: ParagraphTiming?, _ incoming: ParagraphTiming?) -> ParagraphTiming? {
+        switch (existing, incoming) {
+        case (nil, nil):
+            return nil
+        case (nil, let incoming?):
+            return incoming
+        case (let existing?, nil):
+            return existing
+        case (let existing?, let incoming?):
+            let end = incoming.start + incoming.duration
+            return ParagraphTiming(start: existing.start, duration: end - existing.start)
+        }
+    }
 }
 
 /// A single captured note: a title plus an ordered list of paragraphs.
