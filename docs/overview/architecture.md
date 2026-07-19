@@ -141,7 +141,10 @@ How the system is built and why.
   `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST control word found anywhere),
   `MiraTextProcessor` (the `TextProcessor` that splits at commands), `SentenceTokenizer`
   (`NLTokenizer`-backed, for "remove the last sentence"), and `Speaker`/`SystemSpeaker`
-  (`AVSpeechSynthesizer` text to speech for "read that back").
+  (`AVSpeechSynthesizer` text to speech for "read that back"). `SystemSpeaker` sets each utterance's
+  voice to the best installed one for the user's language (spec 0014) via the pure `VoiceSelector`
+  (`bestVoiceIdentifier(from:languageCode:)`, premium > enhanced > default, exact-region preferred,
+  nil -> system default), resolved once from `AVSpeechSynthesisVoice.speechVoices()`.
   - **Dual capture (spec 0007).** The single input tap tees each buffer to THREE sinks: the analyzer
     (converted to its format), the waveform level, and - when recording is armed via
     `setRecordingEnabled(true)` before `start()` - a `RecordingWriter`. The writer is an off-main,

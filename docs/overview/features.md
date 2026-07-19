@@ -380,6 +380,16 @@ that began as text.
 - **Just a normal note.** A keyboard note is an ordinary `Note` on disk (no storage or format change),
   so it works with folders, sort, editing, and delete exactly like any other note.
 
+## Natural text-to-speech voice (spec 0014)
+
+Spoken text - Mira "read that back", and playback of text-only or resumed passages that have no
+recording - now uses the best voice the user has installed for their language (premium, else enhanced,
+else the system default), instead of always the robotic default. On a device with a modern voice
+installed it sounds close to Siri; on one with only the compact voice it behaves exactly as before.
+It stays on-device (`AVSpeechSynthesizer`), and enhanced/premium voices are a one-time user download
+(Settings > Accessibility > Spoken Content > Voices). The literal Siri voice is Apple-private and not
+available. The selection order lives in the pure, unit-tested `VoiceSelector`.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires
