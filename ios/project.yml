@@ -6,6 +6,11 @@ options:
     iOS: "26.0"
   developmentLanguage: en
   createIntermediateGroups: true
+  # Stamp the project's LastUpgradeCheck to Xcode 26 so the IDE stops flagging "Update to recommended
+  # settings" against a stale marker. The recommended build settings themselves (modern CLANG_WARN_*
+  # set and ENABLE_USER_SCRIPT_SANDBOXING) are already emitted; only the version marker was stale. This
+  # touches no signing or deployment-target setting.
+  xcodeVersion: "2600"
 
 settings:
   base:

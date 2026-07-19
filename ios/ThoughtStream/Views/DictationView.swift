@@ -218,13 +218,10 @@ struct DictationView: View {
                 let paragraphs = model.displayParagraphs
                 ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
                     if index == paragraphs.count - 1 {
-                        // The last paragraph carries the live caret.
-                        (
-                            Text(paragraph + " ")
-                                .foregroundColor(CanopyColor.text)
-                                + Text("|")
-                                .foregroundColor(caretVisible ? CanopyColor.primary : .clear)
-                        )
+                        // The last paragraph carries the live caret. Compose the body text and caret as
+                        // interpolated Text values (iOS 26 deprecates the Text `+` operator) so the caret
+                        // keeps its own color while sharing the paragraph's font and layout.
+                        Text("\(Text(paragraph + " ").foregroundColor(CanopyColor.text))\(Text("|").foregroundColor(caretVisible ? CanopyColor.primary : .clear))")
                         .font(.system(size: CanopyFont.sizeLg))
                         .lineSpacing(4)
                         .frame(maxWidth: .infinity, alignment: .leading)

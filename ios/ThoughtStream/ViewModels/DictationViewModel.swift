@@ -409,10 +409,13 @@ final class DictationViewModel: ObservableObject {
             let remappedThought = current.withTimings(
                 TimingRemapper.remap(timings: current.timings, removedRanges: removedRanges)
             )
-            try? store.save(remappedThought)
+            // Discard the saved URL: this is a background re-save, the reload triggered below reflects it.
+            _ = try? store.save(remappedThought)
 
             // Hop back to the main actor so the host reloads and drops the stale in-memory thought.
-            await MainActor.run { self?.onTrimmed?() }
+            // Capture `self` explicitly (not the outer `weak var self`) so the concurrently-executing
+            // `MainActor.run` closure does not reference the captured `var self` (a Swift 6 error).
+            await MainActor.run { [weak self] in self?.onTrimmed?() }
         }
     }
 

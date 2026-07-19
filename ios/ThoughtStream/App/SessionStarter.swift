@@ -8,7 +8,7 @@ import Foundation
 /// "Start a session" means "route to a fresh `DictationView`", which begins capture in its `.task`.
 /// One method, one meaning, so all three entry points start a session identically.
 @MainActor
-protocol SessionStarter: AnyObject {
+protocol SessionStarter: AnyObject, Sendable {
     /// Request that the app open a fresh dictation session and begin capturing. Idempotent: a
     /// second request before the first is consumed collapses into one pending start.
     func startNewSession()

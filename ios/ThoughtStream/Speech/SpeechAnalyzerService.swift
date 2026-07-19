@@ -200,10 +200,12 @@ final class SpeechAnalyzerService: SpeechCaptureService {
             let resultsTask = Task { [weak self] in
                 do {
                     for try await result in transcriber.results {
-                        await self?.handle(result: result)
+                        // No `await` on these calls: this `Task` inherits `beginAnalysis`'s `@MainActor`
+                        // isolation, so `handle`/`handleResultsFailure` are same-actor, hop-free calls.
+                        self?.handle(result: result)
                     }
                 } catch {
-                    await self?.handleResultsFailure(error)
+                    self?.handleResultsFailure(error)
                 }
             }
             // Everything from here to `audioEngine.start()` runs with no suspension point, so a stop
