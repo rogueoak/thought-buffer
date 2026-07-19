@@ -663,6 +663,61 @@ Renaming notes -> thoughts made `NewThoughtIntent`'s "New thought in <app>" phra
 
 In-thought find highlights the ranges where a query matches, so each match's range must index the ORIGINAL rendered text. The global `ThoughtSearch` folds a whole string at once (`.folding(options: [.caseInsensitive, .diacriticInsensitive])`) and only asks a yes/no `contains` - it never needs a position back. Reusing that folding for RANGES is a trap: `String.folding` is not guaranteed length-preserving (a ligature or some scripts fold to a different character count), so a match found in the folded string maps to the WRONG offset in the original, and the highlight lands off the matched word. The fix keeps the SAME folding options (so the two search seams agree on what "matches") but applies them PER CHARACTER, carrying each folded character alongside its original `String.Index`: a run of N consecutive folded characters then maps straight back to a range of the original, because each folded character keeps a 1:1 tie to its source `Character`. A folded character can be EMPTY (a lone combining mark folds away) - it cannot start or belong to a match, so skip empties when comparing but still let the scan advance past them. Two supports made it provable without UI: the whole locator (`ThoughtFind.matches`) is pure and returns `Range<String.Index>` values, and a test asserts the highlighted substring equals the ORIGINAL accented text ("cafe" query -> the range covers "caf\u{00E9}", accent included), which is exactly what a whole-string fold would get wrong. Generalizes to any "find, then act on the location in the source" over normalized text (highlight, replace, annotate, link): normalize on a PER-ELEMENT basis so the normalized position maps back, and never take a range from a whole-string transform whose length you did not prove invariant - the yes/no `contains` seam and the give-me-the-range seam are different contracts even when they share the same normalization.
 
+## A resume over a continuous artifact must CONTINUE it, not restart or append beside it (feedback 0022)
+
+Resuming a recorded thought appended TEXT but not AUDIO: the newly spoken words became paragraphs while
+the thought kept exactly its original `.m4a`. The root was a simplification from feedback 0008 ("a
+resumed session records no new audio") baked into two places - the cover forced `recordsAudio` false for
+any thought that already had audio, and the view model had no path to record a new segment and join it
+onto the existing recording (its save would have OVERWRITTEN the original with just the new segment).
+The fix RECORDS a new segment and CONCATENATES it onto the existing recording as one continuous file,
+offsetting the new paragraphs' timings past the original so playback seeks correctly across the seam.
+Three shape choices made it safe and provable, and each generalizes. First, the timeline math is a pure,
+count-preserving function (`RecordingTiming.offsetResumedTimings`): the new segment's analysis clock
+starts at ~0, so its paragraphs must shift right by the ORIGINAL recording's measured duration while the
+pre-existing paragraphs stay put - and a zero-length text-only placeholder is left untouched, because
+shifting a non-position fabricates one. Second, the join reused the EXACT safety envelope spec 0019's
+dead-air trim already established for a non-reversible audio rewrite: a thin AVFoundation seam
+(`AudioConcatenating`) produces and VERIFIES a protected temp without touching either input, the caller
+swaps it in only through the store's COORDINATED `replaceAudio` (never a bare replace that races iCloud's
+sync daemon), the work runs OFF-main in a detached task so `finish()` returns immediately, and the thought
+is re-read fresh and confirmed to still exist before any swap (a soft-delete during the join must not
+orphan a raw-voice copy). Third - and the load-bearing one - the SYNCHRONOUS result of `finish()` IS the
+safe fallback (original recording kept, new paragraphs text-only, exactly the pre-0022 behavior), so the
+concatenation is a background UPGRADE, not a precondition: every failure path (unreadable input, EMPTY new
+segment that must not corrupt the original, incompatible format, verify failure, a delete that races the
+swap) simply leaves that fallback standing, and the original is never lost. A subtle correctness trap fell
+out of the two-phase design: the fallback save must ZERO the new paragraphs' timings (they are relative to
+a new segment NOT in the saved recording, so pointing them into the original would seek to the wrong
+audio), while the background success path must offset the REAL committed ranges - so the two phases need
+DIFFERENT timings for the same paragraphs, and the real ranges have to be captured before the fallback
+zeroes them. And the trim interaction: the original was already trimmed on its first save, so only the NEW
+segment is trimmed before the join - never re-trim an artifact you already processed. Generalizes to any
+"resume / continue" over a continuous, non-reversible artifact (a recording, an append-only log, a
+streamed export): CONTINUE the one artifact by joining onto it through the coordinated seam, re-anchor any
+positions onto the combined timeline with pure math, make the safe no-op the synchronous result and the
+join a background upgrade, and process only the new part, never the part already finalized. Two corollaries
+the PR review surfaced. First: when the new part is itself RE-PROCESSED before the join (the new segment is
+trimmed for silence), re-anchor its positions onto the PROCESSED timeline FIRST, then onto the combined one
+- a single offset over an un-remapped timeline double-counts, so it is remap-then-offset, composing the two
+pure transforms in order, never one lump offset. Second: a POSITIONAL split over a MUTABLE list (here the
+new-vs-existing paragraph boundary, a count) must be MAINTAINED as the list shifts, not frozen at capture:
+an end-delete (a "remove last paragraph" command, a keyboard edit) that eats into the pre-existing region
+silently reclassifies a later new item as pre-existing unless the boundary is clamped to the live count on
+every mutation. Both are the same trap - a value captured once that the rest of the flow then invalidates -
+which is exactly the shape that hid in the happy path and only bit the trimmed / edited-mid-resume cases.
+A third corollary, from the independent security panel: a deferred background task that persists a
+user-deletable record must re-confirm the record still EXISTS before EVERY write to it, not just the first.
+The task guarded the audio swap (a fresh re-read plus the store's absent-slot refusal), but a soft-delete
+(spec 0020 trash) landing in the LATER window - after the swap, before the final metadata save - was undone
+by that save, which found no live file and wrote a fresh one at root, RESURRECTING the just-deleted text.
+A destructive concurrent action (delete/move) can land in ANY gap between a deferred task's steps, so each
+step that writes must re-check the precondition; guarding only the first write leaves every subsequent write
+a resurrection hole. Feedback 0017 had already hardened this task's pre-swap window, but the same task's
+post-swap save was unguarded - and the sibling dead-air-trim task (spec 0019) had the identical hole, fixed
+in the same pass. Generalizes to any fire-and-forget task that re-persists a record a user can delete
+underneath it: gate every write on a fresh existence check, and treat a "gone" result as skip-silently, not
+as create.
 ## Host a focused field on a STABLE node, above the content that switches on state (feedback 0024)
 
 The bottom-bar search `TextField` lost focus after the first character: typing one letter flipped the resolved `FolderScreenState` from `.normal` to `.searchResults`, which swapped one `List` for another inside a `Group { switch state }`. The bar was pinned to that SAME switching node via `.safeAreaInset(edge: .bottom)`, so the state flip tore down and rebuilt the modified subtree - including the inset that hosts the field - and the field resigned first responder, dropping the keyboard. The trap is that `.safeAreaInset` (and `.overlay`, `.background`, and other content-carrying modifiers) attach their content to the node they modify, so a modifier hosting a focused/stateful view must NOT sit on a node whose body structurally switches. The fix factored the state-driven `switch` into ONE inner view with a pinned identity (`.id`), and moved the bottom-bar inset (and the banners/toolbar/alerts) to the STABLE outer node above it - so only the inner content swaps on a state change and the field is one persistent instance across the empty->results transition. A supporting invariant kept the field from unmounting for a different reason: `FolderScreenState.showsSearchField` stays true across `.normal` -> `.searchResults` -> `.noMatches` (false only in the empty store), pinned by a unit test, and the `TextField` itself has no `if` wrapping it (only the clear button appears/disappears, which does not change the field's identity). Generalizes to any SwiftUI view that keeps first-responder or `@FocusState` (a search field, an inline editor, a chat composer) living alongside content that switches on state: host the stateful view on a node whose identity does NOT change with that state - lift it above the switch (or give the switching content its own pinned `.id` so the swap is contained) - because a modifier's content is rebuilt when its host node's body structurally changes, and a rebuilt text field silently loses focus.

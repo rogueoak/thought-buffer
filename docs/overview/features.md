@@ -254,8 +254,12 @@ Fixes and refinements from a round of on-device testing:
 - **Keyboard editing** - the saved-thought page has an Edit/Done toggle to correct text with the
   keyboard; the record screen offers Edit while paused.
 - **Resume a thought** - a saved thought's page offers Resume, reopening it into a dictation session that
-  continues the same thought. Appended text is added; the original recording is preserved (the resumed
-  portion is text-only on playback).
+  continues the same thought. Appended text is added. Resume now CONTINUES the AUDIO too (feedback 0022,
+  superseding feedback 0008's text-only append): when audio retention is on, the new segment is recorded
+  and concatenated onto the thought's existing recording as one file, with the new paragraphs' timings
+  offset past the original so playback seeks correctly across the seam. On any concatenation failure the
+  original recording is kept and the new paragraphs stay text-only (no data loss); a text-only thought
+  resuming records a fresh recording (spec 0013), and retention OFF stays a text-only append.
 - **Find recordings on the phone** - a waveform toggle in the Thoughts toolbar filters the list to
   thoughts that have a kept recording (previously browsable only on CarPlay).
 - **Debug panel removed** - the on-record DEBUG diagnostic scaffolding is gone now that capture is

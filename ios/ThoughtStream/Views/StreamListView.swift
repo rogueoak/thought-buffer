@@ -172,13 +172,22 @@ struct StreamListView: View {
         settingsStore.trimSilence ? AudioTrimmer() : nil
     }
 
-    /// Build a dictation view model for this session and wire its `onTrimmed` callback to reload the
-    /// feed (spec 0019): a background dead-air trim re-saves the thought's remapped timings off-main, so
-    /// after it lands the feed must reload to drop the stale (un-remapped) in-memory thought - otherwise
-    /// playing the just-saved thought would seek against timings that no longer match the shorter audio.
+    /// The concatenator for a resumed thought that already has audio (feedback 0022), or nil otherwise.
+    /// When the resumed thought has a recording AND the retention policy records audio, resuming captures a
+    /// NEW segment that must be JOINED onto the existing recording; a fresh session or a resume onto a
+    /// text-only thought needs none (there is nothing to join onto - the new audio is adopted fresh).
+    private func makeAudioConcatenator(for thought: Thought) -> AudioConcatenating? {
+        (thought.hasAudio && settingsStore.audioRetention.recordsAudio) ? AudioConcatenator() : nil
+    }
+
+    /// Build a dictation view model for this session and wire its `onBackgroundAudioResave` callback to reload the
+    /// feed (spec 0019/0022): a background dead-air trim OR a resume concatenation re-saves the thought's
+    /// timings + audio off-main, so after it lands the feed must reload to drop the stale in-memory thought
+    /// - otherwise playing the just-saved thought would seek against timings that no longer match the audio.
     private func makeDictationModel(
         recordsAudio: Bool,
         audioTrimmer: AudioTrimming?,
+        audioConcatenator: AudioConcatenating? = nil,
         folderPath: [String] = [],
         resuming: Thought? = nil
     ) -> DictationViewModel {
@@ -187,10 +196,11 @@ struct StreamListView: View {
             processor: makeTextProcessor(),
             recordsAudio: recordsAudio,
             audioTrimmer: audioTrimmer,
+            audioConcatenator: audioConcatenator,
             folderPath: folderPath,
             resuming: resuming
         )
-        model.onTrimmed = { Task { await feed.reload() } }
+        model.onBackgroundAudioResave = { Task { await feed.reload() } }
         return model
     }
 
@@ -235,14 +245,19 @@ struct StreamListView: View {
         .fullScreenCover(item: $resumeThought) { thought in
             DictationView(
                 model: makeDictationModel(
-                    // A thought with NO recording captures real audio when the user records into it
-                    // (spec 0013), subject to the transcript-only retention setting; a thought that
-                    // already has audio stays text-only append so its original recording is intact.
-                    recordsAudio: !thought.hasAudio && settingsStore.audioRetention.recordsAudio,
-                    // Only a thought capturing a NEW recording (a text-only thought recorded into) trims;
-                    // a thought that already has audio keeps its original recording untouched, and the
-                    // view model only trims a freshly adopted recording anyway (spec 0019).
-                    audioTrimmer: thought.hasAudio ? nil : makeAudioTrimmer(),
+                    // Resuming records new audio whenever the retention policy records audio (feedback
+                    // 0022), regardless of whether the thought already has a recording. A text-only thought
+                    // gaining audio adopts the new recording fresh (spec 0013); a thought that already has
+                    // audio CONTINUES the recording - the new segment is concatenated onto the original.
+                    recordsAudio: settingsStore.audioRetention.recordsAudio,
+                    // Trimming (spec 0019/0022): the trimmer tightens the newly-recorded audio. On a
+                    // text-only thought it trims the freshly adopted whole recording; on a thought with
+                    // audio the view model trims ONLY the new segment before concatenation (the original
+                    // was already trimmed on its first save), never the original.
+                    audioTrimmer: makeAudioTrimmer(),
+                    // Concatenate the new segment onto the existing recording when the thought already has
+                    // audio and the policy records audio (feedback 0022); nil for a text-only resume.
+                    audioConcatenator: makeAudioConcatenator(for: thought),
                     resuming: thought
                 )
             ) { savedThought in

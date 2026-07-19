@@ -262,8 +262,30 @@ How the system is built and why.
     already-open detail view keeps its snapshot, harmless while playback is whole-file - a future
     per-paragraph seek must revisit it). A nil `AudioTrimming` (the "Trim silences" setting OFF) means NO
     code path touches the audio.
-    `StreamListView.makeAudioTrimmer()` builds the trimmer only when the setting
-    is on and only for a session capturing new audio (a resumed thought keeps its original recording).
+    `StreamListView.makeAudioTrimmer()` builds the trimmer whenever the setting is on for a session
+    capturing new audio - including a RESUME that continues the recording (feedback 0022), where the
+    trimmer tightens only the NEW segment before it is concatenated.
+  - **Resume continues the recording (feedback 0022).** Resuming a thought that ALREADY has audio, with
+    audio retention on, now RECORDS a new segment and CONCATENATES it onto the thought's existing `.m4a` so
+    the recording continues as ONE file (superseding feedback 0008's "a resumed session records no new
+    audio" text-only append). `StreamListView` passes `recordsAudio: audioRetention.recordsAudio` for the
+    resume cover regardless of `thought.hasAudio`, plus an `AudioConcatenator` when the thought has audio.
+    `AudioConcatenator` (the `AudioConcatenating` seam, AVFoundation, mirroring `AudioTrimmer`'s thin glue)
+    reads the existing `.m4a` and the new segment, writes ONE combined AAC file to a PROTECTED temp
+    (`completeUnlessOpen`, defer-cleaned on any mid-write failure) via chunked `AVAudioFile` read/write,
+    VERIFIES it, and reports the existing recording's measured duration - never touching either input. The
+    new paragraphs' timings are timed against the NEW segment's start, so the pure, count-preserving
+    `RecordingTiming.offsetResumedTimings` shifts only the new paragraphs (index >= existing count) right by
+    that measured duration (pre-existing timings untouched; a zero-length text-only placeholder left in
+    place). `DictationViewModel.finish()` returns the FALLBACK thought (original recording kept, new
+    paragraphs text-only) and schedules an OFF-main concatenation - the same shape as the dead-air trim:
+    trim ONLY the new segment (the original was already trimmed on its first save), concatenate, re-read
+    the thought fresh + confirm it still exists, swap through the COORDINATED `replaceAudio`, then re-save
+    the fresh thought with the offset timings (only when the paragraph count still aligns 1:1, so a
+    concurrent edit is preserved) and reload the feed via the shared `onTrimmed` hook. Every failure (empty
+    new segment - which must not corrupt the original, incompatible format, verify failure, a delete racing
+    the swap) leaves the fallback standing, so the original recording is never lost. A resume onto a
+    text-only thought (spec 0013) still adopts a fresh recording, and retention OFF stays a text-only append.
   - **System Now Playing (spec 0008).** `NowPlayingCenter.swift` holds the media-center seam:
     `NowPlayingInfo` (title / duration / elapsed / rate value), `NowPlayingInfoWriting` (production
     `SystemNowPlayingInfoWriter` over `MPNowPlayingInfoCenter`), and `RemoteCommandRegistering`
@@ -322,13 +344,15 @@ How the system is built and why.
   both, and builds the saved `Thought` with its recording (adopted from the service's temp file into
   the store) and timings at `finish()`. Mid-session "new thought" saves the transcript only - the one
   continuous recording is finalized at Stop and belongs to the FINAL thought. Resuming a thought seeds its
-  id, paragraphs, timings, folder, and (when present) its existing recording; `saveCurrentThought`
-  prefers a NEWLY captured recording when armed, else keeps the existing one. So a text-only thought
-  recorded into with `recordsAudio: true` (spec 0013 - `StreamListView`'s thought-page record action
-  passes `!thought.hasAudio && audioRetention.recordsAudio`) adopts the new audio: the newly spoken tail
-  keeps its real range and the original typed paragraphs get zero-length timing placeholders (TTS on
-  playback). A thought that already has audio keeps `recordsAudio: false` (text-only append, original
-  recording preserved). In-session read-back
+  id, paragraphs, timings, folder, existing recording, and the count of pre-existing paragraphs; the record
+  action passes `recordsAudio: audioRetention.recordsAudio` (feedback 0022, no longer gated on
+  `!thought.hasAudio`). A text-only thought recorded into (spec 0013) adopts the new audio via
+  `saveCurrentThought`'s attach path: the newly spoken tail keeps its real range and the original typed
+  paragraphs get zero-length timing placeholders (TTS on playback). A thought that ALREADY has audio KEEPS
+  its original recording on save (the safe fallback - the attach path would overwrite it with just the new
+  segment) with the new paragraphs zeroed to placeholders, then `finish()` schedules the OFF-main
+  concatenation described above that joins the new segment onto the original and re-saves with the new
+  paragraphs' offset timings (feedback 0022, superseding the pre-0022 text-only append). In-session read-back
   speaks via the `Speaker` (the live recording is not yet finalized); it pauses capture and resumes
   on `readBackDidFinish`, so the spoken audio never feeds back into recognition. `ThoughtPlaybackModel`
   drives the detail view's simple play / stop of a SAVED thought's recording via `AudioThoughtPlayer` -
@@ -610,7 +634,16 @@ transcribed and audio-only-fallback paths file a thought with audio, folder-hint
 (`..`/absolute/control-char/separator) landing at top level, and IDEMPOTENCY: a re-delivered capture yields
 ONE thought and does not re-transcribe, and a phone edit made between deliveries is preserved). The watch
 UI, real on-watch mic capture, the live WatchConnectivity transfer, and real file transcription are
-device/simulator-verified.
+device/simulator-verified. Plus resume-continues-audio (feedback 0022): the pure offset math
+(`RecordingWriterTests` - new paragraphs shifted past the existing duration, pre-existing timings
+unchanged, zero-length placeholder left in place, count/alignment preserved, no-op for non-positive
+duration / no new paragraphs), the concatenation seam (`AudioConcatenatorTests` - a synthesized existing +
+new fixture yields ONE longer valid file with the existing-duration reported and BOTH inputs untouched,
+plus an empty new segment / unreadable input / mismatched format / verify-failure each falling back
+safely), and the view-model wiring (`ResumeAudioViewModelTests` - a has-audio resume concatenates,
+replaces the thought's audio, and offsets the new timings; a concatenation failure keeps the original
+recording + text-only append with no data loss; a no-concatenator resume stays a text-only append). The
+real audio concatenation on device is device-verified.
 The generated scheme runs them.
 
 ## Design tokens
