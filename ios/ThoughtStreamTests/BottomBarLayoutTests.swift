@@ -77,6 +77,31 @@ final class BottomBarLayoutTests: XCTestCase {
         XCTAssertTrue(afterNoMatches.showsSearchField)
     }
 
+    /// `FolderScreenState.contentUsesList` seam (feedback 0029, item 8): the normal, results, and no-matches
+    /// states all report they render through the shared `List`, and only the empty-store CTA opts out. The
+    /// view relies on that to host ONE persistent `List` (varying only the rows) for the searching states,
+    /// keeping the `.safeAreaInset` search field's first responder stable while typing - the third and final
+    /// fix for the dropped-focus bug. This test pins the pure BOOLEAN seam and its agreement with
+    /// `showsSearchField`; that a SINGLE `List` instance is actually reused (so the field keeps first
+    /// responder) is a STRUCTURAL property the view provides and is DEVICE-verified, not unit-proven here. A
+    /// refactor that let a searching state opt out of the shared list (reviving the bug) flips a value below.
+    func testContentUsesListSeamCoversSearchingStates() {
+        // Every state that shows the search field must report it uses the ONE shared List, so the view does
+        // not re-mount the field on a query-driven state flip.
+        XCTAssertTrue(FolderScreenState.normal.contentUsesList)
+        XCTAssertTrue(FolderScreenState.searchResults.contentUsesList)
+        XCTAssertTrue(FolderScreenState.noMatches.contentUsesList)
+        // The empty store is the only state OUTSIDE that list - and it hides the field, so no focus is lost.
+        XCTAssertFalse(FolderScreenState.emptyStore.contentUsesList)
+
+        // The two invariants agree everywhere: a state uses the shared list exactly when it shows the field.
+        for state in [FolderScreenState.emptyStore, .searchResults, .noMatches, .normal] {
+            XCTAssertEqual(
+                state.contentUsesList, state.showsSearchField,
+                "\(state): the field lives in the shared list, so it shows the field iff it uses that list")
+        }
+    }
+
     // MARK: - Thought-detail bottom bar decision (spec 0021)
 
     /// While editing the title or body, the thought-detail bottom bar is HIDDEN entirely - so the search

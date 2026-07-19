@@ -548,8 +548,13 @@ How the system is built and why.
     but no longer applied to these screens). Rows use the tighter `tightRowInsets()` (vertical inset dropped
     from `x1_5` to `x0_5`) for a dense list, keeping the card's own padding for tap targets. The feedback-0024
     search-field-focus fix is preserved (the bottom `StreamBottomStack` hangs off the STABLE outer node; only
-    the content switches on state). Shared chrome (`ThoughtResultRow`, `FolderDialog`, `FolderEmptyStateCTA`,
-    `FolderErrorBanner`, `NoSearchMatchesState`, `tightRowInsets`) lives in `FolderScreenChrome`. `ThoughtResultRow`
+    the content switches on state - now WITHIN one persistent `List`, feedback 0029, see below). Shared chrome
+    (`ThoughtResultRow`, `FolderDialog`, `FolderEmptyStateCTA`, `FolderErrorBanner`, `NoMatchesRow`,
+    `EmptyUserFolderCTARow`, `unifiedRow`, `unifiedList`) lives in `FolderScreenChrome`. `NoMatchesRow` and
+    `EmptyUserFolderCTARow` are the no-matches message and the empty-user-folder CTA rendered as ROWS inside
+    the single persistent `unifiedContentList`, not separate centered views, so the search field's host is
+    never torn down mid-typing (feedback 0029, item 8 - the earlier `NoSearchMatchesState` centered view is
+    retired). `ThoughtResultRow`
     is the ONE thought row both the flat folder list AND the global search-result list render (on either
     screen), so a thought's affordances (leading Play/Move swipe when it has audio, trailing Delete, the
     Share/Copy/Move/Delete context menu) are identical everywhere - a search result cannot gain/lose
@@ -577,6 +582,24 @@ How the system is built and why.
     thought not already in the folder) re-files the chosen thoughts via a new BATCH `feed.move(_ thoughts:to:)`
     (one reload, no per-thought flicker). The Move action is omitted in the root / All Thoughts / an alias / a
     truly empty store.
+  - **List / folder screen fixes (feedback 0029).** Five follow-ups on the same screens. (2) The sort
+    `ToolbarItem` is removed from `TopLevelFoldersView` (folders-only top level has nothing thought-ordered to
+    sort); `sortOrder` stays a binding, still ordering `FolderThoughtsView` and the top-level swipe-to-play
+    queues, so no state is orphaned. (3) `MoveThoughtsIntoFolderSheet` gains a `.searchable` field filtering
+    candidates through the shared `ThoughtSearch.results` matcher; selections are a `Set<UUID>` stable across
+    filtering. (4) "Move thoughts here" is reachable on a NON-empty folder too: `FolderThoughtsView`'s "..."
+    menu and each `TopLevelFoldersView` folder row's swipe + context menu (beside Rename), all opening the ONE
+    `MoveThoughtsIntoFolderSheet` + BATCH `feed.move(_ thoughts:to:)`. (7) `StreamListTitleRow` bottom inset
+    drops to `x0` and `unifiedList()`'s top content margin to `x1`, so the first row sits closer under the
+    title. (8) Search-focus, ROOT-CAUSE fix (third recurrence): the earlier stable-`.id` on the bottom stack
+    was insufficient because the `.safeAreaInset` hosting the search `TextField` was attached to a content node
+    that SWAPPED one `List` view for a structurally different one on the query-driven state flip - SwiftUI tore
+    down the hosting subtree and resigned first responder. `switchingContent` now renders ONE persistent
+    `List` (`unifiedContentList`) for the normal / results / no-matches states, varying only its ROWS
+    (`NoMatchesRow` and, in a folder, `EmptyUserFolderCTARow` are rows inside it), so the field's host identity
+    is constant; only `.emptyStore` renders outside the list, and it has no field. The pure
+    `FolderScreenState.contentUsesList` seam pins which states share the list (unit-tested); the one-List
+    STRUCTURE and live first-responder retention are device-verified.
   `SettingsView` edits the injected
   `SettingsStoring` instance directly (control-phrase field with validation hint, a command-aliases
   editable list below it - spec 0018: an add field + plus button gated by the same

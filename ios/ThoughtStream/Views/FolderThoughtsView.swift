@@ -154,63 +154,82 @@ struct FolderThoughtsView: View {
 
     @ViewBuilder
     private func switchingContent(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
-        switch screenState {
-        case .emptyStore:
-            // A truly empty store (no thoughts anywhere): the centered CTA with NO Move action - there is
-            // nothing anywhere to move into this folder (feedback 0026, item 6).
-            FolderEmptyStateCTA(
-                isRoot: false,
-                onRecord: { onNewThought(newThoughtFolderPath) },
-                onNewKeyboardThought: { onNewKeyboardThought(newThoughtFolderPath) }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .searchResults:
-            thoughtList(searchResults, showTitle: false)
-        case .noMatches:
-            NoSearchMatchesState(query: searchQuery)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .normal:
-            normalContent
-        }
-    }
-
-    /// The normal (non-search) content. An empty USER folder while the store holds thoughts elsewhere shows
-    /// the centered CTA WITH the three actions (Move thoughts here / Record / New) - the meaningful place to
-    /// pull existing thoughts in (feedback 0026, item 6). An empty alias keeps a plain inline message (moving
-    /// into a virtual All/Recents folder is meaningless). A non-empty folder shows the flat list.
-    @ViewBuilder
-    private var normalContent: some View {
-        if thoughts.isEmpty, case .userFolder = subject {
-            FolderEmptyStateCTA(
-                isRoot: false,
-                onMoveToFolder: { showMoveIntoFolder = true },
-                onRecord: { onNewThought(newThoughtFolderPath) },
-                onNewKeyboardThought: { onNewKeyboardThought(newThoughtFolderPath) }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // ONE persistent List for the normal / results / no-matches states so the search field's host is
+        // never torn down mid-typing (feedback 0029, item 8): only the List's ROWS change with the query, so
+        // SwiftUI diffs cells in place rather than swapping one List view for a different one (the identity
+        // churn that resigned the field's first responder). The empty-store state has no search field, so it
+        // is a separate centered CTA - the only transition off the shared List happens when the store goes
+        // from zero thoughts to some, never mid-typing. `FolderScreenState.contentUsesList` pins which states
+        // share the list. NOTE: an empty USER folder's CTA (feedback 0026, item 6) is rendered as a row
+        // INSIDE this one list rather than as a separate centered view, so typing to search from an empty
+        // folder does not swap the list host either.
+        if screenState.contentUsesList {
+            unifiedContentList(state: screenState, results: searchResults)
         } else {
-            thoughtList(thoughts, showTitle: true)
+            // A truly empty store (no thoughts anywhere): the centered CTA with NO Move action - there is
+            // nothing anywhere to move into this folder (feedback 0026, item 6). No search field here.
+            FolderEmptyStateCTA(
+                isRoot: false,
+                onRecord: { onNewThought(newThoughtFolderPath) },
+                onNewKeyboardThought: { onNewKeyboardThought(newThoughtFolderPath) }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
-    /// The flat thought list. When `showTitle` is true the screen title is the FIRST row (scrolls away, spec
-    /// 0026); the search-results list drops the title (the query is the context there).
-    private func thoughtList(_ rows: [Thought], showTitle: Bool) -> some View {
+    /// Whether the normal state shows the empty-USER-folder CTA (feedback 0026, item 6): an empty user folder
+    /// while the store holds thoughts elsewhere offers Move thoughts here / Record / New. An empty alias keeps
+    /// a plain inline message instead (moving into a virtual All/Recents folder is meaningless).
+    private var showsEmptyUserFolderCTA: Bool {
+        if thoughts.isEmpty, case .userFolder = subject { return true }
+        return false
+    }
+
+    /// The ONE persistent list hosting the normal thought list, the global search results, or the no-matches
+    /// message (feedback 0029, item 8). It is a single `List` instance across those states - the ROWS differ
+    /// by state, the List node does not - so the `.safeAreaInset` search field above never re-mounts. The
+    /// empty-user-folder CTA is a full-height row inside this same list.
+    @ViewBuilder
+    private func unifiedContentList(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
         List {
-            // The title sits ABOVE the unified card (Notes-app style), as its own chrome-free header row so
-            // the grouped container below holds ONLY the thought rows (feedback 0025).
-            if showTitle {
-                StreamListTitleRow(title: subject.title)
-            }
-            // The thoughts (or the inline empty-folder message) form ONE unified inset card: surface + border
-            // + rounded corners wrap the whole section, rows separated by hairline dividers (feedback 0025).
-            Section {
-                if showTitle, rows.isEmpty {
-                    EmptyFolderRow(subject: subject)
+            switch screenState {
+            case .normal:
+                if showsEmptyUserFolderCTA {
+                    // The empty-user-folder CTA as a full-height row, so the list host (and the search field
+                    // above it) stays put when the user starts typing to search from an empty folder.
+                    EmptyUserFolderCTARow(
+                        onMoveToFolder: { showMoveIntoFolder = true },
+                        onRecord: { onNewThought(newThoughtFolderPath) },
+                        onNewKeyboardThought: { onNewKeyboardThought(newThoughtFolderPath) }
+                    )
+                } else {
+                    // The title sits ABOVE the unified card (Notes-app style), as its own chrome-free header
+                    // row so the grouped container holds ONLY the thought rows (feedback 0025).
+                    StreamListTitleRow(title: subject.title)
+                    Section {
+                        if thoughts.isEmpty {
+                            EmptyFolderRow(subject: subject)
+                        }
+                        ForEach(thoughts) { thought in
+                            thoughtRow(thought: thought)
+                        }
+                    }
                 }
-                ForEach(rows) { thought in
-                    thoughtRow(thought: thought)
+            case .searchResults:
+                // The global results form ONE unified inset card too (feedback 0025); no title (the query is
+                // the context there).
+                Section {
+                    ForEach(searchResults) { thought in
+                        thoughtRow(thought: thought)
+                    }
                 }
+            case .noMatches:
+                // A single no-matches row INSIDE the same list, so the list host (and the search field above
+                // it) is not torn down when a query stops matching (feedback 0029, item 8).
+                NoMatchesRow(query: searchQuery)
+            case .emptyStore:
+                // Never reached: emptyStore does not use the list (see switchingContent).
+                EmptyView()
             }
         }
         .unifiedList()
@@ -251,6 +270,14 @@ struct FolderThoughtsView: View {
         if let folderName = userFolderName {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
+                    // Pull existing thoughts INTO this folder (feedback 0029, item 4a): opens the SAME
+                    // multi-select picker + batch-move path the empty-state CTA uses, so a non-empty folder
+                    // can still gather thoughts (the empty-state action vanished once the folder had one).
+                    Button {
+                        showMoveIntoFolder = true
+                    } label: {
+                        Label("Move thoughts here", systemImage: "folder")
+                    }
                     Button {
                         folderNameField = folderName
                         activeDialog = .renameFolder(path: [folderName], currentName: folderName)

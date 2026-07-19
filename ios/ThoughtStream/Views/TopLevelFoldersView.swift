@@ -46,6 +46,9 @@ struct TopLevelFoldersView: View {
     @State private var folderError: String?
 
     @State private var moveThought: Thought?
+    /// The folder to move existing thoughts INTO (feedback 0029, item 4b): a folder-row "Move thoughts here"
+    /// action opens the multi-select picker for THIS folder. Nil dismisses it.
+    @State private var moveIntoFolder: String?
     @State private var copiedTrigger = 0
     @State private var showCopiedConfirmation = false
 
@@ -131,6 +134,20 @@ struct TopLevelFoldersView: View {
                     }
                 )
             }
+            // Move existing thoughts INTO a folder from a folder row (feedback 0029, item 4b): the SAME
+            // multi-select picker + batch move path the folder screen's "..." menu and the empty-state CTA
+            // use, so there is one drawer and one move path.
+            .sheet(item: moveIntoFolderBinding) { target in
+                MoveThoughtsIntoFolderSheet(
+                    folderName: target.name,
+                    allThoughts: feed.thoughts,
+                    onMove: { ids in
+                        let toMove = feed.thoughts.filter { ids.contains($0.id) }
+                        await feed.move(toMove, to: [target.name])
+                        await reloadFolders()
+                    }
+                )
+            }
             .task(id: feed.reloadGeneration) {
                 await reloadFolders()
             }
@@ -138,70 +155,74 @@ struct TopLevelFoldersView: View {
 
     @ViewBuilder
     private func switchingContent(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
-        switch screenState {
-        case .emptyStore:
+        // ONE persistent List for the normal / results / no-matches states so the search field's host is
+        // never torn down mid-typing (feedback 0029, item 8): only the List's ROWS change with the query, so
+        // SwiftUI diffs cells in place rather than swapping one List view for a different one (the identity
+        // churn that resigned the field's first responder). The empty-store state has no search field, so it
+        // is a separate centered CTA - the only transition off the shared List happens when the store goes
+        // from zero thoughts to some, never mid-typing. `FolderScreenState.contentUsesList` pins which states
+        // share the list.
+        if screenState.contentUsesList {
+            unifiedContentList(state: screenState, results: searchResults)
+        } else {
             FolderEmptyStateCTA(
                 isRoot: true,
                 onRecord: { onNewThought(topLevelPlacement) },
                 onNewKeyboardThought: { onNewKeyboardThought(topLevelPlacement) }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .searchResults:
-            searchResultsList(searchResults)
-        case .noMatches:
-            NoSearchMatchesState(query: searchQuery)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .normal:
-            foldersList
         }
     }
 
     // MARK: - Lists
 
-    /// The top-level folder list (spec 0026): the title header row, the two pinned alias rows, then the user
-    /// folders. FOLDERS ONLY - no thoughts.
-    private var foldersList: some View {
+    /// The ONE persistent list hosting the normal folder list, the global search results, or the no-matches
+    /// message (feedback 0029, item 8). It is a single `List` instance across those states - the ROWS differ
+    /// by state, the List node does not - so the `.safeAreaInset` search field above never re-mounts.
+    @ViewBuilder
+    private func unifiedContentList(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
         // Bucket every folder's flattened thought count in ONE pass (spec 0026) so the rows do not each
         // rescan the whole thoughts array (O(thoughts) here, not O(folders x thoughts) per render).
         let counts = TopLevelFolders.folderThoughtCounts(feed.thoughts)
-        return List {
-            // The title sits ABOVE the unified card (Notes-app style), as its own chrome-free header row so
-            // the grouped container below holds ONLY the folder rows (feedback 0025).
-            StreamListTitleRow(title: "Thoughts")
-
-            // The alias + user folders form ONE unified inset card: surface + border + rounded corners wrap
-            // the whole section, and the rows are separated by hairline dividers (feedback 0025).
-            Section {
-                ForEach(AliasFolder.allCases) { alias in
-                    aliasRow(alias)
-                }
-
-                ForEach(userFolders, id: \.self) { name in
-                    folderRow(name: name, count: counts[name] ?? 0)
-                }
-            }
-        }
-        .unifiedList()
-    }
-
-    private func searchResultsList(_ results: [Thought]) -> some View {
         List {
-            // The search results form ONE unified inset card too (feedback 0025), so a global search reads the
-            // same grouped way as a folder list.
-            Section {
-                ForEach(results) { thought in
-                    // The SAME shared row the folder screen uses (spec 0026, architect review), so a global
-                    // search result is identical everywhere - it keeps its play/move leading swipe here too,
-                    // rather than a hand-rolled row that silently dropped those actions.
-                    ThoughtResultRow(
-                        thought: thought,
-                        playbackController: playbackController,
-                        onOpen: onOpenThought,
-                        onMove: { moveThought = $0 },
-                        onDelete: onDeleteThought,
-                        onCopied: { copiedTrigger += 1 }
-                    )
+            switch screenState {
+            case .normal:
+                // The title sits ABOVE the unified card (Notes-app style), as its own chrome-free header row
+                // so the grouped container below holds ONLY the folder rows (feedback 0025).
+                StreamListTitleRow(title: "Thoughts")
+                // The alias + user folders form ONE unified inset card (feedback 0025).
+                Section {
+                    ForEach(AliasFolder.allCases) { alias in
+                        aliasRow(alias)
+                    }
+                    ForEach(userFolders, id: \.self) { name in
+                        folderRow(name: name, count: counts[name] ?? 0)
+                    }
                 }
+            case .searchResults:
+                // The global results form ONE unified inset card too (feedback 0025), so a search reads the
+                // same grouped way as a folder list.
+                Section {
+                    ForEach(searchResults) { thought in
+                        // The SAME shared row the folder screen uses (spec 0026, architect review), so a
+                        // global search result is identical everywhere - it keeps its play/move leading swipe.
+                        ThoughtResultRow(
+                            thought: thought,
+                            playbackController: playbackController,
+                            onOpen: onOpenThought,
+                            onMove: { moveThought = $0 },
+                            onDelete: onDeleteThought,
+                            onCopied: { copiedTrigger += 1 }
+                        )
+                    }
+                }
+            case .noMatches:
+                // A single no-matches row INSIDE the same list, so the list host (and the search field above
+                // it) is not torn down when a query stops matching (feedback 0029, item 8).
+                NoMatchesRow(query: searchQuery)
+            case .emptyStore:
+                // Never reached: emptyStore does not use the list (see switchingContent).
+                EmptyView()
             }
         }
         .unifiedList()
@@ -238,6 +259,13 @@ struct TopLevelFoldersView: View {
             .accessibilityAddTraits(.isButton)
             .unifiedRow()
         .contextMenu {
+            // "Move thoughts here" sits beside Rename (feedback 0029, item 4b), opening the multi-select
+            // picker for this folder - the same batch-move path the folder screen's "..." menu uses.
+            Button {
+                moveIntoFolder = name
+            } label: {
+                Label("Move thoughts here", systemImage: "folder")
+            }
             Button {
                 beginRename(name: name)
             } label: {
@@ -271,6 +299,13 @@ struct TopLevelFoldersView: View {
                 Label("Rename", systemImage: "pencil")
             }
             .tint(CanopyColor.primary)
+            // "Move thoughts here" beside Rename on the trailing swipe (feedback 0029, item 4b).
+            Button {
+                moveIntoFolder = name
+            } label: {
+                Label("Move here", systemImage: "folder")
+            }
+            .tint(CanopyColor.success)
         }
     }
 
@@ -303,18 +338,10 @@ struct TopLevelFoldersView: View {
             }
             .tint(CanopyColor.primary)
         }
-        ToolbarItem(placement: .topBarLeading) {
-            Menu {
-                Picker("Sort", selection: $sortOrder) {
-                    ForEach(ThoughtSortOrder.allCases, id: \.self) { order in
-                        Text(order.label).tag(order)
-                    }
-                }
-            } label: {
-                Image(systemName: "arrow.up.arrow.down")
-            }
-            .tint(CanopyColor.primary)
-        }
+        // No sort control here (feedback 0029, item 2): the top level is FOLDERS ONLY (spec 0026) - folders
+        // show A-Z and the aliases define their own order, so there is nothing thought-ordered to sort. Sort
+        // stays meaningful INSIDE a folder (`FolderThoughtsView`), and `sortOrder` still orders the swipe-to-
+        // play queues here, so the binding is kept even though its toolbar affordance is gone.
         ToolbarItem(placement: .topBarTrailing) {
             Button { onOpenSettings() } label: {
                 Image(systemName: "gearshape")
@@ -328,6 +355,15 @@ struct TopLevelFoldersView: View {
     private func beginRename(name: String) {
         folderNameField = name
         activeDialog = .renameFolder(path: [name], currentName: name)
+    }
+
+    /// An `Identifiable` binding over the `moveIntoFolder` folder name, so `.sheet(item:)` presents the
+    /// multi-select picker for that folder (feedback 0029, item 4b).
+    private var moveIntoFolderBinding: Binding<MoveIntoFolderTarget?> {
+        Binding(
+            get: { moveIntoFolder.map(MoveIntoFolderTarget.init(name:)) },
+            set: { moveIntoFolder = $0?.name }
+        )
     }
 
     private func dialogBinding(for match: @escaping (FolderDialog) -> Bool) -> Binding<Bool> {
@@ -427,6 +463,13 @@ struct TopLevelFoldersView: View {
         await feed.deleteFolder(at: path)
         await reloadFolders()
     }
+}
+
+/// A folder name wrapped as `Identifiable` so a folder-row "Move thoughts here" action can drive a
+/// `.sheet(item:)` (feedback 0029, item 4b). The name is its identity - one drawer per folder.
+private struct MoveIntoFolderTarget: Identifiable {
+    let name: String
+    var id: String { name }
 }
 
 /// A pinned virtual alias folder row (spec 0026): a tinted glyph, the alias title, and a chevron - visually

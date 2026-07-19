@@ -808,3 +808,25 @@ Six polish fixes on the redesigned Thoughts screens (spec 0026):
   "Move thoughts here" opens a multi-select picker of every thought not already in the folder and files the
   chosen ones in. The Move action is omitted where it is meaningless (the root / All Thoughts / an alias, or
   a truly empty store).
+
+## List and folder screen fixes (feedback 0029)
+
+Five more fixes on the redesigned Thoughts screens (spec 0026):
+
+- **No sort on the home page.** The folders-only top level dropped its sort control - folders show A-Z and
+  the aliases (All Thoughts / Recents) define their own order, so there was nothing thought-ordered to sort.
+  Sort stays INSIDE a folder (and still orders the top-level swipe-to-play queues), so the persisted choice
+  is unchanged.
+- **Search in the "Move thoughts here" drawer.** The multi-select move picker now has a search field that
+  filters candidate thoughts live by title/text (the same `ThoughtSearch` matcher the global search uses).
+  Selections persist across filtering.
+- **Folder "Move into" everywhere.** "Move thoughts here" is now reachable on a non-empty folder too: from
+  the folder screen's "..." menu and from a top-level folder row's swipe / context menu, beside Rename. All
+  routes open the one multi-select picker and file the chosen thoughts in one batch.
+- **Tighter title-to-list gap.** The first list row sits closer under the scrolling title (Notes-app tight),
+  on both the top-level and folder screens; the title still scrolls with the list.
+- **Search field keeps focus for good.** The list screens now host ONE persistent `List` whose rows change
+  with the query (normal / results / no-matches), instead of swapping between two distinct `List` views. The
+  search `TextField` lives in a safe-area inset on that single list, so it is never torn down mid-typing and
+  keeps first responder across the first keystroke, every later keystroke, the no-matches state, and clearing
+  the query. This is the third and final fix for the recurring dropped-focus bug (feedback 0024 / 0026).

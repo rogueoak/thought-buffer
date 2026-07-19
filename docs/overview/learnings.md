@@ -861,6 +861,27 @@ parent already lifts it (a `showsBottomPlayer` flag, false in the split containe
 safe-area-inset / overlay chrome meant to span screens: decide per container whether the child re-hosts it or
 a parent lifts it once, and never assume a `safeAreaInset` on the pushing screen persists across the push.
 
+## A stable id cannot save a first responder if an ancestor branch is swapped (feedback 0029)
+
+The search field dropped focus while typing for the THIRD time. Feedback 0024 hoisted it to a stable outer
+node; feedback 0026 pinned `.id("stream-bottom-stack")` on the bottom stack; both were necessary but not
+sufficient. The real cause was one level UP: the `.safeAreaInset(edge: .bottom)` that HOSTS the search
+`TextField` was attached to a content node whose body returned a DIFFERENT `List` view per state
+(`.normal` -> `foldersList`, `.searchResults` -> `searchResultsList`). Typing the first character flips
+`.normal` -> `.searchResults`, swapping one `List` instance for a structurally different one. SwiftUI diffs
+those two branches as different view identities, tears down the old content subtree, and - because the inset
+is a modifier ON that switching node - re-lays-out the inset, resigning the field's first responder. A
+stable `.id` on a SUBVIEW cannot hold a first responder when the ANCESTOR that hosts it is being replaced by
+a different view identity. The fix renders ONE persistent `List` whose ROWS change with the query (normal
+rows, result rows, or a single no-matches row), so SwiftUI diffs cells in place and never rebuilds the List
+node - the inset and its `TextField` are never re-created. The empty-state CTA is the only content OUTSIDE
+that list, and it has no field, so the sole transition off the shared list happens when the store goes from
+zero thoughts to some, never mid-typing. A pure `FolderScreenState.contentUsesList` seam pins which states
+share the list, unit-tested so a refactor that reintroduces a second List for a searching state fails in CI.
+Generalizes: prefer "one view, changing data" over "pick one of N alternate views" for any subtree that owns
+first-responder or other imperative UIKit state; and when focus is lost on a content change, look for an
+identity swap in an ANCESTOR of the field, not just at the field itself.
+
 ## A floating control belongs in the chrome group that already carries a background; thread active UI state through a push as an apply-once seam (feedback 0030)
 
 Two of the four thought-page fixes generalize. First, the in-note "Play recording" button and the "N of M"

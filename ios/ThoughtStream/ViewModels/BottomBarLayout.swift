@@ -42,6 +42,22 @@ enum FolderScreenState: Equatable {
     var showsSearchField: Bool {
         self != .emptyStore
     }
+
+    /// Whether this state renders through the ONE persistent `List` that hosts the bottom-bar inset
+    /// (feedback 0029, item 8). The search `TextField` lives in a `.safeAreaInset` on the list-screen
+    /// content; if the state flip swapped one `List` view for a structurally different one, SwiftUI would
+    /// tear down the hosting subtree and resign the field's first responder (the third recurrence of the
+    /// dropped-focus bug). So `.normal`, `.searchResults`, and `.noMatches` all render through the SAME
+    /// `List` instance - only its ROWS change - keeping the field's host identity constant. Only
+    /// `.emptyStore` renders a separate centered CTA, and it has no search field (nothing to search), so
+    /// there is no focus to lose across that transition (which only happens when the store goes from zero
+    /// thoughts to some, never mid-typing).
+    ///
+    /// Pinned as a pure seam so a future refactor that reintroduces a second `List` for a searching state
+    /// - reviving the focus bug - fails a unit test rather than only a device test.
+    var contentUsesList: Bool {
+        self != .emptyStore
+    }
 }
 
 /// Which affordances the THOUGHT-DETAIL bottom bar shows (spec 0021), and whether it shows at all. The

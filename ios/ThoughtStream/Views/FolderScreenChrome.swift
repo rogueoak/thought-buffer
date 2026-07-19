@@ -108,16 +108,22 @@ extension View {
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
             // Tighten the large default top margin `.insetGrouped` reserves above the first row
-            // (feedback 0026, item 1) so the scrolling title header sits close to the toolbar rather than
-            // floating with a wide gap, matching the Notes app. Only the TOP margin is overridden; the
-            // side/bottom grouped margins stay so the inset card keeps its shape.
-            .contentMargins(.top, CanopySpacing.x2, for: .scrollContent)
+            // (feedback 0026, item 1; tightened further feedback 0029, item 7) so the scrolling title
+            // header sits close to the toolbar rather than floating with a gap, matching the Notes app.
+            // Only the TOP margin is overridden; the side/bottom grouped margins stay so the inset card
+            // keeps its shape.
+            .contentMargins(.top, CanopySpacing.x1, for: .scrollContent)
     }
 }
 
-/// Shown when a search is active but matched nothing in a non-empty store (spec 0021). The search field
-/// stays visible (it lives in the bottom bar), so the user can edit or clear the query.
-struct NoSearchMatchesState: View {
+/// The "no matches" message as a LIST ROW (spec 0021, reshaped feedback 0029 item 8): shown when a search
+/// is active but matched nothing in a non-empty store. It renders inside the SAME persistent `List` as the
+/// normal and results states rather than swapping the list host for a separate centered view - keeping one
+/// List across normal / results / no-matches is what keeps the bottom-bar search `TextField` from losing
+/// first responder when a query stops matching mid-typing. The search field stays visible (it lives in the
+/// bottom bar), so the user can edit or clear the query. Chrome is stripped so it reads as a plain centered
+/// row, not a card.
+struct NoMatchesRow: View {
     let query: String
 
     private var trimmedQuery: String {
@@ -138,6 +144,37 @@ struct NoSearchMatchesState: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, CanopySpacing.x8)
         }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, CanopySpacing.x10)
+        .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+    }
+}
+
+/// The empty-USER-folder call to action as a full-height LIST ROW (feedback 0029, item 8), so an empty
+/// user folder renders inside the SAME persistent `List` as the normal / results / no-matches states rather
+/// than swapping the list host for a separate centered view. Keeping one List means starting a search from
+/// an empty folder does not tear down the bottom-bar search `TextField`. It wraps the shared
+/// `FolderEmptyStateCTA` (Move thoughts here / Record / New) so the copy and actions match the empty-store
+/// CTA, and strips list-row chrome so it reads as a centered CTA, not a card.
+struct EmptyUserFolderCTARow: View {
+    let onMoveToFolder: () -> Void
+    let onRecord: () -> Void
+    let onNewKeyboardThought: () -> Void
+
+    var body: some View {
+        FolderEmptyStateCTA(
+            isRoot: false,
+            onMoveToFolder: onMoveToFolder,
+            onRecord: onRecord,
+            onNewKeyboardThought: onNewKeyboardThought
+        )
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, CanopySpacing.x10)
+        .listRowInsets(EdgeInsets())
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 }
 
