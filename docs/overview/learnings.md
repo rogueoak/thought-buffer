@@ -881,3 +881,21 @@ share the list, unit-tested so a refactor that reintroduces a second List for a 
 Generalizes: prefer "one view, changing data" over "pick one of N alternate views" for any subtree that owns
 first-responder or other imperative UIKit state; and when focus is lost on a content change, look for an
 identity swap in an ANCESTOR of the field, not just at the field itself.
+
+## A floating control belongs in the chrome group that already carries a background; thread active UI state through a push as an apply-once seam (feedback 0030)
+
+Two of the four thought-page fixes generalize. First, the in-note "Play recording" button and the "N of M"
+match counter both floated OVER scrolling content - the play button inline in the note body (so it did not
+travel with the transport that had already moved to the bottom stack), the counter with no surface behind it
+(hard to read on top of the text). The fix for both was the SAME move: put the floating control in the
+shared chrome group that already owns a background - the play affordance into `detailBottomStack` above the
+`BottomPlayer` (so starting playback surfaces that same transport, and it floats with the find/search bar),
+the counter into `BottomBarButtonGroup` (a solid Canopy surface pill beside the search field). When a control
+reads as "floating" or "hard to read", the answer is usually to re-home it into an existing bar/stack that
+carries the surface, not to give it a one-off background. Second, carrying an active search query into a
+pushed detail so the in-note find resumes it is a one-parameter, apply-ONCE-on-appear seam
+(`initialFindQuery`, seeded into the local find state on appear when non-empty, then never re-seeded so the
+user's later edits stand), tested at the pure "first hit" boundary (`ThoughtFind.firstMatch`) rather than in
+view code - the view just seeds the existing find pipeline, which already highlights and scrolls. Generalizes
+to any "resume the state I was in" hand-off into a child screen: pass the state as an apply-once input, let
+the child's existing machinery act on it, and unit-test the pure decision the seed drives.
