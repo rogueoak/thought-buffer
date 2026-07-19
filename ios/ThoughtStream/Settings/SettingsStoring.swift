@@ -27,6 +27,12 @@ protocol SettingsStoring: AnyObject {
     /// fixed label so a sensitive first line does not appear on a system Now Playing surface.
     /// Persisted as a small string tag so an unknown value falls back to `.noteTitle`.
     var lockScreenTitle: LockScreenTitle { get set }
+
+    /// How the Thoughts list (top level and inside any folder) is ordered (spec 0010). Defaults to
+    /// `.newest` (the app's original flat stream). The sort menu binds to this and the list re-sorts
+    /// live; the choice is persisted globally so it survives a launch. Persisted as a small string
+    /// tag so an unknown value falls back to `.newest`.
+    var noteSortOrder: NoteSortOrder { get set }
 }
 
 /// A `UserDefaults`-backed `SettingsStoring`. Persists the control phrase as a string and the
@@ -38,6 +44,7 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         static let spellingOverrides = "settings.spellingOverrides"
         static let audioRetention = "settings.audioRetention"
         static let lockScreenTitle = "settings.lockScreenTitle"
+        static let noteSortOrder = "settings.noteSortOrder"
     }
 
     /// Bounds on the persisted overrides so a stuck field or a paste cannot grow `UserDefaults`
@@ -98,6 +105,16 @@ final class UserDefaultsSettingsStore: SettingsStoring {
             return LockScreenTitle(storageTag: tag)
         }
         set { defaults.set(newValue.storageTag, forKey: Key.lockScreenTitle) }
+    }
+
+    var noteSortOrder: NoteSortOrder {
+        // Stored as a small string tag so a value written by a newer build never fails to decode; an
+        // absent or unknown tag falls back to `.newest` (the app's original flat stream order).
+        get {
+            guard let tag = defaults.string(forKey: Key.noteSortOrder) else { return .default }
+            return NoteSortOrder(tag: tag)
+        }
+        set { defaults.set(newValue.storageTag, forKey: Key.noteSortOrder) }
     }
 
     /// Cap the row count and per-field length so persistence and the per-segment rescan stay

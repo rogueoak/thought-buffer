@@ -57,4 +57,5 @@ private final class MutableSettingsStore: SettingsStoring {
     var spellingOverrides: [SpellingOverride] = []
     var audioRetention: AudioRetention = .keep
     var lockScreenTitle: LockScreenTitle = .noteTitle
+    var noteSortOrder: NoteSortOrder = .newest
 }

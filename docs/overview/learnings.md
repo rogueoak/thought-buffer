@@ -379,3 +379,17 @@ that returns `some View` and is called from inside a `TimelineView`/`@ViewBuilde
 closure parameters escapingly (the `ForEach` inside holds them), so a bar-height closure passed to such
 a helper must be marked `@escaping` or the build fails with "escaping closure captures non-escaping
 parameter".
+
+## A derived change-token must cover every change it gates a refresh on (spec 0010)
+
+The folder screen re-fetched its child-folder names with `.task(id: feed.notes.count)` - using the
+note COUNT as a "something changed, reload" token. But the count is a lossy projection of the state:
+a rename, a move between two existing folders, and an iCloud-synced EMPTY folder all change what
+should be on screen while leaving the count identical, so sibling and ancestor screens silently went
+stale. A change-token has to be a monotonic signal that ticks on EVERY mutation of the underlying
+state, not a value that merely tends to change with it. The fix put a `reloadGeneration` counter on
+the driver that bumps wherever the notes list is (re)published (so it catches the observer path too)
+and keyed the refresh on that. Generalizes to any `onChange`/`.task(id:)`/cache-key/equatable-diff
+that watches a summary (a count, a hash of a subset, a "last item id") to decide when to recompute:
+if two distinct states can share the token, the refresh is lossy - drive it off a real version
+counter bumped at the single write point instead.

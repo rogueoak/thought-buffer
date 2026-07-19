@@ -16,6 +16,10 @@ final class StreamFeed: ObservableObject {
     /// Set when a delete failed, so the view can show a brief, non-blocking message. Mirrors the
     /// driver; cleared via `clearDeleteFailure()` once the view has surfaced it.
     @Published private(set) var deleteFailed = false
+    /// Monotonic counter bumped every time the driver republishes its notes list. Mirrors the driver;
+    /// a view keys a refresh on it to catch republishes that leave the note count unchanged (a rename,
+    /// a move between two existing folders, or an iCloud-synced empty folder).
+    @Published private(set) var reloadGeneration = 0
 
     private let driver: NoteStoreDriver
 
@@ -40,10 +44,34 @@ final class StreamFeed: ObservableObject {
     /// Clear a surfaced delete-failure message once the view has shown it.
     func clearDeleteFailure() { driver.clearDeleteFailure(); mirror() }
 
+    // MARK: - Folders (spec 0010)
+
+    /// The child folder names directly under `path` (empty = top level), for building a folder screen.
+    func childFolders(at path: [String]) async -> [String] { await driver.childFolders(at: path) }
+
+    /// Create a folder under `path`; returns the sanitized name used, or nil when rejected/empty.
+    @discardableResult
+    func createFolder(named name: String, at path: [String]) async -> String? {
+        await driver.createFolder(named: name, at: path)
+    }
+
+    /// Rename the folder at `path`; returns the sanitized new name, or nil when rejected/conflicting.
+    @discardableResult
+    func renameFolder(at path: [String], to newName: String) async -> String? {
+        await driver.renameFolder(at: path, to: newName)
+    }
+
+    /// Delete the folder at `path` and everything inside it (cascade), then reload.
+    func deleteFolder(at path: [String]) async { await driver.deleteFolder(at: path) }
+
+    /// Move a note into `folderPath` (empty = top level) by re-saving it there, then reload.
+    func move(_ note: Note, to folderPath: [String]) async { await driver.move(note, to: folderPath) }
+
     /// Copy the driver's current state into the published properties so observers refresh.
     private func mirror() {
         notes = driver.notes
         didLoad = driver.didLoad
         deleteFailed = driver.deleteFailed
+        reloadGeneration = driver.reloadGeneration
     }
 }
