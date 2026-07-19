@@ -67,14 +67,20 @@ final class FileTranscriptionMapperTests: XCTestCase {
     }
 
     func testTimingsAlignOneToOneWithParagraphs() {
-        // Mixed gaps: seg1+seg2 flow (0.5s gap), seg3 breaks (3s gap). Two paragraphs, two timings.
+        // Mixed gaps: seg1 (0-1) + seg2 (1.5-2.5) flow (0.5s gap), seg3 (6-7) breaks (3.5s gap). Two
+        // paragraphs, two timings - assert the CONCRETE merged/broken values, not just the count.
         let segments = [
             TranscribedSegment(text: "a", startSeconds: 0, durationSeconds: 1),
             TranscribedSegment(text: "b", startSeconds: 1.5, durationSeconds: 1),
             TranscribedSegment(text: "c", startSeconds: 6, durationSeconds: 1),
         ]
         let mapping = FileTranscriptionMapper.map(segments: segments)
-        XCTAssertEqual(mapping.paragraphs.count, mapping.timings.count)
         XCTAssertEqual(mapping.paragraphs, ["a b", "c"])
+        XCTAssertEqual(mapping.timings.count, 2)
+        // Merged first paragraph spans 0 -> 2.5 (seg2 end); second is seg3's own range [6, 1].
+        XCTAssertEqual(mapping.timings[0].start, 0, accuracy: 0.001)
+        XCTAssertEqual(mapping.timings[0].duration, 2.5, accuracy: 0.001)
+        XCTAssertEqual(mapping.timings[1].start, 6, accuracy: 0.001)
+        XCTAssertEqual(mapping.timings[1].duration, 1, accuracy: 0.001)
     }
 }

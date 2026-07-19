@@ -31,6 +31,22 @@ final class WatchCaptureIngestServiceTests: XCTestCase {
         }
     }
 
+    /// A `FileTranscribing` that COUNTS its calls, so a test can prove a re-delivered capture is NOT
+    /// re-transcribed (the idempotency guard skips the whole ingest).
+    private final class CountingTranscriber: FileTranscribing, @unchecked Sendable {
+        let segments: [TranscribedSegment]
+        private let lock = NSLock()
+        private var _callCount = 0
+        var callCount: Int { lock.lock(); defer { lock.unlock() }; return _callCount }
+
+        init(segments: [TranscribedSegment]) { self.segments = segments }
+
+        func transcribe(fileAt url: URL) async throws -> [TranscribedSegment] {
+            lock.lock(); _callCount += 1; lock.unlock()
+            return segments
+        }
+    }
+
     /// Write a short real `.m4a` (via the existing `RecordingWriter`) so the ingest service reads a real
     /// duration off it. Returns the file URL.
     private func makeRecording(seconds: Double = 1.0) throws -> URL {
@@ -129,5 +145,68 @@ final class WatchCaptureIngestServiceTests: XCTestCase {
 
         let loaded = store.loadAll().first { $0.id == metadata.captureID }
         XCTAssertEqual(loaded?.folderPath, [])
+    }
+
+    func testHostileFolderHintLandsAtTopLevel() async throws {
+        // A traversal / absolute / garbage hint must resolve to the TOP LEVEL, proving the allowlist
+        // (resolveFolderPath only accepts an EXISTING path) plus the store's own name sanitization defend
+        // the tree - the file never escapes to a crafted directory.
+        for hint in [[".."], ["/etc"], ["..", ".."], ["\u{0}"], ["a/b"]] {
+            let fileURL = try makeRecording(seconds: 1.0)
+            let service = WatchCaptureIngestService(
+                store: store,
+                transcriber: StubTranscriber(
+                    segments: [TranscribedSegment(text: "Hostile hint", startSeconds: 0, durationSeconds: 1)],
+                    error: nil))
+            let metadata = WatchCaptureMetadata(captureID: UUID(), capturedAt: Date(), folderHint: hint)
+            _ = await service.ingest(fileURL: fileURL, metadata: metadata)
+
+            let loaded = store.loadAll().first { $0.id == metadata.captureID }
+            XCTAssertEqual(loaded?.folderPath, [], "hint \(hint) should land at top level")
+        }
+    }
+
+    // MARK: Idempotency (re-delivery)
+
+    func testReDeliveryYieldsOneThoughtAndDoesNotReTranscribe() async throws {
+        let captureID = UUID()
+        let counting = CountingTranscriber(
+            segments: [TranscribedSegment(text: "First delivery", startSeconds: 0, durationSeconds: 1)])
+        let service = WatchCaptureIngestService(store: store, transcriber: counting)
+
+        let metadata = WatchCaptureMetadata(captureID: captureID, capturedAt: Date())
+        _ = await service.ingest(fileURL: try makeRecording(), metadata: metadata)
+        // Deliver the SAME capture again (WatchConnectivity can re-deliver a transfer).
+        _ = await service.ingest(fileURL: try makeRecording(), metadata: metadata)
+
+        // Exactly ONE thought, and the second delivery did NOT re-run transcription.
+        XCTAssertEqual(store.loadAll().filter { $0.id == captureID }.count, 1)
+        XCTAssertEqual(counting.callCount, 1)
+    }
+
+    func testPhoneEditBetweenDeliveriesIsPreserved() async throws {
+        let captureID = UUID()
+        let service = WatchCaptureIngestService(
+            store: store,
+            transcriber: StubTranscriber(
+                segments: [TranscribedSegment(text: "Original text", startSeconds: 0, durationSeconds: 1)],
+                error: nil))
+        let metadata = WatchCaptureMetadata(captureID: captureID, capturedAt: Date())
+
+        // First delivery files the thought.
+        _ = await service.ingest(fileURL: try makeRecording(), metadata: metadata)
+
+        // The user edits it on the phone between deliveries.
+        let filed = try XCTUnwrap(store.loadAll().first { $0.id == captureID })
+        let edited = filed.editedCopy(
+            paragraphs: ["Edited on the phone"], hasCustomTitle: true, customTitle: "My title")
+        try store.save(edited)
+
+        // The SAME capture is re-delivered: it must be a NO-OP, preserving the edit (not clobbering it).
+        _ = await service.ingest(fileURL: try makeRecording(), metadata: metadata)
+
+        let after = try XCTUnwrap(store.loadAll().first { $0.id == captureID })
+        XCTAssertEqual(after.paragraphs, ["Edited on the phone"])
+        XCTAssertEqual(after.title, "My title")
     }
 }

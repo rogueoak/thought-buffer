@@ -56,19 +56,26 @@ enum WatchCaptureIngestor {
             ? Thought.deriveTitle(paragraphs: paragraphs, createdAt: metadata.capturedAt)
             : audioOnlyTitle(capturedAt: metadata.capturedAt, now: now)
 
-        // Audio-only (no transcript): attach the recording with ONE whole-file timing so it is playable
-        // and `hasAudio` is true. A non-positive duration is an unusable file, so leave it text-only.
+        // A non-positive duration means the recording is unusable (unreadable / empty file), so there is no
+        // real audio to attach - guard on it for BOTH paths (nit): otherwise a transcribed thought whose
+        // segments carried only degenerate `[0, 0]` timings would still count toward `hasAudio` (which is
+        // `audioFileName != nil && !timings.isEmpty`, duration-agnostic) with nothing playable behind it.
+        let hasPlayableAudio = audioDuration > 0
+
         if !hasText {
-            if audioDuration > 0 {
-                timings = [ParagraphTiming(start: 0, duration: audioDuration)]
-            } else {
-                timings = []
-            }
+            // Audio-only (no transcript): attach the recording with ONE whole-file timing so it is playable
+            // and `hasAudio` is true. With no usable audio it is truly empty and saves as text-only.
+            timings = hasPlayableAudio ? [ParagraphTiming(start: 0, duration: audioDuration)] : []
+        } else if !hasPlayableAudio {
+            // Transcribed text but no usable recording: keep the text, drop any (degenerate) timings so the
+            // thought is text-only rather than claiming a recording that cannot play.
+            timings = []
         }
 
-        // The audio filename is attached whenever there is at least one timing to pair it with, matching
-        // `Thought.hasAudio`'s dual-guard (a filename with no timings would parse back as text-only).
-        let attachedFileName: String? = timings.isEmpty ? nil : audioFileName
+        // The audio filename is attached only when there is real, playable audio AND at least one timing to
+        // pair it with (matching `Thought.hasAudio`'s dual-guard - a filename with no timings parses back
+        // as text-only).
+        let attachedFileName: String? = (hasPlayableAudio && !timings.isEmpty) ? audioFileName : nil
 
         return Thought(
             id: metadata.captureID,

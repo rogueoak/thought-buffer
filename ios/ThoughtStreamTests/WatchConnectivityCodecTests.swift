@@ -77,4 +77,55 @@ final class WatchConnectivityCodecTests: XCTestCase {
         let encoded = WatchConnectivityCodec.encode(recentThoughts: [])
         XCTAssertEqual(WatchConnectivityCodec.decodeRecentThoughts(encoded), [])
     }
+
+    // MARK: Kind markers (structural routing)
+
+    func testEveryPayloadCarriesItsKindMarker() {
+        // Each channel's payload is tagged so a receiver routes STRUCTURALLY, never by guessing fields.
+        let capture = WatchConnectivityCodec.encode(
+            WatchCaptureMetadata(captureID: UUID(), capturedAt: Date()))
+        XCTAssertEqual(capture[WatchConnectivityCodec.kindKey] as? String, WatchConnectivityCodec.captureKind)
+
+        let recent = WatchConnectivityCodec.encode(recentThoughts: [])
+        XCTAssertEqual(recent[WatchConnectivityCodec.kindKey] as? String, WatchConnectivityCodec.recentThoughtsKind)
+
+        let request = WatchConnectivityCodec.encode(audioRequestFor: UUID())
+        XCTAssertEqual(request[WatchConnectivityCodec.kindKey] as? String, WatchConnectivityCodec.audioRequestKind)
+
+        let response = WatchConnectivityCodec.encode(audioResponseFor: UUID())
+        XCTAssertEqual(response[WatchConnectivityCodec.kindKey] as? String, WatchConnectivityCodec.audioResponseKind)
+    }
+
+    // MARK: Audio request / response (on-demand playback)
+
+    func testAudioRequestRoundTrips() {
+        let id = UUID()
+        let encoded = WatchConnectivityCodec.encode(audioRequestFor: id)
+        XCTAssertEqual(WatchConnectivityCodec.decodeAudioRequest(encoded), id)
+    }
+
+    func testAudioResponseRoundTrips() {
+        let id = UUID()
+        let encoded = WatchConnectivityCodec.encode(audioResponseFor: id)
+        XCTAssertEqual(WatchConnectivityCodec.decodeAudioResponse(encoded), id)
+    }
+
+    func testAudioRequestAndResponseAreNotConfusedStructurally() {
+        // A response payload must NOT decode as a request (and vice versa) even though both carry a
+        // thought id - the kind marker keeps them distinct.
+        let id = UUID()
+        let request = WatchConnectivityCodec.encode(audioRequestFor: id)
+        let response = WatchConnectivityCodec.encode(audioResponseFor: id)
+        XCTAssertNil(WatchConnectivityCodec.decodeAudioResponse(request))
+        XCTAssertNil(WatchConnectivityCodec.decodeAudioRequest(response))
+        // And neither is mistaken for the recent-thoughts channel.
+        XCTAssertNil(WatchConnectivityCodec.decodeRecentThoughts(request))
+    }
+
+    func testAudioRequestDecodeRejectsMissingKindOrID() {
+        XCTAssertNil(WatchConnectivityCodec.decodeAudioRequest(nil))
+        XCTAssertNil(WatchConnectivityCodec.decodeAudioRequest(["thoughtID": UUID().uuidString])) // no kind
+        XCTAssertNil(WatchConnectivityCodec.decodeAudioRequest([
+            WatchConnectivityCodec.kindKey: WatchConnectivityCodec.audioRequestKind])) // no id
+    }
 }

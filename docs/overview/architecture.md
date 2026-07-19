@@ -458,24 +458,35 @@ How the system is built and why.
   toggle, add/edit/delete override rows, a read-only storage-status row from `ThoughtStoreKind`). The chosen `ThoughtSortOrder` persists through
   `SettingsStoring.thoughtSortOrder` (a stable string tag; unknown -> `.newest`).
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper. `Tokens.swift`
-  carries ONE hand-edit (spec 0023): `Color(light:dark:)` guards `#if os(watchOS)` to resolve to the dark
-  value, because watchOS has no `UIColor(dynamicProvider:)` / trait `userInterfaceStyle`; preserve it on a
-  Canopy re-sync.
+  stays PRISTINE-generated except for ONE loud two-line marker (spec 0023): its `Color(light:dark:)` /
+  `Color(rgb:)` extension is wrapped `#if !os(watchOS)`, because that extension uses
+  `UIColor(dynamicProvider:)` which is `API_UNAVAILABLE(watchos)`. The actual watch implementation lives in
+  a HAND-OWNED `ThoughtStreamShared/CanopyColorWatch.swift` (`#if os(watchOS)`, resolves each color to its
+  dark value), so a Canopy re-sync that overwrites `Tokens.swift` only needs the two-line wrapper re-added
+  (the file header says so), not a logic port. The generated `CanopyColor` enum still holds the token
+  VALUES on both platforms.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.
 - `Watch/` (spec 0023) - the PHONE side of the Apple Watch link. `PhoneConnectivityCoordinator` owns the
-  `WCSession`: it receives a transferred `.m4a` capture, ingests it, and pushes the recent-thoughts
-  projection back (`updateApplicationContext`); it also answers an on-demand audio request with a tagged
-  `transferFile`. Ingest is a pure core plus a thin IO shell: `SpeechAnalyzerFileTranscriber` (the
-  `FileTranscribing` seam) runs `SpeechAnalyzer.analyzeSequence(from:)` over the file and decodes each
-  finalized result into `[TranscribedSegment]`; the pure `FileTranscriptionMapper` maps those to
-  paragraphs + timings REUSING `ParagraphGrouper` (silence-gap grouping, offset 0 since a file has one
-  timeline) and `ParagraphTiming.merged`; the pure `WatchCaptureIngestor` builds the `Thought` (title,
-  folder-hint resolution against existing folders, and the audio-only fallback that NEVER drops a capture);
-  and `WatchCaptureIngestService` ties transcribe -> build -> save-file-first -> adopt-audio -> re-save
-  through the existing `ThoughtStoring`. The coordinator is built and activated in `AppDependencies.resolve`
-  (nil in tests / on an iPad with no watch), its `recentThoughtsProvider`/`audioURLProvider` capturing the
-  store; `StreamFeed.onThoughtsChanged` calls `pushRecentThoughts` on every list change so the wrist stays
-  fresh. A no-op where WatchConnectivity is unavailable, so the iOS-only path is unchanged.
+  `WCSession`: it receives a transferred `.m4a` capture, ingests it (SERIALIZED through an `IngestQueue`
+  actor so a reconnect batch never runs concurrent `SpeechAnalyzer` passes), and pushes the recent-thoughts
+  projection back - the push is DEBOUNCED and runs OFF the delegate thread (a `store.loadAll()` behind a
+  background task), so a synced-in batch or a multi-delete coalesces into one load + one context write
+  rather than N. It also answers an on-demand audio request with a tagged `transferFile`. Ingest is a pure
+  core plus a thin IO shell: `SpeechAnalyzerFileTranscriber` (the `FileTranscribing` seam) runs
+  `SpeechAnalyzer.analyzeSequence(from:)` over the file and decodes each finalized result into
+  `[TranscribedSegment]`; the pure `FileTranscriptionMapper` maps those to paragraphs + timings REUSING
+  `ParagraphGrouper` (silence-gap grouping, offset 0 since a file has one timeline) and
+  `ParagraphTiming.merged`; the pure `WatchCaptureIngestor` builds the `Thought` (title, folder-hint
+  resolution against existing folders, and the audio-only fallback that NEVER drops a capture, with a
+  positive-duration guard so a degenerate timing never claims a non-playable recording); and
+  `WatchCaptureIngestService` ties transcribe -> build -> save -> save-audio -> single final save through
+  the existing `ThoughtStoring`. IDEMPOTENCY: `ingest` SKIPS the whole flow (no re-transcribe, no re-save)
+  when a thought with the capture id already exists, so a WatchConnectivity RE-DELIVERY is a no-op and never
+  clobbers a phone edit made between deliveries (the capture id is the thought id). The coordinator is built
+  and activated in `AppDependencies.resolve` (nil in tests / on an iPad with no watch), its
+  `recentThoughtsProvider`/`audioURLProvider` capturing the store; `StreamFeed.onThoughtsChanged` calls the
+  debounced `pushRecentThoughts` on every list change so the wrist stays fresh. A no-op where
+  WatchConnectivity is unavailable, so the iOS-only path is unchanged.
 
 ## Shared source (`ios/ThoughtStreamShared/`) and the watch target
 
@@ -483,8 +494,13 @@ How the system is built and why.
   watchOS app, so the two sides share ONE definition and cannot drift. Holds `WatchConnectivityPayload`
   (the `WatchCaptureMetadata` and `RecentThoughtProjection` value types plus the pure `WatchConnectivityCodec`
   that encodes/decodes them to the plist-safe `[String: Any]` dictionaries a `WCSession` moves - no
-  WatchConnectivity import, so the wire contract is unit-testable) and `RecentThoughtsProjector` (pure
-  `[Thought]` -> capped `[RecentThoughtProjection]`).
+  WatchConnectivity import, so the wire contract is unit-testable). Every payload carries a `kind` marker
+  (`capture` / `recentThoughts` / `audioRequest` / `audioResponse`) so a receiver routes STRUCTURALLY, not
+  by guessing which fields are present, and ALL wire field names are centralized in the codec so the two
+  sides cannot drift on a raw literal (the audio request/response keys were previously hand-typed at each
+  call site). Also `RecentThoughtsProjector` (pure `[Thought]` -> capped `[RecentThoughtProjection]`) and
+  `CanopyColorWatch` (the hand-owned watchOS `Color(light:dark:)`/`Color(rgb:)` glue, `#if os(watchOS)`,
+  kept out of the generated `Tokens.swift`).
 - `ThoughtStreamWatch Watch App/` (spec 0023) - the watchOS app. `ThoughtStreamWatchApp` roots a two-tab
   `TabView` (Capture / Recent). `WatchRecorder` records the mic to `.m4a` (`AVAudioRecorder`) with a
   start/stop haptic; `WatchConnectivityManager` (the watch `WCSession`) `transferFile`s a capture reliably,
@@ -553,17 +569,21 @@ selection when the shown thought is deleted, keeps it otherwise, clears nothing 
 split-view column LAYOUT, the one-projection sharing across columns (wiring, not unit-proven),
 rotation/multitasking adaptivity, and the cross-column Shake-to-Undo re-home + layout-pass self-heal are
 UI-only and verified on device / in the iPad simulator. Plus the Apple Watch link (spec 0023): the pure
-wire codecs (`WatchConnectivityCodecTests` - capture-metadata and recent-thoughts encode/decode round-trip,
-tolerant decode of missing/wrong-kind/malformed rows), the file-transcription mapping
-(`FileTranscriptionMapperTests` - segments -> paragraphs+timings, silence-gap flow vs. break, whitespace
-skip, degenerate-range placeholder, 1:1 alignment), the recent-thoughts projection
-(`RecentThoughtsProjectorTests` - title/preview/duration/audio-flag, preview flatten+cap, limit, order),
-the pure ingest decisions (`WatchCaptureIngestorTests` - transcribed thought, audio-only fallback that
-never drops a capture, unusable-duration -> text-only, folder-hint resolve/fallback), and the ingest
-service end to end (`WatchCaptureIngestServiceTests` - a stub transcriber + real `ThoughtStore` in a temp
-dir proving the transcribed and audio-only-fallback paths file a thought with audio, and folder-hint
-filing). The watch UI, real on-watch mic capture, the live WatchConnectivity transfer, and real file
-transcription are device/simulator-verified.
+wire codecs (`WatchConnectivityCodecTests` - capture-metadata, recent-thoughts, and audio-request/response
+encode/decode round-trip; tolerant decode of missing/wrong-kind/malformed rows; every payload carries its
+`kind` marker; request and response are NOT confused structurally despite both carrying a thought id), the
+file-transcription mapping (`FileTranscriptionMapperTests` - segments -> paragraphs+timings, silence-gap
+flow vs. break with CONCRETE merged/broken timing values, whitespace skip, degenerate-range placeholder,
+1:1 alignment), the recent-thoughts projection (`RecentThoughtsProjectorTests` - title/preview/duration/
+audio-flag, preview flatten+cap, limit, order), the pure ingest decisions (`WatchCaptureIngestorTests` -
+transcribed thought, audio-only fallback that never drops a capture, unusable-duration -> text-only for
+both the audio-only and transcribed paths, folder-hint resolve/fallback), and the ingest service end to end
+(`WatchCaptureIngestServiceTests` - a stub transcriber + real `ThoughtStore` in a temp dir proving the
+transcribed and audio-only-fallback paths file a thought with audio, folder-hint filing, a HOSTILE hint
+(`..`/absolute/control-char/separator) landing at top level, and IDEMPOTENCY: a re-delivered capture yields
+ONE thought and does not re-transcribe, and a phone edit made between deliveries is preserved). The watch
+UI, real on-watch mic capture, the live WatchConnectivity transfer, and real file transcription are
+device/simulator-verified.
 The generated scheme runs them.
 
 ## Design tokens

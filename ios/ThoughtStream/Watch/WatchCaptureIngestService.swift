@@ -26,6 +26,15 @@ final class WatchCaptureIngestService: Sendable {
     /// but a valid recording is ALWAYS saved (audio-only if transcription yields nothing).
     @discardableResult
     func ingest(fileURL: URL, metadata: WatchCaptureMetadata) async -> Thought? {
+        // IDEMPOTENCY (fix 1): WatchConnectivity can RE-DELIVER a `transferFile`, and the capture id IS the
+        // thought id. If a thought with this id already exists, SKIP the whole ingest - no re-transcribe
+        // (non-deterministic), no re-save (would clobber a phone edit made between deliveries). This makes a
+        // re-delivered capture a no-op and prevents edit loss. It also resolves the capture-id-collision
+        // concern: an id already in the store is treated as "already handled", never overwritten.
+        if let existing = store.loadAll().first(where: { $0.id == metadata.captureID }) {
+            return existing
+        }
+
         // Transcribe the file. ANY failure (recognizer/model/unreadable) or an empty result becomes the
         // audio-only fallback: the capture is never dropped for want of a transcript.
         let transcription: WatchCaptureIngestor.Transcription
@@ -40,7 +49,7 @@ final class WatchCaptureIngestService: Sendable {
         let audioFileName = "\(metadata.captureID.uuidString).\(ThoughtStore.audioFileExtension)"
         let resolvedFolder = WatchCaptureIngestor.resolveFolderPath(
             hint: metadata.folderHint,
-            existingFolderPaths: allFolderPaths()
+            existingFolderPaths: allFolderPaths(forHint: metadata.folderHint)
         )
 
         let thought = WatchCaptureIngestor.buildThought(
@@ -51,16 +60,18 @@ final class WatchCaptureIngestService: Sendable {
             audioDuration: audioDuration
         )
 
-        // Save FILE-FIRST (spec 0010): the store places the recording beside the located `.md`, so the
-        // thought file must exist in its folder before the audio is adopted, or a foldered capture's
-        // `.m4a` would land at the root. Then adopt the audio and re-save with the audio metadata.
         do {
-            // Write the text shape first WITHOUT audio metadata so `.md` exists to locate.
-            let textOnly = thought.withoutAudio()
-            try store.save(textOnly)
-            // Adopt the recording into the thought's slot beside the just-written `.md`.
             if thought.audioFileName != nil {
+                // Tighten the file-first window (fix 6): write a MINIMAL text-only placeholder so the
+                // store can locate the folder and place the `.m4a` beside it, adopt the audio, then do a
+                // SINGLE final save of the complete thought (with timings). The placeholder exists only
+                // for the moment between these two synchronous saves, so a crash cannot leave a durable
+                // text-only `.md` + orphan `.m4a` that the idempotency guard would then skip (never heal).
+                try store.save(thought.withoutAudio())
                 try store.saveAudio(from: fileURL, for: thought.id)
+                try store.save(thought)
+            } else {
+                // No recording to attach (unusable audio): one save of the text-only thought.
                 try store.save(thought)
             }
             return thought
@@ -71,10 +82,13 @@ final class WatchCaptureIngestService: Sendable {
         }
     }
 
-    /// Every existing folder path in the store (each an ordered `[String]`), for resolving the watch's
-    /// folder hint. Derived from the loaded thoughts' `folderPath`s plus the empty folders the store
-    /// reports, so a hint into an empty-but-present folder still resolves.
-    private func allFolderPaths() -> [[String]] {
+    /// The existing folder paths to resolve the watch's folder hint against (each an ordered `[String]`).
+    /// Short-circuits (fix 10): when there is NO hint the resolution is trivially the top level, so it skips
+    /// the `loadAll` + recursive folder walk entirely. When a hint IS present it derives the real paths from
+    /// the loaded thoughts' `folderPath`s plus the empty folders the store reports, so a hint into an
+    /// empty-but-present folder still resolves.
+    private func allFolderPaths(forHint hint: [String]) -> [[String]] {
+        guard !hint.isEmpty else { return [] }
         var paths = Set<[String]>()
         for thought in store.loadAll() where !thought.folderPath.isEmpty {
             // Every ancestor prefix is a real folder too.

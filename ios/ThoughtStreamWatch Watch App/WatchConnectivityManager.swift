@@ -22,8 +22,16 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
     /// a "will sync" state. Decremented as `transferFile` completes.
     @Published private(set) var pendingTransfers = 0
     /// The URL of an audio file the phone sent back for playback, keyed by thought id, so the player can
-    /// pick it up. Cleared after consumption.
+    /// pick it up. Cleared after consumption, and BOUNDED (spec 0023 "cache a few"): only the most recent
+    /// `maxCachedAudio` entries are kept, and an evicted entry's temp file is deleted so the cache never
+    /// grows without bound.
     @Published private(set) var receivedAudio: [UUID: URL] = [:]
+    /// Insertion order of `receivedAudio` keys, oldest first, for LRU-style eviction.
+    private var receivedAudioOrder: [UUID] = []
+
+    /// How many fetched recordings the watch caches at once (spec 0023 "cache a few recent ones"). Small
+    /// because the wrist has little storage and a playback fetch is cheap to re-request.
+    static let maxCachedAudio = 3
 
     static let shared = WatchConnectivityManager()
 
@@ -61,16 +69,38 @@ final class WatchConnectivityManager: NSObject, ObservableObject {
         guard WCSession.isSupported() else { return }
         let session = WCSession.default
         guard session.activationState == .activated else { return }
-        session.sendMessage(["audioRequest": thoughtID.uuidString], replyHandler: nil, errorHandler: nil)
+        session.sendMessage(
+            WatchConnectivityCodec.encode(audioRequestFor: thoughtID), replyHandler: nil, errorHandler: nil)
         #endif
     }
 
     /// Consume (and clear) an audio file the phone sent for a thought id, so a subsequent request is not
-    /// served a stale file.
+    /// served a stale file. Does NOT delete the file - the caller is about to play it; a later cache
+    /// insertion or eviction cleans up temp files.
     func consumeAudio(for thoughtID: UUID) -> URL? {
         let url = receivedAudio[thoughtID]
         receivedAudio[thoughtID] = nil
+        receivedAudioOrder.removeAll { $0 == thoughtID }
         return url
+    }
+
+    /// Cache a fetched audio file, evicting the oldest entry (and deleting its temp file) once the cache
+    /// exceeds `maxCachedAudio`, so the wrist never accumulates unbounded temp recordings.
+    fileprivate func cacheAudio(_ url: URL, for thoughtID: UUID) {
+        // Replacing an existing entry: drop the old file first and refresh its recency.
+        if let stale = receivedAudio[thoughtID], stale != url {
+            try? FileManager.default.removeItem(at: stale)
+        }
+        receivedAudioOrder.removeAll { $0 == thoughtID }
+        receivedAudio[thoughtID] = url
+        receivedAudioOrder.append(thoughtID)
+
+        while receivedAudioOrder.count > Self.maxCachedAudio {
+            let evicted = receivedAudioOrder.removeFirst()
+            if let evictedURL = receivedAudio.removeValue(forKey: evicted) {
+                try? FileManager.default.removeItem(at: evictedURL)
+            }
+        }
     }
 }
 
@@ -104,15 +134,12 @@ extension WatchConnectivityManager: WCSessionDelegate {
     }
 
     /// The phone sent a thought's audio back for playback (tagged with the id in metadata). Copy it out of
-    /// the transient inbox and expose it for the player.
+    /// the transient inbox and cache it (bounded) for the player.
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
-        guard let idString = file.metadata?["audioResponse"] as? String,
-              let id = UUID(uuidString: idString) else {
-            return
-        }
+        guard let id = WatchConnectivityCodec.decodeAudioResponse(file.metadata) else { return }
         let localURL = Self.copyToTemp(file.fileURL, id: id)
         Task { @MainActor in
-            self.receivedAudio[id] = localURL
+            self.cacheAudio(localURL, for: id)
         }
     }
 

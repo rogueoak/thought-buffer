@@ -76,52 +76,72 @@ struct RecentThoughtProjection: Equatable, Hashable, Identifiable {
 /// a missing or wrong-typed field yields nil rather than trapping, so a malformed or
 /// future-versioned message is ignored, never a crash.
 enum WatchConnectivityCodec {
-    /// The message-kind marker, so one applicationContext/userInfo channel can carry more than one
-    /// payload shape and the receiver routes on it.
+    /// The message-kind marker present on EVERY payload, so a receiver routes STRUCTURALLY (on the kind)
+    /// rather than by which fields happen to be present. A `capture` metadata dict and an `audioRequest`
+    /// message could otherwise be confused if their fields overlapped; the kind removes that ambiguity and
+    /// lets the wire format add shapes without a decoder guessing.
     static let kindKey = "kind"
+    static let captureKind = "capture"
     static let recentThoughtsKind = "recentThoughts"
+    static let audioRequestKind = "audioRequest"
+    static let audioResponseKind = "audioResponse"
 
-    // MARK: Capture metadata
+    /// The wire field names, centralized so the phone and watch cannot drift on a raw string literal (the
+    /// audio request/response keys were previously typed by hand at each call site).
+    private static let captureIDKey = "captureID"
+    private static let capturedAtKey = "capturedAt"
+    private static let folderHintKey = "folderHint"
+    private static let itemsKey = "items"
+    private static let idKey = "id"
+    private static let titleKey = "title"
+    private static let previewKey = "preview"
+    private static let durationKey = "duration"
+    private static let hasAudioKey = "hasAudio"
+    private static let thoughtIDKey = "thoughtID"
+
+    // MARK: Capture metadata (watch -> phone)
 
     /// Encode capture metadata into the file-transfer `metadata` dictionary. ISO-8601 for the date so
-    /// it is stable across encoders and human-readable in a log.
+    /// it is stable across encoders and human-readable in a log. Carries the `capture` kind marker.
     static func encode(_ metadata: WatchCaptureMetadata) -> [String: Any] {
         [
-            "captureID": metadata.captureID.uuidString,
-            "capturedAt": iso8601.string(from: metadata.capturedAt),
-            "folderHint": metadata.folderHint,
+            kindKey: captureKind,
+            captureIDKey: metadata.captureID.uuidString,
+            capturedAtKey: iso8601.string(from: metadata.capturedAt),
+            folderHintKey: metadata.folderHint,
         ]
     }
 
     /// Decode capture metadata from a file-transfer `metadata` dictionary, or nil when it is missing the
-    /// required fields (so a stray transfer is ignored rather than filed with a bogus id/date).
+    /// required fields (so a stray transfer is ignored rather than filed with a bogus id/date). Tolerant of
+    /// a missing kind marker so a capture from an older watch build (pre-kind) still decodes.
     static func decodeCaptureMetadata(_ dictionary: [String: Any]?) -> WatchCaptureMetadata? {
         guard let dictionary,
-              let idString = dictionary["captureID"] as? String,
+              let idString = dictionary[captureIDKey] as? String,
               let captureID = UUID(uuidString: idString),
-              let dateString = dictionary["capturedAt"] as? String,
+              let dateString = dictionary[capturedAtKey] as? String,
               let capturedAt = iso8601.date(from: dateString) else {
             return nil
         }
-        let folderHint = (dictionary["folderHint"] as? [String]) ?? []
+        let folderHint = (dictionary[folderHintKey] as? [String]) ?? []
         return WatchCaptureMetadata(captureID: captureID, capturedAt: capturedAt, folderHint: folderHint)
     }
 
-    // MARK: Recent-thoughts projection
+    // MARK: Recent-thoughts projection (phone -> watch)
 
     /// Encode a recent-thoughts projection into an applicationContext/userInfo dictionary. Carries the
     /// kind marker so the watch routes it, and each item as a plist-safe sub-dictionary.
     static func encode(recentThoughts: [RecentThoughtProjection]) -> [String: Any] {
         let items: [[String: Any]] = recentThoughts.map { thought in
             [
-                "id": thought.id.uuidString,
-                "title": thought.title,
-                "preview": thought.preview,
-                "duration": thought.duration,
-                "hasAudio": thought.hasAudio,
+                idKey: thought.id.uuidString,
+                titleKey: thought.title,
+                previewKey: thought.preview,
+                durationKey: thought.duration,
+                hasAudioKey: thought.hasAudio,
             ]
         }
-        return [kindKey: recentThoughtsKind, "items": items]
+        return [kindKey: recentThoughtsKind, itemsKey: items]
     }
 
     /// Decode a recent-thoughts projection from an applicationContext/userInfo dictionary, or nil when
@@ -130,21 +150,57 @@ enum WatchConnectivityCodec {
     static func decodeRecentThoughts(_ dictionary: [String: Any]?) -> [RecentThoughtProjection]? {
         guard let dictionary,
               dictionary[kindKey] as? String == recentThoughtsKind,
-              let items = dictionary["items"] as? [[String: Any]] else {
+              let items = dictionary[itemsKey] as? [[String: Any]] else {
             return nil
         }
         return items.compactMap { item in
-            guard let idString = item["id"] as? String,
+            guard let idString = item[idKey] as? String,
                   let id = UUID(uuidString: idString),
-                  let title = item["title"] as? String else {
+                  let title = item[titleKey] as? String else {
                 return nil
             }
-            let preview = (item["preview"] as? String) ?? ""
-            let duration = (item["duration"] as? Double) ?? 0
-            let hasAudio = (item["hasAudio"] as? Bool) ?? false
+            let preview = (item[previewKey] as? String) ?? ""
+            let duration = (item[durationKey] as? Double) ?? 0
+            let hasAudio = (item[hasAudioKey] as? Bool) ?? false
             return RecentThoughtProjection(
                 id: id, title: title, preview: preview, duration: duration, hasAudio: hasAudio)
         }
+    }
+
+    // MARK: Audio request / response (watch <-> phone, on-demand playback)
+
+    /// Encode a watch -> phone "send me this thought's audio" message (a `sendMessage` payload). The kind
+    /// marker lets the phone route it structurally, so it can never be confused with another message shape.
+    static func encode(audioRequestFor thoughtID: UUID) -> [String: Any] {
+        [kindKey: audioRequestKind, thoughtIDKey: thoughtID.uuidString]
+    }
+
+    /// Decode an audio-request message into the requested thought id, or nil when it is not an
+    /// audio-request message (wrong/missing kind or id).
+    static func decodeAudioRequest(_ dictionary: [String: Any]?) -> UUID? {
+        guard let dictionary,
+              dictionary[kindKey] as? String == audioRequestKind,
+              let idString = dictionary[thoughtIDKey] as? String else {
+            return nil
+        }
+        return UUID(uuidString: idString)
+    }
+
+    /// Encode the phone -> watch audio-response file-transfer `metadata` (the id the transferred `.m4a`
+    /// answers), so the watch matches the file to the requesting row.
+    static func encode(audioResponseFor thoughtID: UUID) -> [String: Any] {
+        [kindKey: audioResponseKind, thoughtIDKey: thoughtID.uuidString]
+    }
+
+    /// Decode an audio-response file-transfer `metadata` into the answered thought id, or nil when it is
+    /// not an audio-response (wrong/missing kind or id).
+    static func decodeAudioResponse(_ dictionary: [String: Any]?) -> UUID? {
+        guard let dictionary,
+              dictionary[kindKey] as? String == audioResponseKind,
+              let idString = dictionary[thoughtIDKey] as? String else {
+            return nil
+        }
+        return UUID(uuidString: idString)
     }
 
     private static let iso8601: ISO8601DateFormatter = {

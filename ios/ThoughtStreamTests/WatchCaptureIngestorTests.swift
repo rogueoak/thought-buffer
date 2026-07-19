@@ -84,6 +84,25 @@ final class WatchCaptureIngestorTests: XCTestCase {
         XCTAssertTrue(thought.timings.isEmpty)
     }
 
+    func testTranscribedTextWithUnusableAudioIsTextOnly() {
+        // Transcribed text but the recording is unreadable (duration 0), and the mapper produced only a
+        // degenerate [0,0] timing: keep the text, but do NOT claim a recording that cannot play (nit -
+        // a degenerate timing must not count toward hasAudio).
+        let mapping = FileTranscriptionMapper.Mapping(
+            paragraphs: ["Some words"], timings: [ParagraphTiming(start: 0, duration: 0)])
+        let thought = WatchCaptureIngestor.buildThought(
+            from: .transcribed(mapping),
+            metadata: metadata(),
+            resolvedFolderPath: [],
+            audioFileName: "\(captureID.uuidString).m4a",
+            audioDuration: 0
+        )
+        XCTAssertEqual(thought.paragraphs, ["Some words"])
+        XCTAssertFalse(thought.hasAudio)
+        XCTAssertNil(thought.audioFileName)
+        XCTAssertTrue(thought.timings.isEmpty)
+    }
+
     // MARK: Folder-hint resolution
 
     func testFolderHintResolvesWhenFolderExists() {
