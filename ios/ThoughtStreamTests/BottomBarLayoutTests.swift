@@ -50,6 +50,33 @@ final class BottomBarLayoutTests: XCTestCase {
         XCTAssertTrue(FolderScreenState.noMatches.showsSearchField)
     }
 
+    /// Keep-search-focus invariant (feedback 0024): typing the FIRST character flips the resolved state from
+    /// `.normal` to `.searchResults` (or `.noMatches` if it matches nothing). Across that flip the search
+    /// field must stay MOUNTED - `showsSearchField` stays true - so the `TextField` is never removed and the
+    /// keyboard/focus is not dropped after one keystroke. The stable field identity is device-verified; this
+    /// pins the pure precondition (the field never unmounts on the transition) so a regression that hides the
+    /// field mid-search is caught here.
+    func testSearchFieldStaysMountedAcrossFirstKeystrokeTransition() {
+        // Before the keystroke: a non-empty store, no active search -> normal folder list, field visible.
+        let before = FolderScreenState.select(
+            storeHasThoughts: true, searchActive: false, hasSearchMatches: false)
+        XCTAssertEqual(before, .normal)
+        XCTAssertTrue(before.showsSearchField)
+
+        // First keystroke matches something -> results list, and the field is STILL mounted.
+        let afterWithMatches = FolderScreenState.select(
+            storeHasThoughts: true, searchActive: true, hasSearchMatches: true)
+        XCTAssertEqual(afterWithMatches, .searchResults)
+        XCTAssertTrue(afterWithMatches.showsSearchField)
+
+        // First keystroke matches nothing -> no-matches state, and the field is STILL mounted so the user
+        // can keep typing / clear without refocusing.
+        let afterNoMatches = FolderScreenState.select(
+            storeHasThoughts: true, searchActive: true, hasSearchMatches: false)
+        XCTAssertEqual(afterNoMatches, .noMatches)
+        XCTAssertTrue(afterNoMatches.showsSearchField)
+    }
+
     // MARK: - Thought-detail bottom bar decision (spec 0021)
 
     /// While editing the title or body, the thought-detail bottom bar is HIDDEN entirely - so the search
