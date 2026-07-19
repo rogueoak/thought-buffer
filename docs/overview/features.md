@@ -190,9 +190,9 @@ Apple's CarPlay **Audio** entitlement.
   the phone shows on the lock screen and in Control Center and keeps playing in the background - a
   real Audio-app trait that needs no entitlement.
 - **One shared playback path.** A single headless `ThoughtPlaybackController` owns the player, the lazy
-  off-main URL resolution, and the Now Playing / remote-command wiring; both the phone detail view
-  (through `ThoughtPlaybackModel`) and the CarPlay scene drive it, so there is one audio path and one
-  writer of `MPNowPlayingInfoCenter`. `AVAudioSession` `.playback` coexists with the record session
+  off-main URL resolution, and the Now Playing / remote-command wiring; the phone surfaces (the bottom
+  player and the thought detail's Play button, spec 0027) and the CarPlay scene all drive it, so there is
+  one audio path and one writer of `MPNowPlayingInfoCenter`. `AVAudioSession` `.playback` coexists with the record session
   used during dictation (dictation deactivates playback before recording, as spec 0007 established).
 - **Entitlement gating.** The CarPlay scene stays dormant without the CarPlay Audio entitlement,
   exactly like the 0005 scaffold: the unsigned Simulator build and the App Store build stay green
@@ -745,3 +745,30 @@ fixed below-the-toolbar title placement.
   folder's flattened thoughts, the uncategorized filter, and the new-thought placement decision are the
   pure, unit-tested `TopLevelFolders` + `NewThoughtPlacement`. The list layout, the title-in-list, and the
   tighter rows are device-verifiable.
+
+## Playback overhaul - bottom player, transport, Now Playing + Dynamic Island (spec 0027)
+
+Recording playback becomes a real, persistent PLAYER at the bottom of the app, not a bare play button
+inside the note. This supersedes spec 0015's simpler now-playing bar and extends spec 0008's Now Playing.
+
+- **A bottom player, not inside the note.** Playing a recorded thought - from its row, its detail page,
+  or a folder queue - surfaces a full player in the bottom stack, positioned above the search bar and
+  below the transient undo chip. The thought screen no longer hosts its own transport: its "Play
+  recording" button just starts the recording in the bottom player (and reads "Playing" while that
+  thought is the loaded one). The player is one component, rendered in one place, so the compact iPhone
+  layout and the iPad lifted stack both get it.
+- **Full transport.** Play / pause, a draggable progress slider that seeks (elapsed vs remaining labels
+  either side), and skip-back / skip-forward 15s buttons (clamped to the recording). The progress tracks
+  playback live. A Next button still shows while a folder queue (spec 0015) has a next item, so the queue
+  behavior is intact and additive.
+- **Lock screen, Control Center, and Dynamic Island.** The Now Playing item carries the title, duration,
+  live elapsed time, and playback rate, updated as playback advances and on every seek, so the system
+  surfaces show the thought with a live progress bar. The remote commands are wired - play, pause, toggle,
+  skip +/-15s, and change-position (scrub) - so the lock screen / Control Center / Dynamic Island expanded
+  controls drive the same recording the in-app player does. The Dynamic Island appears automatically for
+  the active audio session; no custom Live Activity is needed.
+- **One audio path, pure core.** Everything drives the ONE shared `ThoughtPlaybackController`, which now
+  publishes elapsed / duration / isPlaying and owns a live-progress ticker. The seek/skip clamp to
+  [0, duration] and the elapsed / remaining time formatting are the pure, unit-tested `PlaybackProgress`.
+  Real audio playback, the live Now Playing / Dynamic Island render, and the system remote commands are
+  device-verifiable; the transport math and the Now Playing / remote-command wiring are proven by tests.

@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// The composed bottom safe-area stack shared by the compact per-screen bar and the split view's lifted bar
-/// (spec 0022): from top to bottom, the transient "Thought deleted - Undo" chip (spec 0020), the now-playing
-/// bar (spec 0015), then the persistent bottom bar with the search field + record/new-thought actions
-/// (spec 0021), all in ONE inset so they stack cleanly via the shared VStack spacing and reserve real
-/// layout space - no hardcoded overlay clearance, no overlap.
+/// (spec 0022): from top to bottom, the transient "Thought deleted - Undo" chip (spec 0020), the bottom
+/// PLAYER (spec 0027, superseding spec 0015's simpler now-playing bar), then the persistent bottom bar with
+/// the search field + record/new-thought actions (spec 0021), all in ONE inset so they stack cleanly via the
+/// shared VStack spacing and reserve real layout space - no hardcoded overlay clearance, no overlap.
 ///
 /// This was duplicated verbatim between `FolderContentsView.bottomStack` (compact) and
 /// `StreamListView.liftedBottomStack` (split), INCLUDING the 5s undo-window timer, so a change to one could
@@ -22,8 +22,8 @@ struct StreamBottomStack: View {
     /// The shared undoable-delete coordinator (spec 0020): its `pending` shows the undo chip, and its
     /// `deleteTrigger` keys the lifecycle-tied purge timer.
     @ObservedObject var deletion: ThoughtDeletionController
-    /// The shared playback controller (spec 0015), so the now-playing bar shows while something plays.
-    /// Optional so a preview / bare call site without shared playback simply omits the bar.
+    /// The shared playback controller (spec 0027), so the bottom player shows while something plays.
+    /// Optional so a preview / bare call site without shared playback simply omits the player.
     let playbackController: ThoughtPlaybackController?
 
     /// Open a thought (from a now-playing bar tap): the compact screen pushes it, the split view selects it
@@ -45,7 +45,7 @@ struct StreamBottomStack: View {
             // omitted; the undo chip above can still show while a just-deleted thought is pending.
             if screenState != .emptyStore {
                 if let controller = playbackController {
-                    NowPlayingBar(controller: controller, onOpenThought: onOpenThought)
+                    BottomPlayer(controller: controller, onOpenThought: onOpenThought)
                 }
                 BottomBar(query: $query, showsSearchField: screenState.showsSearchField) {
                     // The new-thought + record pair sit behind ONE shared background (feedback 0023) so they

@@ -1,22 +1,23 @@
 import Foundation
 
-/// The one headless audio playback path for a saved thought's recording (spec 0008).
+/// The one headless audio playback path for a saved thought's recording (spec 0008, extended 0027).
 ///
-/// Both the phone detail view (through `ThoughtPlaybackModel`) and the CarPlay scene drive THIS type, so
-/// there is exactly one place that talks to the `AudioThoughtPlayer` and one writer of
-/// `MPNowPlayingInfoCenter`. It owns:
+/// The bottom player (`BottomPlayer`, spec 0027), the thought detail's "Play recording" button, and the
+/// CarPlay scene all drive THIS type, so there is exactly one place that talks to the `AudioThoughtPlayer`
+/// and one writer of `MPNowPlayingInfoCenter`. It owns:
 ///
 /// - lazy, off-main URL resolution via `AudioURLResolving` (a recording can be swept or synced away
 ///   between navigation and play, and the iCloud presence check can block, so it is resolved at play
 ///   time on a detached task, exactly as spec 0007's model did);
-/// - play / pause / resume / stop / relative-skip over the whole recording via `AudioThoughtPlayer`;
+/// - play / pause / resume / stop / seek / relative-skip over the whole recording via `AudioThoughtPlayer`,
+///   with a live-progress ticker publishing `elapsed` / `duration` for the bottom player (spec 0027);
 /// - the system Now Playing metadata (`NowPlayingInfoWriting`) and remote transport commands
-///   (`RemoteCommandRegistering`), so the lock screen, Control Center, and a CarPlay head unit all
-///   drive the same controller code the in-app buttons do.
+///   (`RemoteCommandRegistering`, including the scrubber), so the lock screen, Control Center, the Dynamic
+///   Island, and a CarPlay head unit all drive the same controller code the in-app buttons do.
 ///
-/// `@MainActor` because it is UI-facing state (the detail button and the CarPlay Now Playing template
+/// `@MainActor` because it is UI-facing state (the bottom player and the CarPlay Now Playing template
 /// both observe it) and the media-center seams are main-actor. An `ObservableObject` so SwiftUI can
-/// bind to `isPlaying`.
+/// bind to `isPlaying` / `elapsed` / `duration`.
 @MainActor
 final class ThoughtPlaybackController: ObservableObject {
     /// True while a recording is playing (not paused, not stopped). The detail button toggles on it.
@@ -43,6 +44,25 @@ final class ThoughtPlaybackController: ObservableObject {
     /// queue reaches its last entry. False whenever no queue is active.
     @Published private(set) var hasNext = false
 
+    /// Seconds elapsed in the loaded recording (spec 0027), refreshed live by the progress ticker while
+    /// playing and immediately on a seek / skip, so the bottom player's progress bar and elapsed label
+    /// track playback. Zero when nothing is loaded.
+    @Published private(set) var elapsed: Double = 0
+
+    /// The loaded recording's total length in seconds (spec 0027), from the thought's `recordingDuration`.
+    /// The bottom player's slider spans `[0, duration]` and the remaining label counts down against it.
+    /// Zero when nothing is loaded.
+    @Published private(set) var duration: Double = 0
+
+    /// The live-progress ticker (spec 0027): a lightweight loop that samples `player.currentTime` into
+    /// `elapsed` and refreshes Now Playing while playing, so the in-app bar and the system Dynamic Island /
+    /// lock screen advance without waiting for a transport event. Started on play/resume, cancelled on
+    /// pause/stop/finish. Nil while not ticking.
+    private var progressTicker: Task<Void, Never>?
+    /// How often the progress ticker samples the player position. A quarter second reads smoothly on the
+    /// bar without busy-spinning.
+    private let progressTickInterval: Duration = .milliseconds(250)
+
     /// An opaque handle to a registered transport-change observer, returned by
     /// `addTransportObserver` and passed back to `removeTransportObserver` to unregister.
     struct TransportObserverToken: Hashable {
@@ -50,10 +70,10 @@ final class ThoughtPlaybackController: ObservableObject {
     }
 
     /// The registered transport-change observers, keyed by token. MULTICAST by design: this ONE
-    /// controller is shared across surfaces (the phone `ThoughtPlaybackModel` projection and the CarPlay
-    /// scene both drive and observe it), so more than one headless observer is live at once. A single
-    /// slot would let one surface clobber the other's callback - so each registers/unregisters its own
-    /// entry here and every entry is fanned out on a transport change.
+    /// controller is shared across surfaces (the phone bottom player and the CarPlay scene both drive and
+    /// observe it), so more than one headless observer can be live at once. A single slot would let one
+    /// surface clobber the other's callback - so each registers/unregisters its own entry here and every
+    /// entry is fanned out on a transport change.
     private var transportObservers: [TransportObserverToken: () -> Void] = [:]
     /// Monotonic source for observer tokens, so each registration gets a distinct, non-reused key.
     private var nextObserverToken: UInt64 = 0
@@ -65,8 +85,15 @@ final class ThoughtPlaybackController: ObservableObject {
     /// The user's lock-screen title preference, read at publish time so a Settings toggle applies to
     /// the very next Now Playing update. `.generic` hides a sensitive first line behind a fixed label.
     private let lockScreenTitle: () -> LockScreenTitle
-    /// Relative skip step in seconds, matching the interval advertised to the system.
+    /// Relative skip step in seconds, matching the interval advertised to the system. Exposed read-only
+    /// (`skipStep`) so the bottom player's +/-15 buttons skip the SAME amount as the system / CarPlay skip
+    /// commands - one source of truth across the in-app buttons and the remote commands (spec 0027).
     private let skipInterval: Double
+
+    /// The relative skip step in seconds used by both the in-app player buttons and the system / CarPlay
+    /// skip commands. Read-only so a surface (the bottom player) cannot drift from the controller's own
+    /// skip amount.
+    var skipStep: Double { skipInterval }
 
     /// The in-flight resolve+play, tracked so a rapid re-play cancels the first rather than racing.
     private var pendingPlay: Task<Void, Never>?
@@ -153,6 +180,10 @@ final class ThoughtPlaybackController: ObservableObject {
         currentThought = thought
         isPlaying = true
         isPaused = false
+        // Publish the known length immediately (from the thought's timings) and reset elapsed, so the bar
+        // shows a full-width progress track before the off-main resolve completes.
+        duration = thought.recordingDuration
+        elapsed = 0
         notifyTransportChange()
 
         let resolver = resolver
@@ -221,6 +252,7 @@ final class ThoughtPlaybackController: ObservableObject {
         player.pause()
         isPlaying = false
         isPaused = true
+        stopProgressTicker()
         publishNowPlaying()
         notifyTransportChange()
     }
@@ -230,15 +262,29 @@ final class ThoughtPlaybackController: ObservableObject {
         guard isPaused, player.resume() else { return }
         isPlaying = true
         isPaused = false
+        startProgressTicker()
         publishNowPlaying()
         notifyTransportChange()
     }
 
-    /// Skip `by` seconds relative to the current position (negative to go back), then keep the
-    /// transport state. Only meaningful while a recording is loaded.
+    /// Skip `by` seconds relative to the current position (negative to go back), clamped into the
+    /// recording (spec 0027): a skip-forward past the end pins to the duration, a skip-back below 0 pins
+    /// to 0. Only meaningful while a recording is loaded.
     func skip(by seconds: Double) {
         guard currentThought != nil, isPlaying || isPaused else { return }
-        player.seek(to: player.currentTime + seconds)
+        seek(to: player.currentTime + seconds)
+    }
+
+    /// Seek to an ABSOLUTE position `time` seconds into the recording (spec 0027): the in-app slider drag
+    /// and the system UI's scrubber both call this. Clamped into `[0, duration]` (the same rule the player
+    /// applies, expressed once in `PlaybackProgress`) so a drag past either end lands in range. Updates the
+    /// published elapsed and Now Playing immediately so the bar and lock screen reflect the new position
+    /// without waiting for the next tick. Only meaningful while a recording is loaded.
+    func seek(to time: Double) {
+        guard currentThought != nil, isPlaying || isPaused else { return }
+        let target = PlaybackProgress.clamp(time, duration: duration)
+        player.seek(to: target)
+        elapsed = target
         publishNowPlaying()
         notifyTransportChange()
     }
@@ -271,6 +317,8 @@ final class ThoughtPlaybackController: ObservableObject {
         }
         isPlaying = true
         isPaused = false
+        elapsed = player.currentTime
+        startProgressTicker()
         wireRemoteCommands()
         publishNowPlaying()
         notifyTransportChange()
@@ -285,8 +333,35 @@ final class ThoughtPlaybackController: ObservableObject {
             toggle: { [weak self] in self?.togglePlayPause() },
             stop: { [weak self] in self?.stop() },
             skipForward: { [weak self] in self?.skip(by: self?.skipInterval ?? 0) },
-            skipBackward: { [weak self] in self?.skip(by: -(self?.skipInterval ?? 0)) }
+            skipBackward: { [weak self] in self?.skip(by: -(self?.skipInterval ?? 0)) },
+            scrub: { [weak self] position in self?.seek(to: position) }
         )
+    }
+
+    /// Start the live-progress ticker (spec 0027): sample the player position into `elapsed` and refresh
+    /// Now Playing every tick while playing, so the bar and the system Dynamic Island / lock screen
+    /// advance smoothly. Cancels any prior ticker first (idempotent), and stops itself the moment
+    /// playback is no longer active. Does NOT fire the transport multicast per tick - `elapsed` is
+    /// `@Published`, so a SwiftUI bar observing it refreshes on its own without a per-tick fan-out.
+    private func startProgressTicker() {
+        progressTicker?.cancel()
+        progressTicker = Task { [weak self] in
+            guard let interval = self?.progressTickInterval else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: interval)
+                guard !Task.isCancelled else { return }
+                guard let self, self.isPlaying else { return }
+                self.elapsed = self.player.currentTime
+                self.publishNowPlaying()
+            }
+        }
+    }
+
+    /// Stop the live-progress ticker (on pause / stop / finish) so it does not keep sampling a
+    /// paused-or-gone player.
+    private func stopProgressTicker() {
+        progressTicker?.cancel()
+        progressTicker = nil
     }
 
     /// Publish the current Now Playing metadata from the loaded thought and the player's position. The
@@ -301,7 +376,11 @@ final class ThoughtPlaybackController: ObservableObject {
         nowPlaying.update(NowPlayingInfo(
             title: lockScreenTitle().nowPlayingTitle(for: thought.title),
             duration: thought.recordingDuration,
-            elapsed: player.currentTime,
+            // The published `elapsed` (kept synced by the ticker, seek/skip, and the finish-fill) is the
+            // single source of the position, so Now Playing and the in-app bar never disagree - including
+            // the natural-finish fill to the full duration, which the raw `player.currentTime` (a sample
+            // short) would undo.
+            elapsed: elapsed,
             rate: isPlaying ? 1 : 0
         ))
     }
@@ -313,7 +392,12 @@ final class ThoughtPlaybackController: ObservableObject {
     private func handleFinish() {
         guard !suppressFinish else { return }
         // Only a NATURAL end reaches here - a user stop sets `suppressFinish` (via `clearPlayback`) and
-        // returned above - so this is exactly "the current recording ended on its own".
+        // returned above - so this is exactly "the current recording ended on its own". The ticker stops
+        // a sample short of the end, so pin elapsed to the full duration (and refresh Now Playing) so a
+        // played-to-completion bar visually FILLS before it hides (spec 0027). A queue advance re-seeds
+        // elapsed to 0 in `loadAndPlay`, so this is harmless there and only shows on the last entry.
+        elapsed = duration
+        publishNowPlaying()
         advanceOrFinish()
     }
 
@@ -372,5 +456,11 @@ final class ThoughtPlaybackController: ObservableObject {
     private func resetState() {
         isPlaying = false
         isPaused = false
+        // Stop the live-progress ticker and clear the published progress so a torn-down or switched
+        // player leaves the bar with no stale elapsed/duration (spec 0027). `loadAndPlay` re-seeds
+        // duration for the next thought.
+        stopProgressTicker()
+        elapsed = 0
+        duration = 0
     }
 }

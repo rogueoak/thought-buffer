@@ -1,12 +1,16 @@
 import SwiftUI
 
 /// Detail for a single thought: its paragraphs and timestamp, themed. When the thought carries a recording
-/// (spec 0007), a simple Play / Stop control plays it back in full. The text is editable with the
-/// keyboard, and a Resume action reopens the thought into a recording session to keep dictating
-/// (feedback 0008).
+/// (spec 0007), a "Play recording" button starts it in the shared bottom PLAYER (spec 0027) - the thought
+/// screen no longer hosts its own transport; play/pause, scrub, and skip live in the bottom player. The
+/// text is editable with the keyboard, and a Resume action reopens the thought into a recording session to
+/// keep dictating (feedback 0008).
 struct ThoughtDetailView: View {
     let thought: Thought
-    @StateObject private var playback: ThoughtPlaybackModel
+    /// The ONE shared playback controller (spec 0027): the "Play recording" button starts this thought on
+    /// it, surfacing the bottom player. Observed so the button reflects whether THIS thought is the loaded
+    /// one. A bare/preview call site with no shared controller gets a private one (init fallback).
+    @ObservedObject private var playbackController: ThoughtPlaybackController
     // This view only EMITS intents (`onCommitEdit`/`onDiscardEmpty`); the composition root
     // (`StreamListView`) owns the actual store write/delete and the route pop. The draft/editing
     // `@State` stays local so per-thought editing is not reworked into the root.
@@ -123,10 +127,10 @@ struct ThoughtDetailView: View {
         _isEditing = State(initialValue: startInEdit)
         _draft = State(initialValue: startInEdit ? thought.paragraphs.joined(separator: "\n\n") : "")
         _isUnsavedNewThought = State(initialValue: startInEdit)
-        // The full thought is passed through so the shared playback controller titles the system Now
-        // Playing item (lock screen / Control Center) and reads the recording duration.
-        let controller = controller ?? ThoughtPlaybackController(resolver: resolver, player: player)
-        _playback = StateObject(wrappedValue: ThoughtPlaybackModel(thought: thought, controller: controller))
+        // Observe the ONE shared playback controller so the "Play recording" button starts this thought in
+        // the bottom player (spec 0027). A bare/preview call site with no shared controller falls back to a
+        // private one over the given resolver, so the button is inert but the view still builds.
+        playbackController = controller ?? ThoughtPlaybackController(resolver: resolver, player: player)
     }
 
     var body: some View {
@@ -160,7 +164,7 @@ struct ThoughtDetailView: View {
                             .font(.system(size: CanopyFont.sizeXs))
                             .foregroundStyle(CanopyColor.textSubtle)
 
-                        if playback.canPlay {
+                        if thought.hasAudio {
                             playButton
                         }
 
@@ -288,12 +292,12 @@ struct ThoughtDetailView: View {
         // A brand-new thought (spec 0013) opens with the body editor focused so the user can type at once.
         // Focus is set here (not in init) because a FocusState only takes effect once the view exists.
         .onAppear { if isUnsavedNewThought { editorFocused = true } }
-        // Stop playback if the user navigates away mid-play, so audio never keeps running off-screen.
-        // Also finalize a brand-new thought the user backed out of WITHOUT tapping Done (spec 0013):
-        // keep it if anything was typed (auto-save, so typed content is never lost on back), discard it
-        // only if still blank. A committed thought has cleared `isUnsavedNewThought` already.
+        // Playback is NOT stopped on leaving the detail (spec 0027): it lives in the persistent bottom
+        // player, so navigating away keeps the recording playing there (like any music app). Only finalize
+        // a brand-new thought the user backed out of WITHOUT tapping Done (spec 0013): keep it if anything
+        // was typed (auto-save, so typed content is never lost on back), discard it only if still blank. A
+        // committed thought has cleared `isUnsavedNewThought` already.
         .onDisappear {
-            playback.stop()
             if isUnsavedNewThought { finalizeUnsavedThought() }
         }
         // `onDisappear` covers back-navigation but does NOT fire on app suspend/terminate, so a typed
@@ -463,15 +467,22 @@ struct ThoughtDetailView: View {
         currentThought.hasAudio ? "Resume recording" : "Record audio for this thought"
     }
 
-    /// The simple play / stop control for the thought's recording. Play / stop only - no scrubbing or
-    /// rate controls (spec 0007 keeps detail playback minimal).
+    /// Whether this thought's recording is the one currently loaded in the shared controller, so the detail
+    /// button reads "Playing" (and stays inert) rather than offering to restart it (spec 0027). The
+    /// transport itself - play/pause, scrub, skip - lives in the bottom player, not here.
+    private var isThisThoughtLoaded: Bool { playbackController.isLoaded(thought) }
+
+    /// The "Play recording" affordance (spec 0027): tapping it starts this thought's recording in the
+    /// shared bottom player. It is NOT a transport - the thought screen no longer hosts play/pause or a
+    /// scrubber; those live in the bottom player. While this thought is already the loaded one it reads
+    /// "Playing" and is inert, so the detail never competes with the bottom player for control.
     private var playButton: some View {
         Button {
-            playback.toggle()
+            if !isThisThoughtLoaded { playbackController.play(thought: thought) }
         } label: {
             HStack(spacing: CanopySpacing.x2) {
-                Image(systemName: playback.isPlaying ? "stop.fill" : "play.fill")
-                Text(playback.isPlaying ? "Stop" : "Play recording")
+                Image(systemName: isThisThoughtLoaded ? "waveform" : "play.fill")
+                Text(isThisThoughtLoaded ? "Playing" : "Play recording")
                     .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
             }
             .foregroundStyle(CanopyColor.primaryForeground)
@@ -480,7 +491,8 @@ struct ThoughtDetailView: View {
             .background(CanopyColor.primary)
             .clipShape(Capsule())
         }
-        .accessibilityLabel(playback.isPlaying ? "Stop recording" : "Play recording")
+        .disabled(isThisThoughtLoaded)
+        .accessibilityLabel(isThisThoughtLoaded ? "Now playing in the bottom player" : "Play recording")
     }
 
     private func beginEdit() {

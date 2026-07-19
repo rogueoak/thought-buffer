@@ -32,9 +32,10 @@ struct AppDependencies {
     /// session identically. The root view observes it and opens `DictationView`.
     let sessionRoute: PendingSessionRoute
 
-    /// The ONE headless playback controller for a saved thought's recording (spec 0008). Both the phone
-    /// detail view (through `ThoughtPlaybackModel`) and the CarPlay scene drive and observe THIS shared
-    /// instance, so there is exactly one writer of `MPNowPlayingInfoCenter` and one owner of the
+    /// The ONE headless playback controller for a saved thought's recording (spec 0008, extended 0027).
+    /// The phone bottom player, the thought detail's "Play recording" button, and the CarPlay scene all
+    /// drive and observe THIS shared instance, so there is exactly one writer of `MPNowPlayingInfoCenter`
+    /// and one owner of the
     /// remote transport commands. Hoisted here (rather than per-surface) so that once the CarPlay
     /// entitlement ships, the two surfaces cannot race on the media center or clobber each other's
     /// transport observation - the observation is multi-observer safe on the controller itself.

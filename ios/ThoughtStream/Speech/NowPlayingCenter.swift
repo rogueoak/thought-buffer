@@ -52,15 +52,19 @@ final class SystemNowPlayingInfoWriter: NowPlayingInfoWriting {
 @MainActor
 protocol RemoteCommandRegistering: AnyObject {
     /// Wire the transport commands. Each closure runs on the main actor when the system (or a spy)
-    /// fires that command. `skip` receives the configured skip interval in seconds. Idempotent: a
-    /// second registration replaces the handlers rather than stacking them.
+    /// fires that command. `skip` receives the configured skip interval in seconds. `scrub` receives an
+    /// ABSOLUTE target position in seconds when the user drags the system UI's scrubber (spec 0027 -
+    /// `MPRemoteCommandCenter.changePlaybackPositionCommand`, so the lock screen / Control Center /
+    /// Dynamic Island scrubber seeks the same recording the in-app slider does). Idempotent: a second
+    /// registration replaces the handlers rather than stacking them.
     func register(
         play: @escaping () -> Void,
         pause: @escaping () -> Void,
         toggle: @escaping () -> Void,
         stop: @escaping () -> Void,
         skipForward: @escaping () -> Void,
-        skipBackward: @escaping () -> Void
+        skipBackward: @escaping () -> Void,
+        scrub: @escaping (Double) -> Void
     )
 
     /// Drop all registered handlers and disable the commands, so a torn-down controller leaves no
@@ -87,7 +91,8 @@ final class SystemRemoteCommandRegistrar: RemoteCommandRegistering {
         toggle: @escaping () -> Void,
         stop: @escaping () -> Void,
         skipForward: @escaping () -> Void,
-        skipBackward: @escaping () -> Void
+        skipBackward: @escaping () -> Void,
+        scrub: @escaping (Double) -> Void
     ) {
         unregisterAll()
         let center = MPRemoteCommandCenter.shared()
@@ -101,6 +106,16 @@ final class SystemRemoteCommandRegistrar: RemoteCommandRegistering {
         add(center.skipForwardCommand) { skipForward() }
         center.skipBackwardCommand.preferredIntervals = [NSNumber(value: Self.skipInterval)]
         add(center.skipBackwardCommand) { skipBackward() }
+
+        // The system UI's scrubber (lock screen / Control Center / Dynamic Island) carries an absolute
+        // target position on its event (`positionTime`); route it to the same seek the in-app slider uses.
+        center.changePlaybackPositionCommand.isEnabled = true
+        let scrubTarget = center.changePlaybackPositionCommand.addTarget { event in
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            scrub(event.positionTime)
+            return .success
+        }
+        targets.append((center.changePlaybackPositionCommand, scrubTarget))
     }
 
     /// Enable a command and add a main-actor handler that runs `body` and reports success, tracking
