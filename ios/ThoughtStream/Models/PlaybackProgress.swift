@@ -16,6 +16,17 @@ enum PlaybackProgress {
         return max(0, min(time, duration))
     }
 
+    /// The value the bottom player's scrubber should DISPLAY (spec 0027, feedback 0027). While the user is
+    /// actively dragging the thumb (`isScrubbing`), show the held `scrubValue` so the thumb follows the finger
+    /// smoothly without the live ticker fighting it. The instant the drag ends, ALWAYS show the controller's
+    /// live `elapsed` - never a leftover `scrubValue` - so a stray post-release binding write (a `Slider` can
+    /// fire its value `set` after `onEditingChanged(false)`, with no ordering guarantee) cannot permanently
+    /// suppress progress and freeze the bar at the drop point. Pure so this "editing state does not suppress
+    /// live progress" rule is unit-tested, not device-only.
+    static func scrubDisplay(isScrubbing: Bool, scrubValue: Double, elapsed: Double) -> Double {
+        isScrubbing ? scrubValue : elapsed
+    }
+
     /// The progress fraction in `[0, 1]` for a slider / progress bar: `elapsed / duration`, clamped so a
     /// slightly-over elapsed never exceeds 1 and a non-positive duration reads 0 (an empty bar, not NaN).
     static func fraction(elapsed: Double, duration: Double) -> Double {

@@ -22,8 +22,16 @@ struct BottomPlayer: View {
 
     /// The position the user is dragging the slider to, held locally so the thumb follows the finger
     /// smoothly without the live ticker fighting it; committed to the controller as a seek when the drag
-    /// begins/ends. Nil when not dragging, so the slider reads the controller's live `elapsed`.
-    @State private var scrubbing: Double?
+    /// ends. Only DISPLAYED while `isScrubbing` is true (feedback 0027): the drag flag - not the presence
+    /// of a value - decides whether the scrub value or the live `elapsed` is shown, so a stray post-release
+    /// `set` write to this cannot permanently suppress progress.
+    @State private var scrubbing: Double = 0
+    /// True while the user is actively dragging the slider thumb (feedback 0027). Set from
+    /// `onEditingChanged`, this - not `scrubbing != nil` - gates whether the display holds the scrub value
+    /// or follows the controller's live `elapsed`. The instant it drops (drag end), the bar resumes tracking
+    /// playback even if the `Slider` fires a late binding write, which a nil-clearing hold could not
+    /// guarantee (a `Slider`'s `set` and `onEditingChanged(false)` have no ordering guarantee).
+    @State private var isScrubbing = false
 
     var body: some View {
         // Shown only while a recording is loaded; otherwise the player collapses to nothing so the
@@ -70,9 +78,17 @@ struct BottomPlayer: View {
 
     /// The progress row: elapsed label, a draggable slider spanning `[0, duration]` that seeks the
     /// controller, and a remaining (countdown) label. While the user drags, the slider tracks the finger
-    /// (`scrubbing`) and the controller is sought on change; otherwise it reads the live `elapsed`.
+    /// (`scrubbing`); the instant the drag ends the display follows the live `elapsed` again (feedback 0027),
+    /// so a completed scrub does not freeze the bar.
     private var progressRow: some View {
-        let displayed = scrubbing ?? controller.elapsed
+        // The drag flag - not `scrubbing != nil` - decides what to show (feedback 0027): while dragging, the
+        // held value; otherwise the controller's live `elapsed`. This is what makes a stray post-release
+        // binding write to `scrubbing` unable to permanently suppress progress.
+        let displayed = PlaybackProgress.scrubDisplay(
+            isScrubbing: isScrubbing,
+            scrubValue: scrubbing,
+            elapsed: controller.elapsed
+        )
         // A zero/absent duration would make the slider range invalid; fall back to a tiny nonzero span so
         // the control still renders (disabled-looking, at the start) rather than crashing on an empty range.
         let span = max(controller.duration, 0.001)
@@ -91,12 +107,16 @@ struct BottomPlayer: View {
                 in: 0...span,
                 onEditingChanged: { editing in
                     if editing {
-                        // Begin dragging: hold the thumb locally.
-                        scrubbing = scrubbing ?? controller.elapsed
+                        // Begin dragging: hold the thumb locally and flag the drag so the display follows it.
+                        scrubbing = controller.elapsed
+                        isScrubbing = true
                     } else {
-                        // End dragging: commit the final position as a seek, then release the local hold.
-                        if let target = scrubbing { controller.seek(to: target) }
-                        scrubbing = nil
+                        // End dragging: drop the flag FIRST so the display resumes tracking the live
+                        // `elapsed` even if the slider fires a late binding write, then commit the final
+                        // position as a seek. The seek updates the controller's published `elapsed`, and the
+                        // ticker (never stopped during the drag) carries it forward from there.
+                        isScrubbing = false
+                        controller.seek(to: scrubbing)
                     }
                 }
             )

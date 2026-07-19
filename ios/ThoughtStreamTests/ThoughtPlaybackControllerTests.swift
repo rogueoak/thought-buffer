@@ -424,6 +424,33 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         XCTAssertEqual(controller.elapsed, 0, "a seek before the start pins to 0")
     }
 
+    /// The feedback-0027 regression guard, at the model level: after a seek WHILE PLAYING, the live-progress
+    /// ticker must RESUME advancing `elapsed` from the sought position - not freeze at it, and not restart at
+    /// 0. Reproduces "progress stops moving after scrubbing" purely (no real audio): seek to 12, then let the
+    /// player advance past it and assert the ticker samples the new positions into `elapsed`. A ticker that
+    /// stopped on seek (the bug) would leave `elapsed` pinned at 12.
+    func testElapsedResumesFromSoughtPositionWhilePlaying() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        controller.play(thought: recordedThought(length: 60))
+        await settle()
+
+        // The user scrubs to 12s (as the bottom player commits on drag-end).
+        player.currentTimeValue = 12
+        controller.seek(to: 12)
+        XCTAssertEqual(controller.elapsed, 12, "the seek lands elapsed at the sought position")
+
+        // Playback continues past the sought point; the ticker (still running - a seek does not stop it)
+        // must pick the advancing position up into elapsed, so the bar keeps moving after the scrub.
+        player.currentTimeValue = 13
+        await eventually({ controller.elapsed == 13 }, tries: 100)
+        XCTAssertEqual(controller.elapsed, 13, "elapsed advances past the sought position, not frozen at it")
+
+        player.currentTimeValue = 14
+        await eventually({ controller.elapsed == 14 }, tries: 100)
+        XCTAssertEqual(controller.elapsed, 14, "progress keeps advancing on the next tick")
+    }
+
     /// A skip forward past the end clamps to the duration rather than seeking out of range.
     func testSkipForwardClampsToDuration() async {
         let player = SpyPlayer()

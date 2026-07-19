@@ -32,6 +32,46 @@ final class PlaybackProgressTests: XCTestCase {
         XCTAssertEqual(PlaybackProgress.clamp(5, duration: .nan), 0)
     }
 
+    // MARK: - scrub display (feedback 0027 - progress stalls after scrubbing)
+
+    /// While the user is actively dragging the thumb, the display shows the held scrub value so the thumb
+    /// follows the finger rather than the live ticker.
+    func testScrubDisplayShowsScrubValueWhileScrubbing() {
+        XCTAssertEqual(
+            PlaybackProgress.scrubDisplay(isScrubbing: true, scrubValue: 30, elapsed: 5),
+            30,
+            "dragging shows the held scrub value, not the live elapsed"
+        )
+    }
+
+    /// With no drag in progress, the display shows the controller's live `elapsed`, so the bar tracks
+    /// playback.
+    func testScrubDisplayShowsElapsedWhenNotScrubbing() {
+        XCTAssertEqual(
+            PlaybackProgress.scrubDisplay(isScrubbing: false, scrubValue: 30, elapsed: 5),
+            5,
+            "not dragging shows the live elapsed"
+        )
+    }
+
+    /// The regression guard: a LEFTOVER scrub value (a `Slider` can fire its binding `set` after the drag
+    /// ends, with no ordering guarantee) must NOT suppress live progress once the drag flag is down. The
+    /// display ignores the stale scrub value and follows `elapsed`, so the bar keeps advancing after a
+    /// scrub instead of freezing at the drop point.
+    func testScrubDisplayIgnoresStaleScrubValueAfterDragEnds() {
+        // isScrubbing is false (drag ended) but a stale scrubValue lingers; the live elapsed still wins.
+        XCTAssertEqual(
+            PlaybackProgress.scrubDisplay(isScrubbing: false, scrubValue: 30, elapsed: 6),
+            6,
+            "a stale scrub value cannot permanently suppress live progress after the drag ends"
+        )
+        XCTAssertEqual(
+            PlaybackProgress.scrubDisplay(isScrubbing: false, scrubValue: 30, elapsed: 7),
+            7,
+            "and progress keeps advancing on the next tick"
+        )
+    }
+
     // MARK: - progress fraction
 
     func testFractionMidway() {

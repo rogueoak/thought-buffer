@@ -441,6 +441,9 @@ struct StreamListView: View {
                 detailView(
                     for: selectedRoute,
                     showsDetailSearch: false,
+                    // The split view LIFTS the bottom player above all columns (`liftedBottomStack`), so the
+                    // detail column must NOT host its own or the player would render twice (feedback 0027).
+                    showsBottomPlayer: false,
                     onPopThought: { self.selectedRoute = nil },
                     onPopNewThought: { self.selectedRoute = nil }
                 )
@@ -456,6 +459,7 @@ struct StreamListView: View {
     private func detailView(
         for route: StreamRoute,
         showsDetailSearch: Bool = true,
+        showsBottomPlayer: Bool = true,
         onPopThought: @escaping () -> Void,
         onPopNewThought: @escaping () -> Void
     ) -> some View {
@@ -479,6 +483,11 @@ struct StreamListView: View {
                     onPopThought()
                     Task { await deletion.delete(id: id) }
                 },
+                // The bottom player now lives on the thought page too (feedback 0027); tapping its title
+                // opens that thought in whichever container is active (a re-open of the shown thought is a
+                // harmless no-op, a queue-advanced other thought navigates).
+                onOpenThought: { openThought($0) },
+                showsBottomPlayer: showsBottomPlayer,
                 enablesFind: enablesFind,
                 resumeApplies: resumeApplies(for: thought)
             )
@@ -503,6 +512,8 @@ struct StreamListView: View {
                     }
                     onPopNewThought()
                 },
+                onOpenThought: { openThought($0) },
+                showsBottomPlayer: showsBottomPlayer,
                 enablesFind: enablesFind,
                 startInEdit: true
             )
