@@ -594,7 +594,10 @@ by their whole text, not just the title.
   label ("New thought", "Record", "Resume recording", "Search thoughts"). The bar is ONE component; each
   screen passes in its own right-side actions rather than forking it. The search field is its OWN bounded
   (rounded) pill and the action buttons sit BESIDE it, visually OUTSIDE the field's background rather than
-  reading as inside it (feedback 0020).
+  reading as inside it (feedback 0020). On the list/folder screens the new-thought + record pair sit behind
+  ONE shared background (a `BottomBarButtonGroup` with the same surface + border + capsule treatment as the
+  search pill) so they read as a single grouped unit beside the field, matching the top-left new-folder +
+  sort toolbar group (feedback 0023); the thought-detail's lone resume button stays a single bare button.
 - **Full-text search.** Typing filters to thoughts whose TITLE or ANY body paragraph contains the query -
   case-insensitive AND diacritic-insensitive, substring (not title-only). Search is GLOBAL across the
   whole folder tree, shown as a flat result list; tapping a result opens that thought, and clearing the

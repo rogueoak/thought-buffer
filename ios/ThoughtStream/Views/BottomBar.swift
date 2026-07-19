@@ -91,6 +91,33 @@ struct BottomBar<Trailing: View>: View {
     }
 }
 
+/// A shared "button group" background that wraps the bottom bar's paired trailing actions (new-thought +
+/// record) so the two read as ONE grouped unit beside the search field (feedback 0023), matching how the
+/// top-left toolbar groups the new-folder + sort items behind a single shared background on iOS 26. The
+/// container carries the SAME surface + border + capsule + shadow treatment as the search pill so the two
+/// sit as sibling pills on the bar. Each wrapped button keeps its own tap target, accessibility label, and
+/// affordance (the record button keeps its filled-circle prominence inside the group).
+///
+/// Applied only to the two-item list/folder pair; the thought-detail's lone resume button stays a single
+/// bare button rather than a one-item "group" that would look like an empty container.
+struct BottomBarButtonGroup<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: CanopySpacing.x1) {
+            content
+        }
+        .padding(.horizontal, CanopySpacing.x2)
+        .padding(.vertical, CanopySpacing.x1)
+        .background(CanopyColor.surface)
+        .clipShape(Capsule())
+        .overlay(
+            Capsule().stroke(CanopyColor.border, lineWidth: 1)
+        )
+        .shadow(color: CanopyColor.overlay.opacity(0.2), radius: 12, y: 6)
+    }
+}
+
 /// A round, icon-only bottom-bar action button (spec 0021): a tappable glyph tinted in the primary
 /// token, sized as a comfortable tap target, with the accessibility label the caller supplies (the
 /// text label is dropped to make room for the search field). Used for the new-thought and resume actions.

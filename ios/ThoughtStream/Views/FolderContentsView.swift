@@ -137,94 +137,110 @@ struct FolderContentsView: View {
     /// search scan is not repeated. `state` drives which view shows; `results` feeds the search list.
     @ViewBuilder
     private func bodyContent(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
-        Group {
-            switch screenState {
-            case .emptyStore:
-                FolderEmptyStateCTA(
-                    isRoot: currentPath.isEmpty,
-                    onRecord: { onNewThought(currentPath) },
-                    onNewKeyboardThought: { onNewKeyboardThought(currentPath) }
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .searchResults:
-                searchResultsList(searchResults)
-            case .noMatches:
-                noMatchesState
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case .normal:
-                normalContent
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(CanopyColor.bg.ignoresSafeArea())
-        // The bottom stack renders here only in the compact `NavigationStack` (spec 0022). Under the split
-        // view it is lifted to the ONE container above the columns, so each column omits it - otherwise the
-        // sidebar and content columns would each show their own search field + record actions. Whether this
-        // screen owns its bar is derived from `StreamContainer.folderScreenShowsOwnBottomBar` at the call
-        // site (compact: true, split columns: false), not a raw literal, so the single-bottom-bar invariant
-        // is a tested decision. The stack itself is the SHARED `StreamBottomStack` the split view lifts too.
-        .safeAreaInset(edge: .bottom) {
-            if showsBottomBar {
-                StreamBottomStack(
-                    query: $searchQuery,
-                    screenState: screenState,
-                    deletion: deletion,
-                    playbackController: playbackController,
-                    onOpenThought: onOpenThought,
-                    onNewKeyboardThought: { onNewKeyboardThought(currentPath) },
-                    onNewThought: { onNewThought(currentPath) }
-                )
-            }
-        }
-        .overlay(alignment: .top) {
-            if feed.deleteFailed {
-                DeleteFailedBanner()
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .task {
-                        try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
-                        feed.clearDeleteFailure()
-                    }
-            } else if let folderError {
-                FolderErrorBanner(message: folderError)
-                    .transition(.move(edge: .top).combined(with: .opacity))
-                    .task {
-                        try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
-                        self.folderError = nil
-                    }
-            }
-        }
-        // The shared, lifecycle-tied "Copied to clipboard" confirmation (spec 0017), pinned at the top
-        // like the sibling banners; a rapid re-copy re-arms it and navigation cancels its timer.
-        .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .top)
-        .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
-        .animation(.easeInOut(duration: 0.2), value: folderError)
-        .toolbar { toolbarContent }
-        // The folder dialogs (spec 0021 rename-bug fix). All three were STACKED `.alert`s on this one
-        // view node, which is a classic SwiftUI flakiness source (a sibling alert can swallow another's
-        // presentation, and a rename triggered from a `.contextMenu` may never present or apply). Each
-        // alert now hangs off its OWN hidden background anchor, driven by the single `activeDialog` enum
-        // via per-case bindings, so no two alerts share a node and none can lose the race. Alerts keep
-        // the TextField form (the item-based `Alert` value has no text field), just un-stacked.
-        .background(newFolderAlertAnchor)
-        .background(renameFolderAlertAnchor)
-        .background(deleteFolderAlertAnchor)
-        .sheet(item: $moveThought) { thought in
-            MoveToFolderSheet(
-                thought: thought,
-                childFolders: { await feed.childFolders(at: $0) },
-                createFolder: { name, path in await feed.createFolder(named: name, at: path) },
-                onMove: { folderPath in
-                    await feed.move(thought, to: folderPath)
-                    await reloadFolders()
+        // Keep-search-focus fix (feedback 0024): the content area (folder list / search results / no-matches /
+        // empty CTA) is the ONLY part that switches on `screenState`. It sits in its own STABLE-identity host
+        // (`.id("stream-folder-content")`) so a state flip - e.g. the first keystroke moving `.normal` ->
+        // `.searchResults` - swaps only the content and never touches the outer node that carries the bottom
+        // bar. The `.safeAreaInset` bottom stack (which HOSTS the search `TextField`) hangs off the STABLE
+        // outer view, so it is one persistent instance across the switch and the field keeps its focus /
+        // keyboard instead of being torn down after one character.
+        switchingContent(state: screenState, results: searchResults)
+            .id("stream-folder-content")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(CanopyColor.bg.ignoresSafeArea())
+            // The bottom stack renders here only in the compact `NavigationStack` (spec 0022). Under the split
+            // view it is lifted to the ONE container above the columns, so each column omits it - otherwise the
+            // sidebar and content columns would each show their own search field + record actions. Whether this
+            // screen owns its bar is derived from `StreamContainer.folderScreenShowsOwnBottomBar` at the call
+            // site (compact: true, split columns: false), not a raw literal, so the single-bottom-bar invariant
+            // is a tested decision. The stack itself is the SHARED `StreamBottomStack` the split view lifts too.
+            .safeAreaInset(edge: .bottom) {
+                if showsBottomBar {
+                    StreamBottomStack(
+                        query: $searchQuery,
+                        screenState: screenState,
+                        deletion: deletion,
+                        playbackController: playbackController,
+                        onOpenThought: onOpenThought,
+                        onNewKeyboardThought: { onNewKeyboardThought(currentPath) },
+                        onNewThought: { onNewThought(currentPath) }
+                    )
                 }
+            }
+            .overlay(alignment: .top) {
+                if feed.deleteFailed {
+                    DeleteFailedBanner()
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .task {
+                            try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
+                            feed.clearDeleteFailure()
+                        }
+                } else if let folderError {
+                    FolderErrorBanner(message: folderError)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .task {
+                            try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
+                            self.folderError = nil
+                        }
+                }
+            }
+            // The shared, lifecycle-tied "Copied to clipboard" confirmation (spec 0017), pinned at the top
+            // like the sibling banners; a rapid re-copy re-arms it and navigation cancels its timer.
+            .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .top)
+            .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
+            .animation(.easeInOut(duration: 0.2), value: folderError)
+            .toolbar { toolbarContent }
+            // The folder dialogs (spec 0021 rename-bug fix). All three were STACKED `.alert`s on this one
+            // view node, which is a classic SwiftUI flakiness source (a sibling alert can swallow another's
+            // presentation, and a rename triggered from a `.contextMenu` may never present or apply). Each
+            // alert now hangs off its OWN hidden background anchor, driven by the single `activeDialog` enum
+            // via per-case bindings, so no two alerts share a node and none can lose the race. Alerts keep
+            // the TextField form (the item-based `Alert` value has no text field), just un-stacked.
+            .background(newFolderAlertAnchor)
+            .background(renameFolderAlertAnchor)
+            .background(deleteFolderAlertAnchor)
+            .sheet(item: $moveThought) { thought in
+                MoveToFolderSheet(
+                    thought: thought,
+                    childFolders: { await feed.childFolders(at: $0) },
+                    createFolder: { name, path in await feed.createFolder(named: name, at: path) },
+                    onMove: { folderPath in
+                        await feed.move(thought, to: folderPath)
+                        await reloadFolders()
+                    }
+                )
+            }
+            .task(id: feed.reloadGeneration) {
+                // Reload this path's child folders whenever the feed republishes (a folder edit, a save, or
+                // an external iCloud change). `reloadGeneration` bumps on EVERY republish, so it catches
+                // changes the thought count would miss: a rename, a move between two existing folders, or a
+                // synced-in empty folder.
+                await reloadFolders()
+            }
+    }
+
+    /// The state-driven content area, factored out of `bodyContent` so the switch on `screenState` lives in
+    /// ONE inner view whose host identity is pinned (`bodyContent` sets `.id("stream-folder-content")`).
+    /// Isolating the switch here keeps the outer node - which carries the `.safeAreaInset` bottom stack and
+    /// its search `TextField` - stable across the empty->results flip on the first keystroke, so the field is
+    /// not torn down and refocused (feedback 0024). The `results` are computed once per render in `body`.
+    @ViewBuilder
+    private func switchingContent(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
+        switch screenState {
+        case .emptyStore:
+            FolderEmptyStateCTA(
+                isRoot: currentPath.isEmpty,
+                onRecord: { onNewThought(currentPath) },
+                onNewKeyboardThought: { onNewKeyboardThought(currentPath) }
             )
-        }
-        .task(id: feed.reloadGeneration) {
-            // Reload this path's child folders whenever the feed republishes (a folder edit, a save, or
-            // an external iCloud change). `reloadGeneration` bumps on EVERY republish, so it catches
-            // changes the thought count would miss: a rename, a move between two existing folders, or a
-            // synced-in empty folder.
-            await reloadFolders()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .searchResults:
+            searchResultsList(searchResults)
+        case .noMatches:
+            noMatchesState
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .normal:
+            normalContent
         }
     }
 

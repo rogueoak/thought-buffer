@@ -42,9 +42,13 @@ final class WatchCaptureIngestServiceTests: XCTestCase {
         init(segments: [TranscribedSegment]) { self.segments = segments }
 
         func transcribe(fileAt url: URL) async throws -> [TranscribedSegment] {
-            lock.lock(); _callCount += 1; lock.unlock()
+            recordCall()
             return segments
         }
+
+        /// Synchronous so the `NSLock` is never taken directly from the async `transcribe`
+        /// (the "lock unavailable from asynchronous contexts" Swift 6 warning).
+        private func recordCall() { lock.lock(); _callCount += 1; lock.unlock() }
     }
 
     /// Write a short real `.m4a` (via the existing `RecordingWriter`) so the ingest service reads a real

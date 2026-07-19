@@ -261,12 +261,7 @@ private final class StubAudioTrimmer: AudioTrimming, @unchecked Sendable {
     }
 
     func trim(fileAt url: URL) async -> AudioTrimResult {
-        lock.lock()
-        invoked = true
-        let toResume = invocationWaiters
-        invocationWaiters.removeAll()
-        let mustPause = pauseUntilReleased && !released
-        lock.unlock()
+        let (toResume, mustPause) = beginTrim()
         toResume.forEach { $0.resume() }
 
         if mustPause {
@@ -282,6 +277,18 @@ private final class StubAudioTrimmer: AudioTrimming, @unchecked Sendable {
             }
         }
         return result
+    }
+
+    /// Synchronous lock section so `trim` (async) never takes the `NSLock` directly
+    /// (the "lock unavailable from asynchronous contexts" Swift 6 warning).
+    private func beginTrim() -> (toResume: [CheckedContinuation<Void, Never>], mustPause: Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        invoked = true
+        let toResume = invocationWaiters
+        invocationWaiters.removeAll()
+        let mustPause = pauseUntilReleased && !released
+        return (toResume, mustPause)
     }
 
     /// Suspend until `trim` has been called at least once.

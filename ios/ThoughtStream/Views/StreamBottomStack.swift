@@ -48,11 +48,16 @@ struct StreamBottomStack: View {
                     NowPlayingBar(controller: controller, onOpenThought: onOpenThought)
                 }
                 BottomBar(query: $query, showsSearchField: screenState.showsSearchField) {
-                    BottomBarIconButton(
-                        systemImage: "square.and.pencil",
-                        accessibilityLabel: "New thought"
-                    ) { onNewKeyboardThought() }
-                    BottomBarRecordButton(accessibilityLabel: "Record") { onNewThought() }
+                    // The new-thought + record pair sit behind ONE shared background (feedback 0023) so they
+                    // read as a single grouped unit beside the search pill, matching the top-left new-folder +
+                    // sort toolbar group. Each button keeps its own tap target, label, and affordance.
+                    BottomBarButtonGroup {
+                        BottomBarIconButton(
+                            systemImage: "square.and.pencil",
+                            accessibilityLabel: "New thought"
+                        ) { onNewKeyboardThought() }
+                        BottomBarRecordButton(accessibilityLabel: "Record") { onNewThought() }
+                    }
                 }
             }
         }
