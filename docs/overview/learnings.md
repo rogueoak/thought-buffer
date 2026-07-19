@@ -512,3 +512,21 @@ strings), which is exactly the input that exposed the over-reach. Generalizes to
 X left behind" step - re-capitalization, re-spacing, re-punctuation, trimming - which must fire only
 when X actually happened on this input, or it becomes a silent content change on the inputs where it did
 not; and test it against a realistic no-op input, not only the input that triggers it.
+
+## Normalize before you match: order regex cleanup passes so no pattern sees an unbounded run (spec 0016)
+
+`FillerRemovalProcessor.tidy` ran a `\s+([,.;:!?])` "drop the space before punctuation" pass BEFORE the
+`[ \t]+` "collapse whitespace" pass. On a long whitespace run NOT followed by terminal punctuation, the
+`\s+` alternation backtracks quadratically (O(n^2)) - 8k spaces took ~2.3s on the main thread. Not
+attacker-reachable here (input is bounded on-device dictation, never network/paste), so it is a
+main-thread-hang robustness concern rather than a ReDoS, but the shape is the lesson: a later pass that
+would have COLLAPSED the run to a single space was sequenced after the pass that scanned it greedily. The
+fix reorders so normalization (collapse whitespace to one space) runs FIRST, and the punctuation passes
+then match a bounded single space (` ?`) instead of `\s+`. Two rules generalize. First: when a pipeline
+of string passes includes a normalizer that shrinks a class of input (whitespace, separators, casing),
+run it EARLY so every downstream pattern matches the normalized, bounded form - never let a
+greedy-quantifier pass scan the un-normalized run. Second: any repetition quantifier (`\s+`, `.*`, `+`)
+over user-controlled length that is not anchored on both sides by a required literal is a backtracking
+risk; either bound it or eliminate the run before it is reached. Generalizes to any multi-pass regex
+cleanup (sanitizers, formatters, tokenizers) where an early normalization would make later patterns both
+cheaper and simpler.
