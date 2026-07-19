@@ -54,6 +54,25 @@ final class VoiceSelectorTests: XCTestCase {
         XCTAssertEqual(VoiceSelector.bestVoiceIdentifier(from: voices, languageCode: "en-US"), "v.gb.enhanced")
     }
 
+    func testExactRegionMatchIsCaseInsensitive() {
+        // A case-skewed request ("en-us") must still treat the "en-US" voice as an exact-region match.
+        let voices = [
+            voice("v.gb.premium", "en-GB", .premium),
+            voice("v.us.default", "en-US", .default),
+        ]
+        XCTAssertEqual(VoiceSelector.bestVoiceIdentifier(from: voices, languageCode: "en-us"), "v.us.default")
+    }
+
+    func testRegionlessLanguageCodeUsesPrefixPool() {
+        // `currentLanguageCode()` can be region-less ("en"): with no exact match, pick the best same
+        // language voice.
+        let voices = [
+            voice("v.us.default", "en-US", .default),
+            voice("v.gb.premium", "en-GB", .premium),
+        ]
+        XCTAssertEqual(VoiceSelector.bestVoiceIdentifier(from: voices, languageCode: "en"), "v.gb.premium")
+    }
+
     func testDeterministicTieBreakAcrossEqualQuality() {
         let a = [voice("v.b", "en-US", .premium), voice("v.a", "en-US", .premium)]
         let b = [voice("v.a", "en-US", .premium), voice("v.b", "en-US", .premium)]

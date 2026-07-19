@@ -25,7 +25,9 @@ enum VoiceSelector {
     /// result.
     static func bestVoiceIdentifier(from voices: [VoiceOption], languageCode: String) -> String? {
         let prefix = languagePrefix(of: languageCode)
-        let exact = voices.filter { $0.language == languageCode }
+        // Case-insensitive so a case-skewed code ("en-us") still matches a voice's "en-US" as an exact
+        // region match, consistent with the (lowercased) prefix match below.
+        let exact = voices.filter { $0.language.caseInsensitiveCompare(languageCode) == .orderedSame }
         let sameLanguage = voices.filter { languagePrefix(of: $0.language) == prefix }
         let pool = exact.isEmpty ? sameLanguage : exact
         guard !pool.isEmpty else { return nil }
