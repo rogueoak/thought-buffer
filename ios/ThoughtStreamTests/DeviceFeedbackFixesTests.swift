@@ -687,7 +687,7 @@ final class SpeechAnalyzerMappingTests: XCTestCase {
 
 // MARK: - Feedback 0012: pause-based paragraph grouping in the view model
 
-/// Proves the flowing, Thoughts-style paragraph grouping at the service->view-model event seam: a
+/// Proves the flowing, Notes-style paragraph grouping at the service->view-model event seam: a
 /// mid-thought breath (small inter-segment gap) lands in ONE paragraph; a real pause (large gap)
 /// breaks into two; a resume-seam segment (analysis start) always starts a new paragraph. Driven
 /// through the injected event seam, no live audio.
