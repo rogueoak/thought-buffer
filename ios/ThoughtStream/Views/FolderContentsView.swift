@@ -52,6 +52,12 @@ struct FolderContentsView: View {
     // A transient message for a rejected/conflicting folder name.
     @State private var folderError: String?
 
+    // Drives the shared "Copied to clipboard" confirmation after a note-row Copy text (spec 0017):
+    // `copiedTrigger` is bumped on each copy so the lifecycle-tied confirmation re-arms its auto-hide,
+    // and `showCopiedConfirmation` holds its visibility.
+    @State private var copiedTrigger = 0
+    @State private var showCopiedConfirmation = false
+
     /// The interleaved, sorted rows for this screen: child folders + notes at this path.
     private var items: [FolderListItem] {
         FolderListModel.items(
@@ -102,6 +108,9 @@ struct FolderContentsView: View {
                     }
             }
         }
+        // The shared, lifecycle-tied "Copied to clipboard" confirmation (spec 0017), pinned at the top
+        // like the sibling banners; a rapid re-copy re-arms it and navigation cancels its timer.
+        .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .top)
         .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
         .animation(.easeInOut(duration: 0.2), value: folderError)
         .toolbar { toolbarContent }
@@ -237,10 +246,15 @@ struct FolderContentsView: View {
         .buttonStyle(.plain)
         .rowInsets()
         .contextMenu {
-            Button {
-                moveNote = note
-            } label: {
-                Label("Move to folder", systemImage: "folder")
+            // Long-press a note row for Share + Copy from the ONE shared `NoteActionsMenu` (spec 0017),
+            // with this screen's Move-to-folder appended after them. `onCopied` bumps the trigger that
+            // flashes the shared confirmation. Folder rows get no share/copy - only notes.
+            NoteActionsMenu(note: note, onCopied: { copiedTrigger += 1 }) {
+                Button {
+                    moveNote = note
+                } label: {
+                    Label("Move to folder", systemImage: "folder")
+                }
             }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {

@@ -20,6 +20,14 @@ existing gear/mic actions, containing:
    (`UIPasteboard.general`) and shows brief confirmation (reuse the existing chip /
    banner feedback pattern if one exists; otherwise a lightweight transient label).
 
+### List-row long-press
+
+The same two actions are also reachable from the notes list without opening a note:
+long-pressing a NOTE row opens its context menu with **Share** and **Copy text**
+(alongside the existing "Move to folder"), both reusing the same pure
+`Note.shareableText`. FOLDER rows do not get share/copy - only notes have shareable
+text.
+
 ### Shared text format
 
 One pure helper (e.g. `Note.shareableText` or a small `NoteExport` type) builds the
@@ -36,6 +44,15 @@ string so share and copy are identical and it is unit-testable:
 - The menu must not interfere with the edit / title-edit modes already in the
   toolbar; it is available in the normal (non-editing) state.
 - Keep it accessible: the menu button has an accessibility label ("Note actions").
+- The Share + Copy items, the copy-to-pasteboard call, and the "Copied to clipboard"
+  confirmation live in ONE shared place (`NoteActionsMenu` / `NoteClipboard` /
+  `CopiedConfirmation` + the `copiedConfirmation` view modifier), used by both the detail
+  toolbar and the list-row context menu, so the two never drift. `NoteActionsMenu` takes
+  optional trailing menu content so a caller can append its own items (the list appends
+  "Move to folder"; a future Delete slots in the same way) without re-forking the menu.
+- The confirmation's auto-hide is lifecycle-tied (a `.task(id:)` keyed on a per-copy
+  counter), not a detached timer, so a rapid re-copy re-arms it and navigating away cancels
+  it.
 
 ## Non-goals
 
@@ -45,6 +62,8 @@ string so share and copy are identical and it is unit-testable:
 ## Acceptance
 
 - The note detail screen shows a "..." menu with Share and Copy text.
+- Long-pressing a note row in the list opens a context menu with Share and Copy text;
+  folder rows do not.
 - Share presents the system share sheet with the note's title + body as plain text.
 - Copy places the same text on the pasteboard and confirms.
 - `Note.shareableText` (or equivalent) is pure and unit-tested: custom title,
