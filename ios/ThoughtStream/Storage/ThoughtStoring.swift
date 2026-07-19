@@ -56,11 +56,11 @@ protocol ThoughtStoring: Sendable {
     @discardableResult
     func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL
 
-    /// Atomically REPLACE a thought's EXISTING recording with a rewritten one from `temporaryURL` (spec
-    /// 0019 dead-air trim), coordinated (on iCloud) so the swap never races the sync daemon and
-    /// protected to match the thought file. Distinct from `saveAudio`: it ONLY swaps in a processed
-    /// version of an already-adopted recording, done as an ATOMIC replace so there is never a window
-    /// where the thought has no recording.
+    /// Atomically REPLACE a thought's EXISTING recording with a rewritten one from `temporaryURL`
+    /// (feedback 0022 resume-audio concatenation), coordinated (on iCloud) so the swap never races the
+    /// sync daemon and protected to match the thought file. Distinct from `saveAudio`: it ONLY swaps in a
+    /// processed version of an already-adopted recording, done as an ATOMIC replace so there is never a
+    /// window where the thought has no recording.
     ///
     /// It NEVER creates a new recording. When no recording exists at the thought's slot - the thought was
     /// soft-deleted (its `.md` is hidden in trash, so the slot resolves to a non-existent root file),

@@ -303,10 +303,10 @@ extension Thought {
         return name
     }
 
-    /// A copy of this thought with its per-paragraph `timings` replaced (spec 0019 dead-air remap). Only
-    /// the timings change - title, body, recording filename, and folder are preserved - so re-saving
-    /// the copy after a background trim never clobbers a concurrent edit to those fields. Pure so the
-    /// timings-only update is unit-testable and keeps `timings` a `let`.
+    /// A copy of this thought with its per-paragraph `timings` replaced (feedback 0022 resume-concat
+    /// offset). Only the timings change - title, body, recording filename, and folder are preserved - so
+    /// re-saving the copy after a background audio re-save never clobbers a concurrent edit to those
+    /// fields. Pure so the timings-only update is unit-testable and keeps `timings` a `let`.
     func withTimings(_ timings: [ParagraphTiming]) -> Thought {
         Thought(
             id: id,

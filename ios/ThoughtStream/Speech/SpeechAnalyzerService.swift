@@ -284,7 +284,13 @@ final class SpeechAnalyzerService: SpeechCaptureService {
 
     private func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
+        // `.spokenAudio` is Apple's dictation-tuned input mode: unlike `.measurement` (which DISABLES
+        // the input signal conditioning - automatic gain, noise, and echo processing - that speech
+        // recognition relies on), it keeps that conditioning on and is tuned for continuous speech. The
+        // old `.measurement` mode starved the recognizer of clean input and made transcription noticeably
+        // worse (capture-pipeline feedback 0026). Keep `.duckOthers` so other audio is quieted while
+        // dictating.
+        try session.setCategory(.record, mode: .spokenAudio, options: [.duckOthers])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
     }
 
@@ -301,10 +307,24 @@ final class SpeechAnalyzerService: SpeechCaptureService {
 
     /// A fresh transcriber for `locale`, configured to report volatile results and per-result audio
     /// time ranges. One place builds it so the probe (asset check) and the live one match.
+    ///
+    /// `transcriptionOptions` (capture-pipeline feedback 0026): VERIFIED against the installed iOS 26.5
+    /// SDK's `Speech.swiftinterface` (and the `Speech.framework` headers). For `SpeechTranscriber` the
+    /// `TranscriptionOption` enum has exactly ONE case in this SDK - `etiquetteReplacements` - so that is
+    /// the only option there is to set. IMPORTANT and contrary to a common assumption: punctuation and
+    /// readable formatting are NOT gated behind a transcription option on `SpeechTranscriber`. The
+    /// `punctuation` / `emoji` cases exist only on the SEPARATE `DictationTranscriber.TranscriptionOption`,
+    /// and `addsPunctuation` is a property of the LEGACY `SFSpeechRecognitionRequest` API. `SpeechTranscriber`
+    /// produces punctuated, formatted output natively from its language model, so passing `[]` here was NOT
+    /// what stripped punctuation. Setting `[.etiquetteReplacements]` turns on Apple's etiquette handling
+    /// (masking/replacement of sensitive terms) - the only available quality lever on this transcriber; the
+    /// real transcription-quality wins are the `.spokenAudio` session mode above and the conservative
+    /// refinement layer. DEVICE-VERIFY the actual on-device punctuation quality: the Simulator does not run
+    /// real recognition, so the punctuation improvement can only be confirmed on hardware.
     private func makeTranscriber(locale: Locale) -> SpeechTranscriber {
         SpeechTranscriber(
             locale: locale,
-            transcriptionOptions: [],
+            transcriptionOptions: [.etiquetteReplacements],
             reportingOptions: [.volatileResults],
             attributeOptions: [.audioTimeRange]
         )

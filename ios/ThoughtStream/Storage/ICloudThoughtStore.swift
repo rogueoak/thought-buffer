@@ -427,8 +427,9 @@ struct ICloudThoughtStore: ThoughtStoring {
         return destination
     }
 
-    /// Atomically replace a thought's EXISTING recording with a rewritten one (spec 0019 dead-air trim),
-    /// COORDINATED through `NSFileCoordinator` (`.forReplacing`) so the swap never races the sync
+    /// Atomically replace a thought's EXISTING recording with a rewritten one (feedback 0022 resume-audio
+    /// concatenation), COORDINATED through `NSFileCoordinator` (`.forReplacing`) so the swap never races
+    /// the sync
     /// daemon on the ubiquity-container file, and using `replaceItemAt` inside the coordination block
     /// so there is never a window where the thought has no recording. Re-asserts protection.
     ///

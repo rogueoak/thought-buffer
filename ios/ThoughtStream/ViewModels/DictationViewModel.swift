@@ -130,13 +130,6 @@ final class DictationViewModel: ObservableObject {
     /// Whether to record the session's audio (spec 0007). Read from settings at construction so it
     /// applies to this session; `transcriptOnly` never opens the file writer.
     private let recordsAudio: Bool
-    /// The dead-air trimmer, or nil when trimming is OFF (spec 0019). When nil, NO code path touches
-    /// the saved recording - it is the byte-for-byte untrimmed capture. When present, a freshly saved
-    /// recording is trimmed off the main actor after `finish()`, its silences cut and the thought's
-    /// timings remapped onto the shortened timeline, then the thought is re-saved. Injected from the
-    /// composition root only for a session that RECORDS new audio; a resumed/text append never trims
-    /// (it keeps the original recording).
-    private let audioTrimmer: AudioTrimming?
     /// Joins a newly-recorded resume segment onto a thought's existing recording (feedback 0022), or nil
     /// when a session records no new audio onto an existing recording (a fresh session, a text-only
     /// append, or tests that do not exercise the join). When present AND the resumed thought already had
@@ -208,7 +201,6 @@ final class DictationViewModel: ObservableObject {
         processor: TextProcessor = PassthroughTextProcessor(),
         speaker: Speaker? = nil,
         recordsAudio: Bool = false,
-        audioTrimmer: AudioTrimming? = nil,
         audioConcatenator: AudioConcatenating? = nil,
         controlWord: String = MiraTextProcessor.defaultControlWord,
         folderPath: [String] = [],
@@ -221,7 +213,6 @@ final class DictationViewModel: ObservableObject {
         self.processor = processor
         self.speaker = speaker ?? SystemSpeaker()
         self.recordsAudio = recordsAudio
-        self.audioTrimmer = audioTrimmer
         self.audioConcatenator = audioConcatenator
         self.controlWord = controlWord
         // A brand-new session started while browsing a folder files its thought THERE, not at the root
@@ -272,28 +263,6 @@ final class DictationViewModel: ObservableObject {
     /// preserved recording still maps to the original paragraphs after resume.
     private static func seedTimings(for thought: Thought) -> [ParagraphTiming?] {
         thought.paragraphs.indices.map { thought.timing(forParagraphAt: $0) }
-    }
-
-    /// Remap ONLY the newly-recorded paragraphs (index >= `existingParagraphCount`) of `timings` onto the
-    /// SHORTER new-segment timeline produced by trimming silence from the new segment (feedback 0022 +
-    /// engineer review). The new paragraphs' committed ranges are relative to the UNTRIMMED new segment, so
-    /// when the trim cut interior silence out of it, each new paragraph after that silence sits earlier in
-    /// the trimmed segment - it must shift left by the removed duration before it, exactly as `scheduleTrim`
-    /// does for a whole recording. Pure and count-preserving. The PRE-EXISTING paragraphs are left untouched
-    /// (their ranges point at the original recording, which the new segment's trim does not affect). A no-op
-    /// when nothing was removed (no trim, or a `.notTrimmed` result). The `existingDuration` offset is then
-    /// applied by `RecordingTiming.offsetResumedTimings` on the result.
-    nonisolated static func remapNewParagraphsOntoSegment(
-        _ timings: [ParagraphTiming],
-        existingParagraphCount: Int,
-        removedRanges: [SilenceTrimmer.KeepRange]
-    ) -> [ParagraphTiming] {
-        guard !removedRanges.isEmpty, existingParagraphCount >= 0,
-              existingParagraphCount < timings.count else { return timings }
-        let existing = Array(timings.prefix(existingParagraphCount))
-        let newParagraphs = Array(timings.suffix(from: existingParagraphCount))
-        let remappedNew = TimingRemapper.remap(timings: newParagraphs, removedRanges: removedRanges)
-        return existing + remappedNew
     }
 
     /// The full transcript so far, including the live partial, for display.
@@ -372,7 +341,6 @@ final class DictationViewModel: ObservableObject {
         }
 
         // The session's recording (finalized by `service.stop()` above) belongs to this final thought.
-        didAdoptNewRecording = false
         let thought = try saveCurrentThought(adoptingRecording: true)
 
         // Resume-continues-audio (feedback 0022): a resumed thought that ALREADY had a recording and
@@ -388,13 +356,11 @@ final class DictationViewModel: ObservableObject {
         // was taken above it is already moved out, so this discards whatever - if anything - remains.)
         discardPendingRecording()
         phase = .saved
-        // Dead-air removal (spec 0019): only for a thought that just adopted a NEW recording, and only
-        // when trimming is on (a nil trimmer means OFF - no code path touches the audio). Runs OFF the
-        // main actor so a slow trim never freezes the UI; on success it remaps timings and re-saves.
-        // `finish()` returns immediately with the untrimmed thought; the trim re-saves in the background.
-        if didAdoptNewRecording {
-            scheduleTrim(for: thought)
-        } else if let resumeSegmentURL {
+        // Resume-continues-audio (feedback 0022): if a resume captured a new segment onto an existing
+        // recording, join it on OFF the main actor. `finish()` returns immediately with the thought saved
+        // against its ORIGINAL recording; the concatenation re-saves in the background. (There is no
+        // longer any dead-air trim here - that feature was removed in capture-pipeline feedback 0026.)
+        if let resumeSegmentURL {
             // Capture the REAL committed timings now (the new paragraphs carry their new-segment-relative
             // ranges, before the fallback save zeroed them on disk). The concatenation task offsets THESE
             // past the existing recording - the on-disk fallback timings are placeholders it must not read.
@@ -430,91 +396,18 @@ final class DictationViewModel: ObservableObject {
         }
     }
 
-    /// Whether the most recent `saveCurrentThought` adopted a freshly captured recording (as opposed to
-    /// a resumed thought keeping its existing one, or a text-only save). Gates the post-save trim so a
-    /// resumed thought's original recording is never re-trimmed.
-    private var didAdoptNewRecording = false
-
     /// Called on the main actor after a background audio re-save lands and the host should reload its feed
-    /// to drop the stale in-memory thought: a dead-air trim (spec 0019, remapped timings) OR a resume
-    /// concatenation (feedback 0022, joined audio + offset timings). Nil when no host wired it (tests,
-    /// screenshot tooling). Set by the view.
+    /// to drop the stale in-memory thought: a resume concatenation (feedback 0022, joined audio + offset
+    /// timings). Nil when no host wired it (tests, screenshot tooling). Set by the view.
     ///
     /// KNOWN LIMITATION (feedback 0017): this reloads the LIST feed, but an ALREADY-OPEN `ThoughtDetailView`
     /// pushed on the stack keeps its own stale thought snapshot until it is popped and reopened. Harmless
-    /// today because detail playback is whole-file: a trim changes only interior silence (total duration
-    /// unchanged) and a resume concatenation only EXTENDS the recording (the pre-existing portion still
-    /// plays whole from time 0), so a stale per-paragraph timing is never consulted. A future PER-PARAGRAPH
-    /// SEEK feature MUST revisit this - it would seek against timings that no longer match the re-saved
-    /// audio - by refreshing the open detail's thought here (or re-reading it at seek time).
+    /// today because detail playback is whole-file: a resume concatenation only EXTENDS the recording (the
+    /// pre-existing portion still plays whole from time 0), so a stale per-paragraph timing is never
+    /// consulted. A future PER-PARAGRAPH SEEK feature MUST revisit this - it would seek against timings that
+    /// no longer match the re-saved audio - by refreshing the open detail's thought here (or re-reading it
+    /// at seek time).
     var onBackgroundAudioResave: (() -> Void)?
-
-    /// Trim dead air from a just-saved thought's recording OFF the main actor, then adopt the trimmed
-    /// audio and remap the thought's timings (spec 0019). Non-blocking: `finish()` has already returned
-    /// the untrimmed thought. On any trim failure the original recording and timings are left in place, so
-    /// the thought is never lost. The task is detached so it outlives the view dismissed after `finish()`.
-    ///
-    /// Three review-driven safeguards. First, the swap is done through the store's COORDINATED
-    /// `replaceAudio` (not a bare `replaceItemAt`), so an iCloud recording is not raced against the sync
-    /// daemon. Second, the thought is re-read FRESH from disk by id and CONFIRMED to still exist BEFORE the
-    /// audio is swapped: the user may soft-delete (spec 0020 trash) the thought between `finish()` and this
-    /// trim landing, and after a delete the thought's `.md` is hidden in trash so its audio slot resolves to
-    /// a non-existent root path - adopting the trimmed temp there would leave an orphan raw-voice `.m4a`,
-    /// invisible to `loadAll` and never purged, defeating the delete. If the thought is gone we delete the
-    /// trimmed temp and bail. (`replaceAudio` also refuses to create a file when the slot is absent, so
-    /// this is belt-and-suspenders.) Third, the timings re-save only replaces the fresh thought's timings -
-    /// it does NOT re-save the stale snapshot captured at `finish()` - so a concurrent rename/move is
-    /// preserved.
-    private func scheduleTrim(for thought: Thought) {
-        guard let audioTrimmer, thought.hasAudio,
-              let audioURL = store.audioURL(for: thought.id) else { return }
-        let store = self.store
-        let thoughtID = thought.id
-        Task.detached { [weak self] in
-            let result = await audioTrimmer.trim(fileAt: audioURL)
-            guard case .trimmed(let trimmedFileURL, let removedRanges) = result else { return }
-
-            // Re-read the thought FRESH and confirm it still exists BEFORE touching any audio. If it was
-            // soft-deleted/moved during the trim, discard the trimmed temp and bail - never adopt it
-            // (which would orphan a copy of the just-deleted recording).
-            guard let current = store.loadAll().first(where: { $0.id == thoughtID }) else {
-                try? FileManager.default.removeItem(at: trimmedFileURL)
-                return
-            }
-
-            // Adopt the verified trimmed file through the coordinated atomic-replace seam. On failure,
-            // clean up the temp and leave the original recording + timings untouched (never lost). A nil
-            // return means the recording slot vanished in the tiny window since the re-read (a delete
-            // that raced the swap): `replaceAudio` created NO orphan and consumed the temp, so bail
-            // without re-saving the timings (which would resurrect the just-deleted thought).
-            let replaced: URL?
-            do {
-                replaced = try store.replaceAudio(from: trimmedFileURL, for: thoughtID)
-            } catch {
-                try? FileManager.default.removeItem(at: trimmedFileURL)
-                return
-            }
-            guard replaced != nil else { return }
-
-            // Remap only the fresh thought's timings (its edits are preserved). A save failure leaves the
-            // thought with its original timings against the shorter recording - a seek slip, not data loss.
-            let remappedThought = current.withTimings(
-                TimingRemapper.remap(timings: current.timings, removedRanges: removedRanges)
-            )
-            // RE-CONFIRM existence immediately before the save (feedback 0022 security review): a
-            // soft-delete landing between the swap and this save would otherwise be UNDONE by `save`
-            // writing a fresh `<id>.md` at root, resurrecting the deleted thought's text. Skip the save
-            // when the thought is gone - the same second-window guard the resume-concatenation path uses.
-            guard store.loadAll().contains(where: { $0.id == thoughtID }) else { return }
-            // Discard the saved URL: this is a background re-save, the reload triggered below reflects it.
-            _ = try? store.save(remappedThought)
-
-            // Hop back to the main actor so the host reloads and drops the stale in-memory thought.
-            // Capture `self` explicitly (not the outer `weak var self`) so the concurrently-executing
-            // `MainActor.run` closure does not reference the captured `var self` (a Swift 6 error).
-            await MainActor.run { [weak self] in self?.onBackgroundAudioResave?() }
-        }
-    }
 
     /// Join a resume's newly-recorded segment onto the thought's existing recording OFF the main actor,
     /// then adopt the combined audio and offset the new paragraphs' timings past the original (feedback
@@ -522,14 +415,14 @@ final class DictationViewModel: ObservableObject {
     /// and the new paragraphs as text-only (the safe fallback). On ANY failure the fallback stands - the
     /// original recording is kept, the new paragraphs stay text-only - so the original is never lost.
     ///
-    /// Sequence, mirroring `scheduleTrim`'s safeguards. First, trim ONLY the NEW segment when trimming is on
-    /// (spec 0019): the ORIGINAL was already trimmed on its first save, so it is never re-trimmed; only the
-    /// fresh segment is tightened, then concatenated. Second, concatenate original + (trimmed) new segment
-    /// into one file via the thin AVFoundation seam. Third, re-read the thought FRESH and confirm it still
-    /// exists before swapping audio (a soft-delete/move during the join must not orphan a raw-voice copy),
-    /// then swap through the COORDINATED `replaceAudio` (never a bare replace, so iCloud is not raced), and
-    /// only on a real replace offset the new timings by the combined file's measured existing-duration and
-    /// re-save the FRESH thought (preserving a concurrent edit). Every temp is cleaned up on every exit.
+    /// Sequence. First, concatenate original + new segment into one file via the thin AVFoundation seam.
+    /// Second, re-read the thought FRESH and confirm it still exists before swapping audio (a
+    /// soft-delete/move during the join must not orphan a raw-voice copy), then swap through the COORDINATED
+    /// `replaceAudio` (never a bare replace, so iCloud is not raced), and only on a real replace offset the
+    /// new timings by the combined file's measured existing-duration and re-save the FRESH thought
+    /// (preserving a concurrent edit). Every temp is cleaned up on every exit. (The new segment is joined
+    /// AS CAPTURED - the dead-air trim that once tightened it first was removed in capture-pipeline
+    /// feedback 0026, so there is no per-segment remap step anymore.)
     private func scheduleResumeConcatenation(
         for thought: Thought,
         newSegmentURL: URL,
@@ -543,39 +436,24 @@ final class DictationViewModel: ObservableObject {
         let store = self.store
         let thoughtID = thought.id
         let existingParagraphCount = self.existingParagraphCount
-        let audioTrimmer = self.audioTrimmer
         Task.detached { [weak self] in
             let fm = FileManager.default
             // Clean up every temp we create/own on any exit from here on.
             var tempsToClean: [URL] = [newSegmentURL]
             defer { for url in tempsToClean { try? fm.removeItem(at: url) } }
 
-            // 1. Trim ONLY the new segment (the original was already trimmed on its first save). A nil
-            //    trimmer or a `.notTrimmed` result leaves the segment as captured - never a failure. KEEP
-            //    the removed ranges: the new paragraphs' `committedTimings` are relative to the UNTRIMMED
-            //    segment, so if the trim cut silence out of it, those timings must first be remapped onto
-            //    the SHORTER segment timeline before the existing-duration offset (step 5) - otherwise
-            //    every new paragraph overshoots its real position by the silence removed before it.
-            var segmentToJoin = newSegmentURL
-            var newSegmentRemovedRanges: [SilenceTrimmer.KeepRange] = []
-            if let audioTrimmer, case .trimmed(let trimmedSegment, let removed) = await audioTrimmer.trim(fileAt: newSegmentURL) {
-                segmentToJoin = trimmedSegment
-                newSegmentRemovedRanges = removed
-                tempsToClean.append(trimmedSegment)
-            }
-
-            // 2. Concatenate original + new segment into one combined file (both inputs untouched). Any
+            // 1. Concatenate original + new segment into one combined file (both inputs untouched). Any
             //    failure (unreadable, empty new segment, incompatible format) leaves the fallback standing.
             guard case .concatenated(let combinedURL, let existingDuration) =
-                    await audioConcatenator.concatenate(existing: existingURL, new: segmentToJoin) else { return }
+                    await audioConcatenator.concatenate(existing: existingURL, new: newSegmentURL) else { return }
             tempsToClean.append(combinedURL)
 
-            // 3. Re-read the thought FRESH and confirm it still exists BEFORE touching any audio. If it was
+            // 2. Re-read the thought FRESH and confirm it still exists BEFORE touching any audio. If it was
             //    soft-deleted/moved during the join, bail - never adopt (which would orphan a copy of the
             //    just-deleted recording); the temps are cleaned by the defer.
             guard let current = store.loadAll().first(where: { $0.id == thoughtID }) else { return }
 
-            // 4. Swap in the combined file through the COORDINATED atomic-replace seam. On failure or a nil
+            // 3. Swap in the combined file through the COORDINATED atomic-replace seam. On failure or a nil
             //    return (the slot vanished - a delete raced the swap; `replaceAudio` made no orphan), the
             //    fallback stands. `replaceAudio` consumes `combinedURL` on a nil return, but the defer's
             //    removeItem is a harmless no-op on an already-gone file.
@@ -587,24 +465,17 @@ final class DictationViewModel: ObservableObject {
             }
             guard replaced != nil else { return }
 
-            // 5. Map the newly-recorded paragraphs onto the combined timeline in TWO steps, touching only
-            //    index >= existingParagraphCount (the pre-existing paragraphs still point at the unchanged
-            //    original audio at the front of the join, so they are left exactly as captured):
-            //    (a) REMAP each new timing onto the SHORTER new-segment timeline by the silence the trim
-            //        cut from the new segment (`newSegmentRemovedRanges`, empty when no trim ran), so a
-            //        paragraph after cut silence does not overshoot; then
-            //    (b) OFFSET it past the existing audio by the combined file's MEASURED existing-duration.
-            //    Applied to the FRESH thought (its title / paragraph EDITS are preserved) - but only when
-            //    the fresh thought still has the SAME paragraph count, so the timings still align 1:1. A
-            //    concurrent edit that ADDED/REMOVED a paragraph broke the alignment, so keep the fresh
-            //    thought's own timings against the (now longer) recording - a seek slip, not data loss.
-            let remappedNewSegment = Self.remapNewParagraphsOntoSegment(
-                committedTimings,
-                existingParagraphCount: existingParagraphCount,
-                removedRanges: newSegmentRemovedRanges
-            )
+            // 4. OFFSET the newly-recorded paragraphs (index >= existingParagraphCount) past the existing
+            //    audio by the combined file's MEASURED existing-duration. The pre-existing paragraphs still
+            //    point at the unchanged original audio at the front of the join, so they are left exactly as
+            //    captured; the new paragraphs' `committedTimings` are relative to the new segment (joined as
+            //    captured), so a single offset places them on the combined timeline. Applied to the FRESH
+            //    thought (its title / paragraph EDITS are preserved) - but only when the fresh thought still
+            //    has the SAME paragraph count, so the timings still align 1:1. A concurrent edit that
+            //    ADDED/REMOVED a paragraph broke the alignment, so keep the fresh thought's own timings
+            //    against the (now longer) recording - a seek slip, not data loss.
             let offset = RecordingTiming.offsetResumedTimings(
-                remappedNewSegment,
+                committedTimings,
                 existingParagraphCount: existingParagraphCount,
                 existingDuration: existingDuration
             )
@@ -612,7 +483,7 @@ final class DictationViewModel: ObservableObject {
                 ? current.withTimings(offset)
                 : current
 
-            // 6. RE-CONFIRM the thought still exists immediately before the final save (security review).
+            // 5. RE-CONFIRM the thought still exists immediately before the final save (security review).
             //    There is a SECOND delete-race window AFTER the swap: a soft-delete (spec 0020 trash) that
             //    lands between `replaceAudio` succeeding and this save moves `<id>.md`/`.m4a` into `.trash/`,
             //    and `save` - finding no live file (`locateFile` skips the trashed one) - would write a FRESH
@@ -685,9 +556,6 @@ final class DictationViewModel: ObservableObject {
             // IS the thought's recording, so adopt it into the empty slot.
             audioFileName = attached.fileName
             timings = attached.timings
-            // Mark this as a freshly captured recording so `finish()` schedules the dead-air trim for
-            // it (spec 0019). A resumed thought that keeps its existing recording is never re-trimmed.
-            didAdoptNewRecording = true
         }
 
         // No recording to attach: the text-only thought already on disk is the final thought.

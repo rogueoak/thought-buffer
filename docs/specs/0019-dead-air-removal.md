@@ -1,5 +1,13 @@
 # Spec 0019 - Automatic dead-air removal from recordings
 
+> **RETIRED (capture-pipeline feedback 0026).** This feature was removed. On device the trimmed
+> playback was poor and it was not worth the complexity, so the trim was cut at the user's request
+> ("Dead space editing is not working well just cut that feature. It's not important."). The
+> `AudioTrimmer` / `SilenceTrimmer` / `TimingRemapper` sources, the `trimSilence` setting and its
+> toggle, and the trim step in the recording/save path are gone. The coordinated `replaceAudio` store
+> seam and `Thought.withTimings` remain - they are reused by the resume-continues-audio concatenation
+> (feedback 0022), which is unrelated to this trim. The spec is kept for history; nothing below ships.
+
 ## Motivation
 
 Device feedback from Matthew (2026-07-19):

@@ -94,7 +94,7 @@ final class StorageAudioTests: XCTestCase {
         XCTAssertEqual(String(data: data, encoding: .utf8), "second")
     }
 
-    // MARK: - replaceAudio (spec 0019 dead-air trim)
+    // MARK: - replaceAudio (feedback 0022 resume-audio concatenation)
 
     func testReplaceAudioSwapsAnExistingRecording() throws {
         let store = ThoughtStore(directory: tempDir)

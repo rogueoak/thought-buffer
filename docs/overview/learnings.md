@@ -770,3 +770,34 @@ not weaken the new clamp back). Second: prefer expressing a bound ONCE, at the l
 authoritative value (here the controller owns `duration`), and have relative operations compose through
 the absolute one (`skip` -> `seek` -> clamp), so there is a single definition of "in range" that the
 in-app slider, the system scrubber, and both skip directions all share and cannot drift.
+
+## Verify a handed-down "root cause" against the exact SDK type before building on it (feedback 0026)
+
+A read-only investigation named a precise fix - "populate `SpeechTranscriber(transcriptionOptions:)` with
+the punctuation/readable-formatting options; `[]` is why output is bare". Checked against the installed
+iOS 26.5 SDK (`Speech.swiftinterface` plus the framework headers), it was WRONG for the type in use:
+`SpeechTranscriber.TranscriptionOption` has exactly ONE case (`etiquetteReplacements`) - `punctuation` /
+`emoji` live only on the SEPARATE `DictationTranscriber.TranscriptionOption`, and `addsPunctuation` is a
+property of the LEGACY `SFSpeechRecognitionRequest`. `SpeechTranscriber` punctuates NATIVELY from its
+language model, so `[]` never stripped punctuation and the "single highest-leverage fix" was a no-op. The
+real quality lever was the audio-session MODE (`.measurement` disables the input gain/noise/echo
+conditioning the recognizer relies on; `.spokenAudio` keeps it). Two rules generalize. First: an
+option/case named in an investigation is a hypothesis, not a fact - confirm it exists on the EXACT type
+you construct, because sibling types in one framework carry different enums and an old API's flag does not
+carry to its replacement; the `.swiftinterface` is the source of truth, not memory or a plausible-sounding
+name. Second: when a report blames the wrong knob, do not just add the named option and move on - trace
+which knob actually governs the behavior (here: signal conditioning, set by the session mode), or you ship
+a comment-decorated no-op and the regression persists. Generalizes to any platform-API fix handed over as
+"set X" - verify X, and verify X is what controls the symptom.
+
+## A device-only quality path still earns a CI gate on its pure half (feedback 0026)
+
+Real on-device transcription quality cannot be judged in the Simulator (it does not run recognition), so
+the raw-recognition win (`.spokenAudio`) is device-verify-only. But the REFINEMENT layer that shapes the
+saved text - filler removal, paragraph grouping - is pure and deterministic, so "good, faithful output"
+was pinned with representative realistic transcripts (fillers, numbers, units, punctuation, quotes, a
+natural pause) asserting the refined result is clean and faithful. That guard fails in CI the moment a
+future tidy/regex or filler-set change starts eating a real word, a unit, or sentence punctuation, even
+though the live recognition it feeds can only be confirmed on hardware. Generalizes: when a feature is
+device-only end to end, carve out the pure text/number core and unit-test the invariants a regression
+would break, so at least the guessable half is guarded.
