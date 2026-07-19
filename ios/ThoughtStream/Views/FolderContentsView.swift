@@ -94,31 +94,34 @@ struct FolderContentsView: View {
         )
     }
 
-    /// The flat, GLOBAL search results across the whole tree (spec 0021), newest first (the feed loads
-    /// notes newest first and `NoteSearch` preserves order). Computed only when a search is active.
-    private var searchResults: [Note] {
-        NoteSearch.results(in: feed.notes, query: searchQuery)
-    }
-
-    /// Whether the search field currently holds a non-whitespace query.
-    private var searchActive: Bool {
-        NoteSearch.isActive(searchQuery)
-    }
-
-    /// The pure state selection (spec 0021): empty store, active-search results, no-matches, or the
-    /// normal folder list. `storeHasNotes` is the WHOLE store (search is global), so the empty-state CTA
-    /// shows only when there is genuinely nothing anywhere - a note in another folder keeps the normal
-    /// list here. Gated on the initial load so a not-yet-loaded feed does not flash the empty CTA.
-    private var screenState: FolderScreenState {
-        guard feed.didLoad, folderLoaded else { return .normal }
-        return FolderScreenState.select(
+    /// Resolve the screen state AND the search results in ONE pass (architect review): the search scan is
+    /// `notes x paragraphs`, so it must run at most ONCE per render, not once in the body and again inside
+    /// a separate `screenState` computed property (which re-scanned per keystroke). When no search is
+    /// active the scan is skipped entirely. Gated on the initial load so a not-yet-loaded feed does not
+    /// flash the empty CTA. `storeHasNotes` is the WHOLE store (search is global), so the empty-state CTA
+    /// shows only when there is genuinely nothing anywhere.
+    private func resolveContent() -> (state: FolderScreenState, results: [Note]) {
+        guard feed.didLoad, folderLoaded else { return (.normal, []) }
+        let active = NoteSearch.isActive(searchQuery)
+        // Only scan when a search is active; the normal/empty states never look at results.
+        let results = active ? NoteSearch.results(in: feed.notes, query: searchQuery) : []
+        let state = FolderScreenState.select(
             storeHasNotes: !feed.notes.isEmpty,
-            searchActive: searchActive,
-            hasSearchMatches: !searchResults.isEmpty
+            searchActive: active,
+            hasSearchMatches: !results.isEmpty
         )
+        return (state, results)
     }
 
     var body: some View {
+        let content = resolveContent()
+        return bodyContent(state: content.state, results: content.results)
+    }
+
+    /// The screen body for a resolved `state`/`results` (computed once per render in `body`), so the
+    /// search scan is not repeated. `state` drives which view shows; `results` feeds the search list.
+    @ViewBuilder
+    private func bodyContent(state screenState: FolderScreenState, results searchResults: [Note]) -> some View {
         Group {
             switch screenState {
             case .emptyStore:
@@ -129,7 +132,7 @@ struct FolderContentsView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .searchResults:
-                searchResultsList
+                searchResultsList(searchResults)
             case .noMatches:
                 noMatchesState
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -139,7 +142,7 @@ struct FolderContentsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CanopyColor.bg.ignoresSafeArea())
-        .safeAreaInset(edge: .bottom) { bottomStack }
+        .safeAreaInset(edge: .bottom) { bottomStack(state: screenState) }
         .overlay(alignment: .top) {
             if feed.deleteFailed {
                 DeleteFailedBanner()
@@ -202,7 +205,7 @@ struct FolderContentsView: View {
     /// now-playing bar while something plays), so the stack is just the bottom bar in the common case.
     /// The bar hides its search field in a truly empty store but still shows Record, so recording is
     /// always reachable.
-    private var bottomStack: some View {
+    private func bottomStack(state screenState: FolderScreenState) -> some View {
         VStack(spacing: CanopySpacing.x3) {
             if deletion.pending != nil {
                 UndoDeleteAffordance(onUndo: { Task { await deletion.undo() } })
@@ -258,10 +261,11 @@ struct FolderContentsView: View {
 
     /// The flat GLOBAL search results (spec 0021): every matching note anywhere in the tree, as note
     /// rows. Tapping opens the note; the rows keep their swipe/context actions so a match can be played,
-    /// moved, shared, or deleted in place.
-    private var searchResultsList: some View {
+    /// moved, shared, or deleted in place. `results` is computed ONCE per render in `body` (not rescanned
+    /// here) so a keystroke does not re-run the notes x paragraphs scan.
+    private func searchResultsList(_ results: [Note]) -> some View {
         List {
-            ForEach(searchResults) { note in
+            ForEach(results) { note in
                 noteRow(note: note)
             }
         }

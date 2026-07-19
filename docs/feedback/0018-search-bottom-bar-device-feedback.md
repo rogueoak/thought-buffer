@@ -54,15 +54,28 @@ branch. Each is captured here so the learnings feed forward.
   vends one). So the delete was registered with a nil manager, and the system shake gesture - which
   invokes the FIRST RESPONDER's `UndoManager` - found no registered action.
 - **Fix.** A small, separable `UndoManagerHost` (`UIViewControllerRepresentable`) embeds a zero-size
-  `UIViewController` that `canBecomeFirstResponder`, becomes first responder on appear, and vends a
-  STABLE `UndoManager` from its `undoManager` override. The composition root injects THAT manager into
-  the deletion controller, so `registerUndo`/`undo`/`redo` all operate on the manager the shake gesture
-  actually resolves. `applicationSupportsShakeToEdit` stays at its default (true). A seam test proves a
-  delete registers an "Undo Delete" action on the injected manager (the exact thing the nil environment
-  manager prevented); the end-to-end shake gesture stays a manual-verify (system UI).
+  `UIViewController` that `canBecomeFirstResponder`, becomes first responder, and vends a STABLE
+  `UndoManager` from its `undoManager` override. The composition root injects THAT manager into the
+  deletion controller, so `registerUndo`/`undo`/`redo` all operate on the manager the shake gesture
+  actually resolves. `applicationSupportsShakeToEdit` stays at its default (true).
+  - **PR-review follow-up (engineer + architect, independently).** Becoming first responder ONCE in
+    `viewDidAppear` was not enough: the search field is now on EVERY screen, so focusing it (or the
+    title/body editor) makes that text field first responder, and when it resigns first responder does
+    NOT return to the host - a shake then resolves against the wrong (or nil) manager and shake-to-undo
+    silently breaks again. The host now RE-CLAIMS first responder whenever focus should return to it - on
+    keyboard hide, on a text field/text view ending editing, and on the app becoming active - deferred a
+    runloop tick and skipped while a text field is actively being edited, so it never fights the keyboard.
+- **Tests.** A seam test proves a delete registers an "Undo Delete" action on the injected manager; and
+  driving the controller's own `undoDelete`/`redoDelete` seams (what the manager's closures call) with
+  the injected manager present proves the shake channel RESTORES, the redo re-deletes, and the
+  stale-pending leak guard commits a prior pending. Calling `UndoManager.undo()` itself and the physical
+  shake stay manual-verify (that call is run-loop-coupled and corrupts the unit-test harness heap).
 - **Learning.** `@Environment(\.undoManager)` is not a reliable source of an `UndoManager` in a plain
   SwiftUI app - if a feature depends on the system Undo/Shake gesture, vend a stable manager from a
-  first-responder-backed controller and inject it, rather than trusting the environment to provide one.
+  first-responder-backed controller and inject it, rather than trusting the environment. And a
+  first-responder-backed helper must RE-CLAIM first responder after any text field takes it (keyboard
+  hide / end-editing / app-active), not just claim it once on appear - otherwise the first text focus
+  silently breaks the gesture it backs.
 
 ## 4. Record / new-thought must be contextual to the current folder
 

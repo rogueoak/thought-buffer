@@ -11,6 +11,14 @@ import UIKit
 /// STABLE `UndoManager` from its `undoManager` override. Registering the delete with THAT manager - the
 /// same one the shake reaches through the responder chain - makes the gesture work.
 ///
+/// CRITICAL (engineer + architect review): becoming first responder ONCE in `viewDidAppear` is not
+/// enough. The search field is now on every screen, and focusing it (or the title/body editor) makes
+/// THAT text field the first responder; when it resigns, first responder does NOT return to this host,
+/// so a shake resolves against the wrong (or nil) manager and shake-to-undo silently breaks - the exact
+/// bug this PR fixes. So the host RE-CLAIMS first responder whenever focus should return to it: on
+/// keyboard hide, on a text field ending editing, and on the app becoming active. That keeps the shake
+/// reaching `NoteDeletionController`'s injected manager after any in-app editing.
+///
 /// Kept as a small, separable component (the host view + a coordinator holding the manager) so the
 /// injection reads clearly: `StreamListView` overlays it and hands the vended manager to
 /// `NoteDeletionController`, replacing the unreliable environment manager.
@@ -28,7 +36,9 @@ struct UndoManagerHost: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: FirstResponderUndoController, context: Context) {}
 
     /// A zero-size view controller that becomes first responder so its `undoManager` is the one the shake
-    /// gesture resolves, and vends a single stable `UndoManager` for the app to register deletes on.
+    /// gesture resolves, and vends a single stable `UndoManager` for the app to register deletes on. It
+    /// RE-CLAIMS first responder after any text field steals it (keyboard hide, end-editing) and when the
+    /// app returns to the foreground, so the shake keeps reaching the vended manager.
     final class FirstResponderUndoController: UIViewController {
         /// The one manager for the app's undoable actions. Stable for the controller's lifetime so a
         /// registered "Undo Delete" is still there when the user shakes.
@@ -44,13 +54,62 @@ struct UndoManagerHost: UIViewControllerRepresentable {
             // button and everything else still receive touches (this view has zero size).
             view.isUserInteractionEnabled = false
             view.frame = .zero
+
+            // Re-claim first responder whenever focus should return to this host, so a shake keeps
+            // resolving against the vended manager after the user edited a text field (search, title,
+            // body). The keyboard-hide and end-editing notifications fire as a field resigns; the
+            // did-become-active notification covers returning from the background.
+            let center = NotificationCenter.default
+            for name in [
+                UIResponder.keyboardDidHideNotification,
+                UITextField.textDidEndEditingNotification,
+                UITextView.textDidEndEditingNotification,
+                UIApplication.didBecomeActiveNotification,
+            ] {
+                center.addObserver(
+                    self,
+                    selector: #selector(reclaimFirstResponder),
+                    name: name,
+                    object: nil
+                )
+            }
         }
 
         override func viewDidAppear(_ animated: Bool) {
             super.viewDidAppear(animated)
             // Become first responder so the shake gesture's responder-chain lookup reaches THIS
-            // controller's `undoManager`. Re-asserted on each appear in case focus moved away.
-            becomeFirstResponder()
+            // controller's `undoManager`.
+            reclaimFirstResponder()
         }
+
+        /// Reclaim first responder unless it is already ours or a text field is CURRENTLY being edited
+        /// (a notification can fire while another field is taking over focus; stealing it back then would
+        /// dismiss the keyboard). Deferred to the next runloop tick so it runs AFTER the resigning field
+        /// has fully given up first responder, avoiding a claim/resign fight.
+        @objc private func reclaimFirstResponder() {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.viewIfLoaded?.window != nil else { return }
+                if self.isFirstResponder { return }
+                // Do not steal focus from a field the user is actively editing.
+                if self.view.window?.findFirstResponder() is UITextInput { return }
+                self.becomeFirstResponder()
+            }
+        }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
+        }
+    }
+}
+
+private extension UIView {
+    /// The current first responder in this view's window subtree, or nil. Used so the undo host does not
+    /// yank first responder away from a text field the user is actively editing.
+    func findFirstResponder() -> UIResponder? {
+        if isFirstResponder { return self }
+        for subview in subviews {
+            if let responder = subview.findFirstResponder() { return responder }
+        }
+        return nil
     }
 }

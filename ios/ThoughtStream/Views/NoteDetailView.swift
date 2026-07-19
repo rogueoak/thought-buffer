@@ -201,13 +201,13 @@ struct NoteDetailView: View {
         // bottom so it clears the note text and the toolbar.
         .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .bottom)
         // The persistent bottom bar (spec 0021): a wide search field on the left, the resume icon on the
-        // right. Search is global, so a query here routes to the list results via `onSearch`; the resume
-        // icon appears only when a call site can reopen a session, the retention setting makes resuming
-        // applicable, and the note is not mid-edit or a still-empty brand-new note (nothing to record
-        // onto yet, and it would race the discard-on-leave). It is hidden entirely while editing, so the
-        // Done flow owns the screen. The bar reuses the SAME component the list uses (not a fork).
+        // right. Search is global, so a query here routes to the list results via `onSearch`. Which
+        // affordances show - and whether the bar shows at all - is the pure, tested `NoteDetailBottomBar`
+        // decision: it is HIDDEN entirely while editing the title or body, so the search field never
+        // renders under the keyboard and a brand-new note does not present two competing text fields. The
+        // bar reuses the SAME component the list uses (not a fork).
         .safeAreaInset(edge: .bottom) {
-            if onSearch != nil || (onResume != nil && resumeApplies) {
+            if bottomBarLayout.isVisible {
                 bottomBar
                     .padding(.bottom, CanopySpacing.x2)
             }
@@ -352,14 +352,26 @@ struct NoteDetailView: View {
         }
     }
 
+    /// The pure decision for what the note-detail bottom bar shows (spec 0021), extracted into the tested
+    /// `NoteDetailBottomBar` seam so the "hidden while editing / search / resume" logic is not re-derived
+    /// inline. The `.safeAreaInset` gate and the `bottomBar` body both read from this one decision.
+    private var bottomBarLayout: NoteDetailBottomBar {
+        NoteDetailBottomBar.decide(
+            canSearch: onSearch != nil,
+            canResume: onResume != nil,
+            resumeApplies: resumeApplies,
+            isEditing: isEditingAnything,
+            isUnsavedNewNote: isUnsavedNewNote
+        )
+    }
+
     /// The persistent bottom bar for the note page (spec 0021): the SAME `BottomBar` component the list
-    /// uses, with a search field and a resume icon on the right. The search field is shown only when the
-    /// call site can route a search (`onSearch`); the resume icon only when a call site can reopen a
-    /// session, the retention makes resuming applicable, and the note is neither mid-edit nor a
-    /// still-empty new note.
+    /// uses, with a search field and a resume icon on the right. What it shows is the pure
+    /// `bottomBarLayout` decision (search when the call site can route one; resume when a session can be
+    /// reopened, resuming applies, and the note is not a still-empty new note; hidden entirely while
+    /// editing).
     private var bottomBar: some View {
-        let showsSearch = onSearch != nil
-        let showsResume = onResume != nil && resumeApplies && !isEditingAnything && !isUnsavedNewNote
+        let layout = bottomBarLayout
         // Submitting a non-empty query routes to the SAME global results the folder screens render (spec
         // 0021): the composition root pops back to the list and applies the query there, so search from
         // the note page behaves identically. Routing on SUBMIT (not every keystroke) lets the user type a
@@ -367,12 +379,12 @@ struct NoteDetailView: View {
         // view down on the first character.
         return BottomBar(
             query: $searchQuery,
-            showsSearchField: showsSearch,
+            showsSearchField: layout.showsSearch,
             onSubmit: {
                 if NoteSearch.isActive(searchQuery) { onSearch?(searchQuery) }
             }
         ) {
-            if showsResume {
+            if layout.showsResume {
                 BottomBarRecordButton(accessibilityLabel: resumeAccessibilityLabel) {
                     onResume?(currentNote)
                 }

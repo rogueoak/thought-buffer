@@ -396,7 +396,15 @@ How the system is built and why.
   `UIViewControllerRepresentable` embedding a zero-size first-responder `UIViewController` that vends a
   STABLE `UndoManager`) is overlaid at the root and its manager injected into `NoteDeletionController`,
   so Shake to Undo works (feedback 0018) - `@Environment(\.undoManager)` is frequently nil in plain
-  SwiftUI, so the delete had nothing registered for the shake to reach. `DictationView` binds to `DictationViewModel`; `NoteCard`,
+  SwiftUI, so the delete had nothing registered for the shake to reach. The host RE-CLAIMS first
+  responder on keyboard-hide / text end-editing / app-active (not just on appear), because the
+  now-omnipresent search field steals first responder and would otherwise break the shake after the first
+  text focus. The note-detail bottom bar's "search / resume / hidden-while-editing" choice is the pure,
+  tested `NoteDetailBottomBar.decide(...)` (hidden entirely while editing so the search field never
+  renders under the keyboard and a new note does not show two competing fields); the folder screen
+  computes its search results ONCE per render (a single `resolveContent()` feeds both the state selection
+  and the results list, scanning only when a search is active) instead of rescanning per keystroke.
+  `DictationView` binds to `DictationViewModel`; `NoteCard`,
   `NoteDetailView` stay presentational. On a committed edit, `StreamListView`'s `onCommitEdit` runs
   the note through the pure `TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)`
   before saving (spec 0016): when the flag is on it reflows continuation lines, rebuilding via

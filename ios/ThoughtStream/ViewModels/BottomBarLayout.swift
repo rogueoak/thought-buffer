@@ -43,3 +43,44 @@ enum FolderScreenState: Equatable {
         self != .emptyStore
     }
 }
+
+/// Which affordances the NOTE-DETAIL bottom bar shows (spec 0021), and whether it shows at all. The
+/// note page's bar carries a search field and a resume icon, and it must be HIDDEN entirely while the
+/// user edits the title or body (engineer + architect review): otherwise the search `TextField` renders
+/// under the keyboard during an edit, and a brand-new (`.newNote`) note shows two competing text fields
+/// from open. This pure decision lives here (mirroring `FolderScreenState`) so it is unit-tested, not
+/// re-derived inline in the view.
+struct NoteDetailBottomBar: Equatable {
+    /// Whether to show the bar at all. False while editing (the Done flow owns the screen).
+    let isVisible: Bool
+    /// Whether the search field is shown (a call site that can route a search).
+    let showsSearch: Bool
+    /// Whether the resume icon is shown (a call site that can reopen a session, resuming applies per the
+    /// audio-retention setting, and the note is not a still-empty brand-new draft).
+    let showsResume: Bool
+
+    /// Decide what the note-detail bottom bar shows.
+    ///
+    /// - `canSearch`: a call site supplied `onSearch` (else no field).
+    /// - `canResume`: a call site supplied `onResume` (else no resume icon).
+    /// - `resumeApplies`: the audio-retention setting makes resuming meaningful for this note.
+    /// - `isEditing`: the title OR body editor is active - the bar is hidden entirely while true.
+    /// - `isUnsavedNewNote`: a brand-new note with no committed content - no resume onto it yet.
+    static func decide(
+        canSearch: Bool,
+        canResume: Bool,
+        resumeApplies: Bool,
+        isEditing: Bool,
+        isUnsavedNewNote: Bool
+    ) -> NoteDetailBottomBar {
+        // Hidden entirely while editing, so the search field never renders under the keyboard and a new
+        // note does not present two competing text fields.
+        if isEditing {
+            return NoteDetailBottomBar(isVisible: false, showsSearch: false, showsResume: false)
+        }
+        let showsResume = canResume && resumeApplies && !isUnsavedNewNote
+        // The bar is worth showing only when at least one affordance would appear.
+        let isVisible = canSearch || showsResume
+        return NoteDetailBottomBar(isVisible: isVisible, showsSearch: canSearch, showsResume: showsResume)
+    }
+}

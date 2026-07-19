@@ -143,13 +143,114 @@ final class NoteDeletionControllerTests: XCTestCase {
         XCTAssertEqual(manager.undoActionName, "Delete", "the shake prompt reads 'Undo Delete'")
     }
 
-    // NOTE: end-to-end "invoke undo() on the injected manager restores the note" is a MANUAL-verify
-    // (like the shake gesture itself). Driving `UndoManager.undo()` synchronously in a unit test, where
-    // the registered undo closure hops onto an async Task that re-registers a redo, corrupts the harness
-    // heap outside a real run loop's grouping. The RESTORE semantics are already proven by
-    // `testDeleteThenUndoRestoresNote` (the same seam the manager's closure calls), and the test above
-    // proves the delete now registers on the injected manager - which is the exact bug the fix closed
-    // (the environment manager was nil, so nothing was registered for a shake to reach).
+    // The shake gesture invokes `UndoManager.undo()`, which runs the registered closure that calls
+    // `undoDelete`. Calling `UndoManager.undo()` SYNCHRONOUSLY in a unit test corrupts the harness heap
+    // (the closure hops onto an async Task that re-registers the redo outside the manager's undoing state,
+    // with no run loop to close the group). So the tests below drive the controller's OWN undo/redo seams
+    // (`undoDelete`/`redoDelete`) directly WITH the injected manager present - the exact restore +
+    // re-registration the closure invokes - proving the shake channel RESTORES (not just registers) and
+    // that the redo cycle and the stale-pending leak guard hold. The literal `UndoManager.undo()` call
+    // and the physical shake stay a manual-verify.
+
+    /// The shake channel's UNDO restores the note: driving `undoDelete` (what the manager's registered
+    /// closure calls) with the injected manager present restores the deleted note, clears the pending
+    /// window, and re-registers a redo on the manager.
+    func testInjectedManagerUndoDeleteRestoresAndArmsRedo() async throws {
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        controller.undoManager = manager
+        let note = Note(title: "Restore me", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        await feed.reload()
+
+        manager.beginUndoGrouping()
+        await controller.delete(id: note.id)
+        manager.endUndoGrouping()
+        let token = try XCTUnwrap(controller.pending)
+        XCTAssertEqual(feed.notes.count, 0)
+
+        // Drive the exact seam the shake's registered closure runs.
+        manager.beginUndoGrouping()
+        await controller.undoDelete(token)
+        manager.endUndoGrouping()
+
+        XCTAssertEqual(feed.notes.count, 1, "the shake undo restores the note")
+        XCTAssertNotNil(store.load(id: note.id))
+        XCTAssertNil(controller.pending, "restoring clears the pending window")
+        XCTAssertTrue(manager.canUndo, "a redo (re-delete) is armed after the restore")
+    }
+
+    /// The shake channel's REDO re-deletes: after an undo restores the note, driving `redoDelete` (what
+    /// the redo closure calls) soft-deletes it again and re-arms the undo, so a shake redo re-applies the
+    /// delete.
+    func testInjectedManagerRedoDeleteReDeletes() async throws {
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        controller.undoManager = manager
+        let note = Note(title: "Yo-yo", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        await feed.reload()
+
+        manager.beginUndoGrouping()
+        await controller.delete(id: note.id)
+        manager.endUndoGrouping()
+        let deleted = try XCTUnwrap(controller.pending)
+
+        manager.beginUndoGrouping()
+        await controller.undoDelete(deleted)
+        manager.endUndoGrouping()
+        XCTAssertEqual(feed.notes.count, 1)
+
+        // Redo re-deletes.
+        manager.beginUndoGrouping()
+        await controller.redoDelete(deleted)
+        manager.endUndoGrouping()
+
+        XCTAssertEqual(feed.notes.count, 0, "the shake redo re-deletes the note")
+        XCTAssertNotNil(controller.pending, "the re-delete opens a fresh undo window")
+        XCTAssertEqual(trashedCount(), 1, "exactly one note is trashed (the re-delete's fresh token)")
+    }
+
+    /// The redo's stale-pending leak guard: if a DIFFERENT delete is pending when a redo re-deletes, the
+    /// prior pending is committed (purged) first, so its trash is never stranded - the same guard `delete`
+    /// uses. Here a redo of note A runs while note B is pending; A's re-delete must purge B.
+    func testInjectedManagerRedoCommitsPriorPendingBeforeReDeleting() async throws {
+        let manager = UndoManager()
+        manager.groupsByEvent = false
+        controller.undoManager = manager
+        let a = Note(title: "A", paragraphs: ["1."], createdAt: Date())
+        let b = Note(title: "B", paragraphs: ["2."], createdAt: Date())
+        try store.save(a)
+        try store.save(b)
+        await feed.reload()
+
+        // Delete A, then undo A (restored, redo armed for A).
+        manager.beginUndoGrouping()
+        await controller.delete(id: a.id)
+        manager.endUndoGrouping()
+        let aToken = try XCTUnwrap(controller.pending)
+        manager.beginUndoGrouping()
+        await controller.undoDelete(aToken)
+        manager.endUndoGrouping()
+        XCTAssertNil(controller.pending)
+
+        // Now delete B (B pending), then redo A: A's re-delete must purge B's stale token first.
+        manager.beginUndoGrouping()
+        await controller.delete(id: b.id)
+        manager.endUndoGrouping()
+        let bToken = try XCTUnwrap(controller.pending)
+
+        manager.beginUndoGrouping()
+        await controller.redoDelete(aToken)
+        manager.endUndoGrouping()
+
+        // A is pending again; B was committed (purged), so exactly one note is trashed and B is gone.
+        let pending = try XCTUnwrap(controller.pending)
+        XCTAssertEqual(pending.id, a.id, "A is the pending delete after its redo")
+        XCTAssertEqual(trashedCount(), 1, "B's stale token was purged, not stranded")
+        await feed.restore(bToken)
+        XCTAssertNil(store.load(id: b.id), "B's delete was committed, not recoverable")
+    }
 
     /// The launch sweep empties the trash of any leftover (committed-but-unswept / crash) entries.
     func testPurgeOrphanedTrashOnLaunchSweeps() async throws {
