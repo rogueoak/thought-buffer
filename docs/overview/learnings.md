@@ -424,3 +424,19 @@ Generalizes: when a shared "reset everything" helper gains a caller that must pr
 state, do not add flags to the helper - split the entry points by intent (the caller that resets vs.
 the caller that keeps), and keep the "is this a natural event or a deliberate one" distinction on the
 single flag that already gates the synchronous-vs-natural teardown, so the two paths never race.
+
+## The failure path of a state machine must honor the same invariant as the happy path (spec 0015)
+
+The queue advanced on a natural end-of-track (`handleFinish`: next-or-teardown), but the FAILED-play
+branch of `startPlayback` (a nil / unplayable URL for a mid-queue recording) only called
+`clearPlayback()` - not `clearQueue()` - so the queue was left populated with nothing playing:
+hands-free playback silently STALLED on a vanished file instead of skipping to the next. A finish and
+a failure are two ways the current item "is done"; both must move the queue forward or tear it down,
+yet only the finish path had that logic. The fix extracts one `advanceOrFinish()` and calls it from
+BOTH, so there is a single definition of "what happens when the current entry ends, however it ends."
+The tell: a happy-path transition that maintains an invariant (the queue is always either playing or
+empty) paired with an error/early-return branch that quietly drops out without re-establishing it.
+Generalizes to any state machine or iterator with a "success -> next" step and a separate "couldn't
+do this one" branch: route both through the same advance/cleanup, or the error branch strands state
+the success branch would have cleaned. And it needs a test that makes ONE middle item fail (here a
+per-note nil-resolving stub), not just start/first-item failure.

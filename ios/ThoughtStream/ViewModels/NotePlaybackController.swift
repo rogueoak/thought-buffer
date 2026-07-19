@@ -190,6 +190,10 @@ final class NotePlaybackController: ObservableObject {
     /// is active). Distinct from the natural-finish advance in that the USER asked for it: it clears
     /// the current playback and starts the next entry immediately. A no-op-to-stop when there is no
     /// next, matching the bar hiding its Next button at the end of the queue.
+    /// Skip to the next queued recording (the now-playing bar's Next button), or stop if this is the
+    /// last. This is a PHONE-BAR-ONLY affordance: the system remote (lock screen / Control Center /
+    /// CarPlay) intentionally maps skip to a 15s SEEK (`skipForward`/`skipBackward`), not a track
+    /// change, so do NOT wire a remote `nextTrackCommand` to this (architect review).
     func playNext() {
         guard hasNext, queueIndex + 1 < queue.count else {
             stop()
@@ -259,8 +263,10 @@ final class NotePlaybackController: ObservableObject {
     private func startPlayback(note: Note, url: URL?) {
         pendingPlay = nil
         guard let url, player.play(url: url, from: 0, duration: nil) else {
-            clearPlayback()
-            notifyTransportChange()
+            // A nil / unplayable recording must not strand a running queue: skip it to the next entry,
+            // or clear out cleanly when there is nothing more to play - the same advance-or-teardown a
+            // natural end uses (spec 0015 review). With no queue this simply clears, as before.
+            advanceOrFinish()
             return
         }
         isPlaying = true
@@ -306,15 +312,21 @@ final class NotePlaybackController: ObservableObject {
     /// reset moved below the guard so it does not run redundantly on top of the deliberate teardown.
     private func handleFinish() {
         guard !suppressFinish else { return }
-        // A queue is running and has a next entry: advance to it rather than tearing everything down,
-        // so a folder swipe plays through its recordings hands-free. Only a NATURAL end reaches here -
-        // a user stop sets `suppressFinish` (via `clearPlayback`) and returned above - so advancing is
-        // exactly "the current recording ended on its own".
+        // Only a NATURAL end reaches here - a user stop sets `suppressFinish` (via `clearPlayback`) and
+        // returned above - so this is exactly "the current recording ended on its own".
+        advanceOrFinish()
+    }
+
+    /// Advance to the next queued recording, or - when there is no queue or it is exhausted - tear
+    /// everything down (state, Now Playing, remote, queue) so the bar hides. Shared by the natural
+    /// end-of-track (`handleFinish`) AND a failed/unplayable resolve (`startPlayback`): a recording
+    /// that ends and one that cannot be played both move the queue forward rather than STRANDING it
+    /// (a folder swipe plays through, skipping a missing file - engineer/tester review).
+    private func advanceOrFinish() {
         if !queue.isEmpty && queueIndex + 1 < queue.count {
             advanceQueue()
             return
         }
-        // No queue, or the last queued entry finished: clear everything, including the queue.
         clearQueue()
         resetState()
         currentNote = nil

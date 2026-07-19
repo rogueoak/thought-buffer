@@ -448,6 +448,45 @@ final class NotePlaybackControllerTests: XCTestCase {
         XCTAssertFalse(controller.hasNext, "the second is the last -> no next")
     }
 
+    func testQueueSkipsAnUnplayableRecordingAndAdvances() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let missing = recordedNote(title: "missing")
+        let third = recordedNote(title: "third")
+        // The middle recording cannot be resolved (a vanished / unreadable file).
+        lastResolver?.setNilForIDs([missing.id])
+
+        controller.playQueue([first, missing, third])
+        await eventually { player.plays.count == 1 }
+        XCTAssertTrue(controller.isLoaded(first))
+
+        // First ends -> advance to `missing`, which resolves nil and cannot play -> the queue must SKIP
+        // it to `third` rather than stranding (populated queue, nothing playing).
+        player.finish()
+        await eventually { player.plays.count == 2 }
+        XCTAssertTrue(controller.isLoaded(third), "an unplayable mid-queue recording is skipped, not stranded")
+        XCTAssertFalse(controller.hasNext)
+    }
+
+    func testQueueSurvivesPauseAndResumeThenAdvances() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let second = recordedNote(title: "second")
+
+        controller.playQueue([first, second])
+        await eventually { player.plays.count == 1 }
+        controller.pause()
+        XCTAssertTrue(controller.hasNext, "pause does not disturb the queue")
+        controller.resume()
+
+        // A natural finish after a pause/resume cycle still advances the queue (index intact).
+        player.finish()
+        await eventually { player.plays.count == 2 }
+        XCTAssertTrue(controller.isLoaded(second))
+    }
+
     func testQueueClearsAfterLastNaturalFinish() async {
         let player = SpyPlayer()
         let nowPlaying = SpyNowPlaying()
@@ -607,11 +646,16 @@ private final class StubResolver: AudioURLResolving, @unchecked Sendable {
     /// resolve having run (thread-safe: resolution runs on a detached task).
     var resolveCount: Int { lock.lock(); defer { lock.unlock() }; return _resolveCount }
 
+    /// Note ids that resolve to nil (a missing / unresolvable recording), so a test can make one entry
+    /// of a queue fail to play and assert the queue skips it.
+    private var _nilForIDs: Set<UUID> = []
+    func setNilForIDs(_ ids: Set<UUID>) { lock.lock(); _nilForIDs = ids; lock.unlock() }
+
     init(url: URL?) { self.url = url }
 
     func resolveAudioURL(for noteID: UUID, audioFileName: String?) -> URL? {
-        lock.lock(); _resolveCount += 1; lock.unlock()
-        return url
+        lock.lock(); _resolveCount += 1; let fails = _nilForIDs.contains(noteID); lock.unlock()
+        return fails ? nil : url
     }
 }
 
