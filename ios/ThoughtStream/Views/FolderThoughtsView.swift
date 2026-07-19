@@ -145,13 +145,11 @@ struct FolderThoughtsView: View {
             }
     }
 
-    /// Move every selected thought into this folder (feedback 0026, item 6): re-file each by id, one at a
-    /// time, then reload once so the list reflects them all.
+    /// Move every selected thought into this folder (feedback 0026, item 6): re-file them all in ONE batch
+    /// so the driver reloads once (no per-thought reload flicker).
     private func moveIntoFolder(ids: Set<UUID>, folderName: String) async {
         let toMove = feed.thoughts.filter { ids.contains($0.id) }
-        for thought in toMove {
-            await feed.move(thought, to: [folderName])
-        }
+        await feed.move(toMove, to: [folderName])
     }
 
     @ViewBuilder
@@ -297,12 +295,10 @@ struct FolderThoughtsView: View {
             .alert("Rename folder", isPresented: dialogBinding { $0.isRenameFolder }) {
                 TextField("Name", text: $folderNameField)
                 Button("Rename") {
-                    // Capture the payload synchronously before the dialog binding clears `activeDialog`
-                    // (feedback 0026, item 4 root cause). The root does the store rename + re-points nav.
-                    guard case let .renameFolder(path, _)? = activeDialog else { return }
-                    let newName = folderNameField
-                    activeDialog = nil
-                    onRenameFolder?(path, newName)
+                    // Capture through the SAME pure `FolderDialogAction.capture` seam the top-level screen
+                    // uses (feedback 0026, item 4): read the payload synchronously before the dialog binding
+                    // clears `activeDialog`. The root then does the store rename + re-points navigation.
+                    performCaptured(FolderDialogAction.capture(from: activeDialog, name: folderNameField))
                 }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             }
@@ -312,14 +308,26 @@ struct FolderThoughtsView: View {
         Color.clear
             .alert("Delete folder?", isPresented: dialogBinding { $0.isDeleteFolder }) {
                 Button("Delete", role: .destructive) {
-                    guard case let .deleteFolder(path)? = activeDialog else { return }
-                    activeDialog = nil
-                    onDeleteFolder?(path)
+                    performCaptured(FolderDialogAction.capture(from: activeDialog, name: folderNameField))
                 }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             } message: {
                 Text("This deletes the folder and everything inside it - its thoughts and their recordings. This can't be undone.")
             }
+    }
+
+    /// Dispatch a captured folder action (feedback 0026, item 4/5): the payload was read synchronously at tap
+    /// time, so it is independent of `activeDialog` (which the dismissal clears). Rename and delete route to
+    /// the root's callbacks, which do the store op and re-point / pop navigation.
+    private func performCaptured(_ action: FolderDialogAction?) {
+        guard let action else { return }
+        activeDialog = nil
+        switch action {
+        case let .rename(path, newName):
+            onRenameFolder?(path, newName)
+        case let .delete(path):
+            onDeleteFolder?(path)
+        }
     }
 }
 

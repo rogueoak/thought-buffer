@@ -163,6 +163,38 @@ enum FolderDialog: Identifiable, Equatable {
     var isDeleteFolder: Bool { if case .deleteFolder = self { return true }; return false }
 }
 
+/// A folder mutation captured from the active dialog AT TAP TIME (feedback 0026, item 4/5). This is the pure
+/// seam that fixes the rename/delete no-op: the alert button must read the dialog's target path SYNCHRONOUSLY
+/// - the moment the button is tapped - because tapping dismisses the alert, which fires the dialog's
+/// presentation binding and clears `activeDialog` to nil BEFORE any deferred `Task` would run. Reading
+/// `activeDialog` inside that later `Task` therefore saw nil and silently did nothing.
+///
+/// `capture(from:name:)` takes the dialog and the live name-field text and returns the action to perform, or
+/// nil for a dialog that is not an actionable rename/delete (e.g. `.newFolder`, handled separately, or nil).
+/// The view calls this in the button action and hands the CAPTURED value to the async store op, so the value
+/// never depends on `activeDialog` surviving past the tap. Pure and `Equatable`, so a regression test can
+/// prove the capture yields the right payload while the dialog is set AND that the captured value still holds
+/// after a subsequent `activeDialog = nil` (the dismissal out-racing the read).
+enum FolderDialogAction: Equatable {
+    /// Rename the folder at `path` to `newName` (the live name-field value at tap time).
+    case rename(path: [String], newName: String)
+    /// Delete the folder at `path` (a cascade).
+    case delete(path: [String])
+
+    /// Capture the actionable mutation from `dialog`, pairing a rename with the live `name` field. Returns nil
+    /// when the dialog is not an actionable rename/delete (nil dialog, or `.newFolder`).
+    static func capture(from dialog: FolderDialog?, name: String) -> FolderDialogAction? {
+        switch dialog {
+        case let .renameFolder(path, _):
+            return .rename(path: path, newName: name)
+        case let .deleteFolder(path):
+            return .delete(path: path)
+        case .newFolder, .none:
+            return nil
+        }
+    }
+}
+
 /// The empty-state call to action (spec 0021, extended feedback 0026 item 6): when a list or folder has no
 /// thoughts, show the actions in the middle of the screen. It offers up to THREE actions: MOVE thoughts into
 /// this folder (only inside a user folder that could receive thoughts - `onMoveToFolder` non-nil), RECORD a

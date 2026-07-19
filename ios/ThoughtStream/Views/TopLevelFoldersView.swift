@@ -353,15 +353,11 @@ struct TopLevelFoldersView: View {
             .alert("Rename folder", isPresented: dialogBinding { $0.isRenameFolder }) {
                 folderNameTextField(placeholder: "Name")
                 Button("Rename") {
-                    // Capture the target path SYNCHRONOUSLY here, before the async work (feedback 0026,
-                    // item 4): tapping an alert button dismisses the alert, which fires the dialog
-                    // binding's setter and clears `activeDialog`. A `Task { ... activeDialog ... }` runs
-                    // on a LATER runloop tick, by which point `activeDialog` is already nil, so the old
-                    // `guard case .renameFolder(path)? = activeDialog` failed and the rename silently did
-                    // nothing. Read the payload now, act on the captured value.
-                    guard case let .renameFolder(path, _)? = activeDialog else { return }
-                    let newName = folderNameField
-                    Task { await renameFolder(at: path, to: newName) }
+                    // Capture the payload SYNCHRONOUSLY through the pure `FolderDialogAction.capture` seam
+                    // (feedback 0026, item 4): tapping an alert button dismisses the alert, which fires the
+                    // dialog binding and clears `activeDialog`. A deferred `Task` that read `activeDialog`
+                    // ran AFTER that clear and saw nil, so the rename silently did nothing. Capture now.
+                    performCaptured(FolderDialogAction.capture(from: activeDialog, name: folderNameField))
                 }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             }
@@ -371,9 +367,8 @@ struct TopLevelFoldersView: View {
         Color.clear
             .alert("Delete folder?", isPresented: dialogBinding { $0.isDeleteFolder }) {
                 Button("Delete", role: .destructive) {
-                    // Capture the path synchronously (feedback 0026, item 4), same reason as rename above.
-                    guard case let .deleteFolder(path)? = activeDialog else { return }
-                    Task { await deleteFolder(at: path) }
+                    // Capture synchronously, same reason as rename above (feedback 0026, item 4).
+                    performCaptured(FolderDialogAction.capture(from: activeDialog, name: folderNameField))
                 }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             } message: {
@@ -400,6 +395,21 @@ struct TopLevelFoldersView: View {
         await reloadFolders()
         if created == nil {
             folderError = "That name can't be used. Try another."
+        }
+    }
+
+    /// Dispatch a captured folder action (feedback 0026, item 4). The payload was read synchronously at tap
+    /// time via `FolderDialogAction.capture`, so it is independent of `activeDialog`, which the alert's
+    /// dismissal will clear before this async work runs.
+    private func performCaptured(_ action: FolderDialogAction?) {
+        guard let action else { return }
+        Task {
+            switch action {
+            case let .rename(path, newName):
+                await renameFolder(at: path, to: newName)
+            case let .delete(path):
+                await deleteFolder(at: path)
+            }
         }
     }
 

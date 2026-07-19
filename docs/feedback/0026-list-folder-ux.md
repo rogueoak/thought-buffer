@@ -60,19 +60,22 @@ empty-state actions.
 3. Pinned a stable `.id("stream-bottom-stack")` on the `StreamBottomStack` inside the bottom safe-area
    inset on both list screens, so the search `TextField` is the SAME instance across every content-state
    flip and keeps focus from the first keystroke through the no-matches state.
-4. Capture the dialog payload (path, new name) SYNCHRONOUSLY in the alert button action, before spawning
-   the async `Task`, and pass it into `renameFolder(at:to:)` / `deleteFolder(at:)`. No code path reads
-   `activeDialog` after the dialog has dismissed.
+4. Extracted the tap-time capture into a pure, unit-tested `FolderDialogAction.capture(from:name:)` seam (a
+   `.rename(path:newName:)` / `.delete(path:)` value read from the active dialog + the live name field). BOTH
+   the top-level screen and the folder-thoughts "..." menu route their alert buttons through this ONE seam,
+   so the regression test covers the real production path (not a parallel copy). The captured value is handed
+   to the async store op, so no code path reads `activeDialog` after the dialog has dismissed.
 5. Added an ellipsis ("...") menu to `FolderThoughtsView`'s nav bar (shown only for a user folder, not an
    alias) with "Rename folder" and "Delete folder", wired to the SAME `feed.renameFolder` /
-   `feed.deleteFolder` store ops. Rename re-points navigation at the new name; delete pops back to the
-   top-level screen (compact) or clears the split selection (iPad). Payload is captured synchronously,
-   same as fix 4.
+   `feed.deleteFolder` store ops through the SAME `FolderDialogAction.capture` seam as fix 4. Rename re-points
+   navigation at the new name; delete pops back to the top-level screen (compact) or clears the split
+   selection (iPad).
 6. Added a third empty-state action, "Move thoughts here", to `FolderEmptyStateCTA` (optional, shown only
    inside a USER folder that could receive thoughts). It opens a new multi-select `MoveThoughtsIntoFolderSheet`
-   listing every thought NOT already in the folder; the selected thoughts are re-filed into the folder via
-   `feed.move`. **Decision:** the action is OMITTED in the root / All Thoughts / an alias empty state and in
-   a truly empty store, where "move into this folder" is meaningless.
+   listing every thought NOT already in the folder; the selected thoughts are re-filed in ONE batch via a new
+   `feed.move(_ thoughts:to:)` (a single reload, no per-thought flicker). **Decision:** the action is OMITTED
+   in the root / All Thoughts / an alias empty state and in a truly empty store, where "move into this folder"
+   is meaningless.
 
 ## Learning
 
@@ -85,14 +88,21 @@ un-stacking fixed presentation, but the payload READ still has to beat the dismi
 
 ## Testing
 
+- New `FolderDialogActionTests` covers the tap-time capture seam that fixes items 4/5. The key regression,
+  `testCaptureFromClearedDialogIsNilButSynchronousCaptureSurvivesTheClear`, models the SwiftUI sequence:
+  capture synchronously while the dialog is set, then clear `activeDialog` (the dismissal), and assert (a) a
+  DEFERRED read of the cleared dialog is nil (the exact no-op the bug produced) while (b) the synchronously
+  captured value still resolves to the right `.rename` payload. Reverting to reading `activeDialog` inside a
+  deferred `Task` makes that captured value nil and turns the test red.
 - Extended `FolderRenameDriverTests` with delete-through-the-feed (removes on disk + reloads),
-  empty-path-is-a-no-op, and move-multiple-thoughts-into-a-folder tests (feedback 0026, items 4/5/6).
+  empty-path-is-a-no-op, a case-only rename ("work" -> "Work"), the BATCH move-multiple-into-a-folder, and the
+  picker's already-in-folder id-filter / idempotence guard (items 4/5/6).
 - `FolderScreenState` no-matches / field-stays-mounted seam is already unit-tested (`BottomBarLayoutTests`);
   the store-level rename/delete is already covered (`ThoughtStoreTests` / `ICloudThoughtStoreTests`).
 - The header spacing, icon alignment, live search-field FOCUS retention, the "..." menu presentation, and
-  the move picker are device/simulator-verifiable (SwiftUI first-responder retention and layout are not
+  the move picker UI are device/simulator-verifiable (SwiftUI first-responder retention and layout are not
   exercised by unit tests).
-- Full suite green on iPhone 17 (704 tests, 0 failures), build warning-free.
+- Full suite green on iPhone 17 (711 tests, 0 failures), build warning-free.
 
 ## Acceptance (device-verify)
 
