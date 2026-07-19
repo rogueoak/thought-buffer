@@ -33,10 +33,12 @@ struct ThoughtDetailView: View {
     /// composition root soft-deletes it through the shared undoable path AND pops back to the list where
     /// the undo affordance is visible. Nil at bare/preview call sites (no Delete shown).
     private let onDelete: ((UUID) -> Void)?
-    /// Called with a search query typed into the persistent bottom bar's search field (spec 0021), so
-    /// the composition root routes to the SAME global results the list shows - search is reachable from
-    /// the thought page too. Nil at bare/preview call sites (the bottom bar then omits the field).
-    private let onSearch: ((String) -> Void)?
+    /// Whether the bottom-bar search field performs IN-THOUGHT find on this detail screen (spec 0025,
+    /// superseding spec 0021's "detail search routes to global results"): the field finds within THIS
+    /// thought - seek + highlight + skip - rather than routing to the list. False at bare/preview call
+    /// sites and in the split detail column (which defers search to the always-visible lifted GLOBAL bar,
+    /// spec 0022), where the field is omitted so there are never two competing search surfaces.
+    private let enablesFind: Bool
     /// Whether the resume icon applies for this thought per the audio-retention setting (spec 0021):
     /// resuming an existing recording always applies; recording onto a text-only thought applies only when
     /// the retention policy records audio. Computed by the composition root and passed in so the pure
@@ -71,11 +73,16 @@ struct ThoughtDetailView: View {
     @State private var copiedTrigger = 0
     @State private var showCopiedConfirmation = false
 
-    /// The live query typed into the persistent bottom bar's search field (spec 0021). Because search is
-    /// GLOBAL and presented as a flat list on the folder screens, a non-empty query here routes to the
-    /// list results via `onSearch` (popping back to the list) - this view does not render its own
-    /// results. Kept local so the field is inert on a bare/preview call site.
-    @State private var searchQuery = ""
+    /// The live query typed into the bottom bar's search field for IN-THOUGHT find (spec 0025). A non-empty
+    /// query drives `findNavigator` over this thought's title + paragraphs: every match is highlighted, the
+    /// current one is scrolled into view, and the prev/next/count affordance shows. Clearing it removes the
+    /// highlights and the affordance. Kept LOCAL so find state resets when the thought is left (the whole
+    /// view is torn down) and so the field is inert on a bare/preview call site.
+    @State private var findQuery = ""
+    /// The navigator over the current find matches (spec 0025): its `currentIndex` drives the emphasized
+    /// match and the scroll target, and prev/next step through the matches (wrapping). Rebuilt whenever the
+    /// query or the thought's text changes so the highlights and count stay in sync.
+    @State private var findNavigator = ThoughtFindNavigator(matches: [])
 
     /// Build the detail view. Prefers the ONE shared `ThoughtPlaybackController` (so the phone and
     /// CarPlay drive the same media center and never race); when none is supplied - a preview, a
@@ -94,7 +101,7 @@ struct ThoughtDetailView: View {
         onCommitEdit: ((Thought) -> Void)? = nil,
         onDiscardEmpty: (() -> Void)? = nil,
         onDelete: ((UUID) -> Void)? = nil,
-        onSearch: ((String) -> Void)? = nil,
+        enablesFind: Bool = false,
         resumeApplies: Bool = true,
         startInEdit: Bool = false
     ) {
@@ -105,7 +112,7 @@ struct ThoughtDetailView: View {
         self.onCommitEdit = onCommitEdit
         self.onDiscardEmpty = onDiscardEmpty
         self.onDelete = onDelete
-        self.onSearch = onSearch
+        self.enablesFind = enablesFind
         self.resumeApplies = resumeApplies
         _paragraphs = State(initialValue: thought.paragraphs)
         _hasCustomTitle = State(initialValue: thought.hasCustomTitle)
@@ -138,74 +145,77 @@ struct ThoughtDetailView: View {
                     isEnabled: isEditingTitle
                 )
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: CanopySpacing.x4) {
-                    titleHeader
+            // `ScrollViewReader` lets the in-thought find SEEK the current match into view (spec 0025): the
+            // title and each paragraph carry a stable `ThoughtFind.Region.scrollID` anchor, and a change to
+            // the current match scrolls to its region's anchor.
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CanopySpacing.x4) {
+                        titleHeader
 
-                    // The metadata line is shared with the list card via `ThoughtMetaStats`: the duration
-                    // now uses the SAME timer glyph and tight `x1` spacing as the card instead of a dash
-                    // separator (feedback 0015), so the detail header and the card present it identically.
-                    ThoughtMetaStats(thought: currentThought)
-                        .font(.system(size: CanopyFont.sizeXs))
-                        .foregroundStyle(CanopyColor.textSubtle)
+                        // The metadata line is shared with the list card via `ThoughtMetaStats`: the duration
+                        // now uses the SAME timer glyph and tight `x1` spacing as the card instead of a dash
+                        // separator (feedback 0015), so the detail header and the card present it identically.
+                        ThoughtMetaStats(thought: currentThought)
+                            .font(.system(size: CanopyFont.sizeXs))
+                            .foregroundStyle(CanopyColor.textSubtle)
 
-                    if playback.canPlay {
-                        playButton
-                    }
-
-                    if isEditing {
-                        TextEditor(text: $draft)
-                            .focused($editorFocused)
-                            .font(.system(size: CanopyFont.sizeBase))
-                            .foregroundStyle(CanopyColor.text)
-                            .scrollContentBackground(.hidden)
-                            .frame(minHeight: 240)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        // Tap the text to edit (feedback 0010): the thought body IS the edit affordance,
-                        // so the separate Edit button is gone. Only tappable where the call site can
-                        // persist the result (`onCommitEdit` supplied); a bare/preview thought stays read
-                        // only. `contentShape` makes the whole column - gaps included - the tap target.
-                        VStack(alignment: .leading, spacing: CanopySpacing.x4) {
-                            ForEach(Array(paragraphs.enumerated()), id: \.offset) { _, paragraph in
-                                Text(paragraph)
-                                    .font(.system(size: CanopyFont.sizeBase))
-                                    .foregroundStyle(CanopyColor.text)
-                                    .lineSpacing(4)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
+                        if playback.canPlay {
+                            playButton
                         }
-                        .contentShape(Rectangle())
-                        // Tapping the body from the title commits the title FIRST, then begins body
-                        // editing in the SAME tap (feedback 0014): the two edit modes never overlap
-                        // because `beginBodyEditFromTap` folds any in-flight title edit in before it
-                        // opens the body editor, so no second tap is needed.
-                        .onTapGesture { if onCommitEdit != nil { beginBodyEditFromTap() } }
-                        .accessibilityAddTraits(onCommitEdit != nil ? .isButton : [])
-                        .accessibilityHint(onCommitEdit != nil ? "Double tap to edit" : "")
+
+                        if isEditing {
+                            TextEditor(text: $draft)
+                                .focused($editorFocused)
+                                .font(.system(size: CanopyFont.sizeBase))
+                                .foregroundStyle(CanopyColor.text)
+                                .scrollContentBackground(.hidden)
+                                .frame(minHeight: 240)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            bodyParagraphs
+                        }
                     }
+                    .padding(CanopySpacing.x5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(CanopyColor.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
+                            .stroke(CanopyColor.border, lineWidth: 1)
+                    )
+                    .padding(CanopySpacing.x4)
                 }
-                .padding(CanopySpacing.x5)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(CanopyColor.surface)
-                .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
-                        .stroke(CanopyColor.border, lineWidth: 1)
-                )
-                .padding(CanopySpacing.x4)
+                // Seek the current match into view whenever it changes (a new query, next/previous, or a
+                // query refinement that moves the first hit to a DIFFERENT region while the index stays 0).
+                // Keyed on `currentMatch` (Equatable: region + range), NOT `currentIndex`: `refreshFind`
+                // rebuilds the navigator to index 0 on every keystroke, so an index-keyed observer would miss
+                // a same-index-different-region change and never re-seek. A `Match?` that stays nil (no
+                // matches) does not fire, so there is no scroll when there is nothing to find. Scrolling to
+                // the region's anchor is the only UI side effect, so it is device-verifiable while the pure
+                // navigation state is unit-tested.
+                .onChange(of: findNavigator.currentMatch) { _, _ in
+                    scrollToCurrentMatch(using: proxy)
+                }
             }
         }
+        // Recompute the find matches whenever the query or the thought's text changes (spec 0025), so the
+        // highlights and the "N of M" count stay in sync. The recompute is gated: find is inert where the
+        // field is not shown (a bare/preview call site or the split detail column) and while editing (find
+        // and edit are mutually exclusive), so a stale query cannot highlight under the editor.
+        .onChange(of: findQuery) { _, _ in refreshFind() }
+        .onChange(of: paragraphs) { _, _ in refreshFind() }
         // The transient "Copied to clipboard" confirmation (spec 0017), from the shared, lifecycle-tied
         // modifier so a rapid double-copy re-arms it and navigation cancels its timer. Pinned near the
         // bottom so it clears the thought text and the toolbar.
         .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .bottom)
-        // The persistent bottom bar (spec 0021): a wide search field on the left, the resume icon on the
-        // right. Search is global, so a query here routes to the list results via `onSearch`. Which
-        // affordances show - and whether the bar shows at all - is the pure, tested `ThoughtDetailBottomBar`
-        // decision: it is HIDDEN entirely while editing the title or body, so the search field never
-        // renders under the keyboard and a brand-new thought does not present two competing text fields. The
-        // bar reuses the SAME component the list uses (not a fork).
+        // The persistent bottom bar: a wide search field on the left driving IN-THOUGHT find (spec 0025,
+        // superseding spec 0021's global routing) - seek + highlight + skip within THIS thought - plus the
+        // find prev/next/count and the resume icon on the right. Which affordances show - and whether the bar
+        // shows at all - is the pure, tested `ThoughtDetailBottomBar` decision: it is HIDDEN entirely while
+        // editing the title or body (find and edit are mutually exclusive), so the field never renders under
+        // the keyboard and a brand-new thought does not present two competing text fields. The bar reuses the
+        // SAME component the list uses (not a fork).
         .safeAreaInset(edge: .bottom) {
             if bottomBarLayout.isVisible {
                 bottomBar
@@ -337,11 +347,14 @@ struct ThoughtDetailView: View {
                 .onSubmit { commitTitle() }
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
-            Text(currentThought.title)
+            // The title is a find region (spec 0025): its matches are highlighted like the body, with the
+            // current match emphasized more strongly. The anchor lets `ScrollViewReader` seek a title match.
+            Text(highlighted(currentThought.title, region: .title))
                 .font(.system(size: CanopyFont.sizeXl, weight: .bold))
                 .foregroundStyle(CanopyColor.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
+                .id(ThoughtFind.Region.title.scrollID)
                 // Title and body editing are MUTUALLY EXCLUSIVE (engineer review): entering title
                 // edit while the body editor is open would commit via `currentThought` (built from
                 // `paragraphs`, not the in-flight `draft`) and drop freshly typed body text. So the
@@ -352,12 +365,37 @@ struct ThoughtDetailView: View {
         }
     }
 
+    /// The read-mode thought body: each paragraph rendered with the in-thought find highlights (spec 0025)
+    /// and a stable scroll anchor so the current match can be sought into view. Tapping the body begins
+    /// editing (feedback 0010), which is mutually exclusive with find - entering the editor clears the find
+    /// (see `beginEdit`). Only tappable where the call site can persist the result (`onCommitEdit`).
+    private var bodyParagraphs: some View {
+        VStack(alignment: .leading, spacing: CanopySpacing.x4) {
+            ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                Text(highlighted(paragraph, region: .paragraph(index)))
+                    .font(.system(size: CanopyFont.sizeBase))
+                    .foregroundStyle(CanopyColor.text)
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .id(ThoughtFind.Region.paragraph(index).scrollID)
+            }
+        }
+        .contentShape(Rectangle())
+        // Tapping the body from the title commits the title FIRST, then begins body
+        // editing in the SAME tap (feedback 0014): the two edit modes never overlap
+        // because `beginBodyEditFromTap` folds any in-flight title edit in before it
+        // opens the body editor, so no second tap is needed.
+        .onTapGesture { if onCommitEdit != nil { beginBodyEditFromTap() } }
+        .accessibilityAddTraits(onCommitEdit != nil ? .isButton : [])
+        .accessibilityHint(onCommitEdit != nil ? "Double tap to edit" : "")
+    }
+
     /// The pure decision for what the thought-detail bottom bar shows (spec 0021), extracted into the tested
     /// `ThoughtDetailBottomBar` seam so the "hidden while editing / search / resume" logic is not re-derived
     /// inline. The `.safeAreaInset` gate and the `bottomBar` body both read from this one decision.
     private var bottomBarLayout: ThoughtDetailBottomBar {
         ThoughtDetailBottomBar.decide(
-            canSearch: onSearch != nil,
+            canSearch: enablesFind,
             canResume: onResume != nil,
             resumeApplies: resumeApplies,
             isEditing: isEditingAnything,
@@ -365,30 +403,57 @@ struct ThoughtDetailView: View {
         )
     }
 
-    /// The persistent bottom bar for the thought page (spec 0021): the SAME `BottomBar` component the list
-    /// uses, with a search field and a resume icon on the right. What it shows is the pure
-    /// `bottomBarLayout` decision (search when the call site can route one; resume when a session can be
-    /// reopened, resuming applies, and the thought is not a still-empty new thought; hidden entirely while
-    /// editing).
+    /// The persistent bottom bar for the thought page: the SAME `BottomBar` component the list uses, its
+    /// search field now driving IN-THOUGHT find (spec 0025, superseding spec 0021's global routing). What it
+    /// shows is the pure `bottomBarLayout` decision (the find field when the call site enables it; the resume
+    /// icon when a session can be reopened; hidden entirely while editing). The trailing slot carries the
+    /// find prev/next chevrons + "N of M" count WHILE a find is active, then the resume icon. Highlights and
+    /// the count update live as the query changes (via `refreshFind`, keyed on `findQuery`), so there is no
+    /// submit step - each keystroke re-finds within this thought.
     private var bottomBar: some View {
         let layout = bottomBarLayout
-        // Submitting a non-empty query routes to the SAME global results the folder screens render (spec
-        // 0021): the composition root pops back to the list and applies the query there, so search from
-        // the thought page behaves identically. Routing on SUBMIT (not every keystroke) lets the user type a
-        // multi-character query on the thought page before it pops - a per-keystroke route would tear this
-        // view down on the first character.
         return BottomBar(
-            query: $searchQuery,
-            showsSearchField: layout.showsSearch,
-            onSubmit: {
-                if ThoughtSearch.isActive(searchQuery) { onSearch?(searchQuery) }
-            }
+            query: $findQuery,
+            showsSearchField: layout.showsSearch
         ) {
+            if findNavigator.hasMatches {
+                findNavigationControls
+            }
             if layout.showsResume {
                 BottomBarRecordButton(accessibilityLabel: resumeAccessibilityLabel) {
                     onResume?(currentThought)
                 }
             }
+        }
+    }
+
+    /// The in-thought find prev/next chevrons and the "N of M" count, shown beside the search field while a
+    /// find has matches (spec 0025). Prev/next step through the matches (wrapping); the count is the pure
+    /// `ThoughtFindNavigator.countLabel`. Clearing the query hides this whole affordance (no matches).
+    private var findNavigationControls: some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Text(findNavigator.countLabel)
+                .font(.system(size: CanopyFont.sizeXs, weight: .semibold))
+                .foregroundStyle(CanopyColor.textSubtle)
+                .accessibilityLabel("Match \(findNavigator.countLabel)")
+            Button {
+                findNavigator.previous()
+            } label: {
+                Image(systemName: "chevron.up")
+                    .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+                    .foregroundStyle(CanopyColor.primary)
+                    .frame(width: CanopySpacing.x6, height: CanopySpacing.x8)
+            }
+            .accessibilityLabel("Previous match")
+            Button {
+                findNavigator.next()
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+                    .foregroundStyle(CanopyColor.primary)
+                    .frame(width: CanopySpacing.x6, height: CanopySpacing.x8)
+            }
+            .accessibilityLabel("Next match")
         }
     }
 
@@ -419,6 +484,9 @@ struct ThoughtDetailView: View {
     }
 
     private func beginEdit() {
+        // Find and edit are mutually exclusive (spec 0025): clear any in-flight find so no highlights or
+        // find bar survive into the editor.
+        clearFind()
         draft = paragraphs.joined(separator: "\n\n")
         isEditing = true
         editorFocused = true
@@ -435,6 +503,8 @@ struct ThoughtDetailView: View {
     }
 
     private func beginEditTitle() {
+        // Find and edit are mutually exclusive (spec 0025): clear any in-flight find first.
+        clearFind()
         // Seed from the currently shown title (derived or custom) so the user tweaks what they see.
         titleDraft = currentThought.title
         isEditingTitle = true
@@ -461,6 +531,85 @@ struct ThoughtDetailView: View {
         isEditing = false
         editorFocused = false
         persistOrDiscard()
+    }
+
+    // MARK: - In-thought find (spec 0025)
+
+    /// Recompute the find matches over the current title + paragraphs and rebuild the navigator (spec 0025).
+    /// Find is INERT while editing (find and edit are mutually exclusive) - `beginEdit`/`beginEditTitle`
+    /// clear the query, so a rebuild during an edit yields no matches - and where the field is not shown
+    /// (a bare/preview call site or the split detail column, `!enablesFind`). Rebuilding the navigator resets
+    /// the current match to the first, so a changed query seeks to the first hit.
+    private func refreshFind() {
+        guard enablesFind, !isEditingAnything else {
+            findNavigator = ThoughtFindNavigator(matches: [])
+            return
+        }
+        let matches = ThoughtFind.matches(
+            title: currentThought.title,
+            paragraphs: paragraphs,
+            query: findQuery
+        )
+        findNavigator = ThoughtFindNavigator(matches: matches)
+    }
+
+    /// Clear the in-thought find: empty the query and drop all matches, so highlights and the
+    /// prev/next/count affordance disappear (spec 0025). Called when entering an editor (mutually exclusive
+    /// with find) - the `findQuery` change also fires `refreshFind`, which is a harmless no-op then.
+    private func clearFind() {
+        findQuery = ""
+        findNavigator = ThoughtFindNavigator(matches: [])
+    }
+
+    /// Build a highlighted `AttributedString` for one find region's text (spec 0025): every match gets a
+    /// Canopy highlight background, and the CURRENT match is emphasized more strongly (a stronger background
+    /// plus bold) so the user can tell which one the prev/next controls point at. When no find is active the
+    /// text is returned plain. `region` selects which matches (title vs. a paragraph) apply to this string.
+    private func highlighted(_ text: String, region: ThoughtFind.Region) -> AttributedString {
+        var attributed = AttributedString(text)
+        guard findNavigator.hasMatches else { return attributed }
+        let current = findNavigator.currentMatch
+        for match in findNavigator.matches where match.region == region {
+            // The match carries CHARACTER OFFSETS (instance-independent, unlike a `String.Index` which is
+            // valid only against its producing string - the title is re-derived each render, engineer
+            // review). Map them into the `AttributedString` (built from this same region text, so the
+            // character offsets align). Guard the bounds so a stale match against a just-edited paragraph is
+            // skipped rather than crashing.
+            let lower = match.characterRange.lowerBound
+            let upper = match.characterRange.upperBound
+            guard lower >= 0, upper <= attributed.characters.count, lower < upper else { continue }
+            let start = attributed.index(attributed.startIndex, offsetByCharacters: lower)
+            let end = attributed.index(attributed.startIndex, offsetByCharacters: upper)
+            let range = start..<end
+            let isCurrent = match == current
+            attributed[range].backgroundColor = isCurrent ? CanopyColor.warning : CanopyColor.warning.opacity(0.35)
+            if isCurrent {
+                attributed[range].foregroundColor = CanopyColor.warningForeground
+                attributed[range].font = .system(size: fontSize(for: region), weight: .bold)
+            }
+        }
+        return attributed
+    }
+
+    /// The base font size for a region, so a bold CURRENT-match run keeps the region's own size (the title is
+    /// larger than a body paragraph). Reuses the same Canopy sizes the plain text uses.
+    private func fontSize(for region: ThoughtFind.Region) -> CGFloat {
+        switch region {
+        case .title:
+            return CanopyFont.sizeXl
+        case .paragraph:
+            return CanopyFont.sizeBase
+        }
+    }
+
+    /// Scroll the current find match's region into view (spec 0025): the only UI side effect of the pure
+    /// navigation state. Anchored on the region's stable `scrollID`, animated so a next/previous glides. A
+    /// no-op when there is no current match (an empty query or no hits).
+    private func scrollToCurrentMatch(using proxy: ScrollViewProxy) {
+        guard let region = findNavigator.currentMatch?.region else { return }
+        withAnimation(.easeInOut(duration: 0.2)) {
+            proxy.scrollTo(region.scrollID, anchor: .center)
+        }
     }
 
     /// Commit an edit: persist the thought through `onCommitEdit`, unless this is a brand-new thought left
