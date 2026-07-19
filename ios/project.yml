@@ -11,7 +11,9 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     IPHONEOS_DEPLOYMENT_TARGET: "26.0"
-    TARGETED_DEVICE_FAMILY: "1"
+    # iPhone (1) AND iPad (2): Thought Stream is a first-class iPad app (spec 0022), presenting an
+    # adaptive `NavigationSplitView` on regular width and the iPhone `NavigationStack` on compact.
+    TARGETED_DEVICE_FAMILY: "1,2"
     CODE_SIGN_STYLE: Automatic
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
@@ -54,8 +56,16 @@ targets:
             CPTemplateApplicationSceneSessionRoleApplication:
               - UISceneConfigurationName: ThoughtStreamCarPlay
                 UISceneDelegateClassName: $(PRODUCT_MODULE_NAME).CarPlaySceneDelegate
+        # iPhone stays portrait-only (the compact stack is designed for it). iPad supports ALL
+        # orientations (spec 0022) so the split view uses landscape and rotation adapts without a
+        # broken layout - the device-family-suffixed key applies only to iPad.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         NSMicrophoneUsageDescription: "Thought Stream uses the microphone to hear you and turn your words into thoughts. Audio stays on your device."
         NSSpeechRecognitionUsageDescription: "Thought Stream turns your speech into thoughts on device. Nothing you say leaves your phone."
         # NSUbiquitousContainers (Files-app visibility for the iCloud folder) is omitted while the

@@ -27,13 +27,31 @@ struct UndoManagerHost: UIViewControllerRepresentable {
     /// inject it into the deletion controller. Fires on make (and is idempotent-safe for the caller).
     let onManager: (UndoManager) -> Void
 
+    /// A monotonic re-home signal for the split view (spec 0022). Under a `NavigationSplitView` the first
+    /// responder moves between COLUMNS as the user picks a folder or a thought, and a plain column switch
+    /// fires none of the text-field / keyboard notifications the host already listens for - so the shake
+    /// could resolve against a stale column's responder chain. The composition root bumps this whenever the
+    /// active column changes (sidebar folder / detail thought selection), and the host re-claims first
+    /// responder on the change, re-homing the shake to its vended manager regardless of active column. It
+    /// stays 0 on the compact stack (one screen at a time), so this is a no-op there.
+    var reclaimTrigger: Int = 0
+
     func makeUIViewController(context: Context) -> FirstResponderUndoController {
         let controller = FirstResponderUndoController()
         onManager(controller.stableUndoManager)
         return controller
     }
 
-    func updateUIViewController(_ controller: FirstResponderUndoController, context: Context) {}
+    func updateUIViewController(_ controller: FirstResponderUndoController, context: Context) {
+        // A column change in the split view (spec 0022): re-home first responder so the shake keeps reaching
+        // the vended manager after focus moved between columns. Guarded on an actual change so an unrelated
+        // SwiftUI update does not yank focus from a field the user is editing (the reclaim itself also
+        // skips an actively-edited field).
+        if controller.lastReclaimTrigger != reclaimTrigger {
+            controller.lastReclaimTrigger = reclaimTrigger
+            controller.reclaimFirstResponderFromSplitColumnChange()
+        }
+    }
 
     /// A zero-size view controller that becomes first responder so its `undoManager` is the one the shake
     /// gesture resolves, and vends a single stable `UndoManager` for the app to register deletes on. It
@@ -43,6 +61,10 @@ struct UndoManagerHost: UIViewControllerRepresentable {
         /// The one manager for the app's undoable actions. Stable for the controller's lifetime so a
         /// registered "Undo Delete" is still there when the user shakes.
         let stableUndoManager = UndoManager()
+
+        /// The last split-column re-home trigger value seen (spec 0022), so a re-home fires only when the
+        /// split view's active column actually changed - not on every SwiftUI update.
+        var lastReclaimTrigger = 0
 
         override var undoManager: UndoManager? { stableUndoManager }
 
@@ -94,6 +116,14 @@ struct UndoManagerHost: UIViewControllerRepresentable {
                 if self.view.window?.findFirstResponder() is UITextInput { return }
                 self.becomeFirstResponder()
             }
+        }
+
+        /// Re-home first responder after the split view's active column changed (spec 0022). Same guarded
+        /// reclaim as the notification path (deferred a tick, skipped while a field is being edited), exposed
+        /// so the composition root can trigger it on a column selection change that fires no text/keyboard
+        /// notification.
+        func reclaimFirstResponderFromSplitColumnChange() {
+            reclaimFirstResponder()
         }
 
         deinit {

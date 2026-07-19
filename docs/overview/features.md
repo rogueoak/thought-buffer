@@ -611,3 +611,28 @@ by their whole text, not just the title.
 - **Reliable folder rename + Shake to Undo.** Folder rename now presents and applies reliably (the three
   folder dialogs were un-stacked into one dialog host), and Shake to Undo works (the delete registers on
   a stable, first-responder-backed `UndoManager` instead of the frequently-nil environment one).
+
+## iPad support - adaptive split view (spec 0022)
+
+Thought Stream is a first-class iPad app, not a stretched iPhone app: on a wide canvas it presents a
+multi-column layout, and on iPhone it is unchanged.
+
+- **Adaptive navigation.** On REGULAR width (iPad, and iPhone landscape where it fits) the Thoughts root
+  is a `NavigationSplitView`: the root folder tree in the SIDEBAR, the selected folder's thoughts in the
+  CONTENT column (its own stack, so nested folders push there), and the selected thought in the DETAIL
+  column. On COMPACT width (iPhone portrait) it stays today's single `NavigationStack`, one screen at a
+  time. The size-class -> container choice is the pure, tested `StreamContainer.decide`; both containers
+  share the SAME route model, dictation / resume covers, Settings sheet, and lifecycle.
+- **One search surface across the split.** The persistent bottom bar, the search query, and the flat
+  global results are LIFTED above the columns to the split container, so the sidebar and content columns
+  drive ONE search field and one results list (not two fields fighting one shared query). The split
+  detail column defers search to that always-visible lifted bar. The search projection is the pure,
+  tested `StreamSearchProjection`, computed once and shared by both columns.
+- **Shake to Undo across columns.** The first-responder `UndoManagerHost` re-homes itself when the split
+  view's active column changes (a sidebar folder or a detail thought selection), so Shake to Undo keeps
+  reaching the deletion controller's manager regardless of which column is focused.
+- **Space that reads well.** The centered empty-state CTA and a detail-column placeholder ("Select a
+  thought") size sensibly on a large canvas; the lifted search field spans without looking stretched;
+  thought cards read well in a wider column. iPad supports all orientations (rotation and multitasking
+  split adapt without a broken layout); iPhone stays portrait-only. The launch cover, share sheet, and
+  dictation UI lay out correctly on iPad.

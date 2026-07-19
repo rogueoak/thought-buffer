@@ -54,6 +54,19 @@ struct FolderContentsView: View {
     /// simply omits the chip; the root still owns the UndoManager wiring and the window timer.
     @ObservedObject var deletion: ThoughtDeletionController
 
+    /// Whether THIS screen renders its own bottom stack (search field, now-playing bar, undo chip, record
+    /// actions) in its bottom safe-area inset (spec 0022). True for the compact `NavigationStack`, where
+    /// one folder screen is on-screen at a time. FALSE under the `NavigationSplitView`, where the sidebar
+    /// and content columns are BOTH folder screens at once: the bottom bar + search are lifted to the ONE
+    /// split container above the columns (so there is a single search surface and one results list), and
+    /// each column just renders its list. Defaults true so every existing (compact) call site is unchanged.
+    var showsBottomBar: Bool = true
+
+    /// A pre-resolved search state + results, supplied by the split container so the sidebar and content
+    /// columns share the ONE search projection instead of each re-scanning the shared query (spec 0022).
+    /// Nil on the compact path, where this screen resolves its own content once per render (unchanged).
+    var resolvedContent: StreamSearchProjection.Result?
+
     /// The child folder names at this path, loaded off-main (the store walk can coordinate on iCloud)
     /// and refreshed after a folder edit. Kept local to this screen so each path shows its own folders.
     @State private var childFolderNames: [String] = []
@@ -94,23 +107,19 @@ struct FolderContentsView: View {
         )
     }
 
-    /// Resolve the screen state AND the search results in ONE pass (architect review): the search scan is
-    /// `thoughts x paragraphs`, so it must run at most ONCE per render, not once in the body and again inside
-    /// a separate `screenState` computed property (which re-scanned per keystroke). When no search is
-    /// active the scan is skipped entirely. Gated on the initial load so a not-yet-loaded feed does not
-    /// flash the empty CTA. `storeHasThoughts` is the WHOLE store (search is global), so the empty-state CTA
-    /// shows only when there is genuinely nothing anywhere.
-    private func resolveContent() -> (state: FolderScreenState, results: [Thought]) {
-        guard feed.didLoad, folderLoaded else { return (.normal, []) }
-        let active = ThoughtSearch.isActive(searchQuery)
-        // Only scan when a search is active; the normal/empty states never look at results.
-        let results = active ? ThoughtSearch.results(in: feed.thoughts, query: searchQuery) : []
-        let state = FolderScreenState.select(
-            storeHasThoughts: !feed.thoughts.isEmpty,
-            searchActive: active,
-            hasSearchMatches: !results.isEmpty
+    /// Resolve the screen state AND the search results in ONE pass through the pure `StreamSearchProjection`
+    /// seam (spec 0021's single-scan rule, lifted to a testable function for spec 0022): the search scan is
+    /// `thoughts x paragraphs`, so it runs at most ONCE per render and only when a search is active. Gated on
+    /// the initial load so a not-yet-loaded feed does not flash the empty CTA. Under the split view the
+    /// container computes this projection ONCE and injects it via `resolvedContent`, so the sidebar and
+    /// content columns do not each re-scan; on the compact path this screen resolves its own.
+    private func resolveContent() -> StreamSearchProjection.Result {
+        if let resolvedContent { return resolvedContent }
+        return StreamSearchProjection.resolve(
+            didLoad: feed.didLoad && folderLoaded,
+            thoughts: feed.thoughts,
+            searchQuery: searchQuery
         )
-        return (state, results)
     }
 
     var body: some View {
@@ -142,7 +151,14 @@ struct FolderContentsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CanopyColor.bg.ignoresSafeArea())
-        .safeAreaInset(edge: .bottom) { bottomStack(state: screenState) }
+        // The bottom stack renders here only in the compact `NavigationStack` (spec 0022). Under the split
+        // view it is lifted to the ONE container above the columns, so each column omits it - otherwise the
+        // sidebar and content columns would each show their own search field + record actions.
+        .safeAreaInset(edge: .bottom) {
+            if showsBottomBar {
+                bottomStack(state: screenState)
+            }
+        }
         .overlay(alignment: .top) {
             if feed.deleteFailed {
                 DeleteFailedBanner()
