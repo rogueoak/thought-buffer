@@ -23,8 +23,10 @@ struct ICloudThoughtStore: ThoughtStoring {
     /// live and what the Files app surfaces (the container Documents folder is user-visible).
     let directory: URL
 
-    /// The coordinator used for all IO. A fresh coordinator per operation is fine and cheap.
-    private let fileManager = FileManager.default
+    /// The file manager used for all IO. Computed (not stored) so this `Sendable` struct holds no
+    /// non-`Sendable` `FileManager`; `FileManager.default` is process-wide and thread-safe for the
+    /// path-based calls here, so resolving it per access is equivalent to storing it once.
+    private var fileManager: FileManager { .default }
 
     /// Build a store rooted at `<containerDocuments>/ThoughtStream/`.
     ///

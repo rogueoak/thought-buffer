@@ -91,14 +91,16 @@ struct NewThoughtIntent: AppIntent {
 /// \(.applicationName)"`.
 struct ThoughtStreamShortcuts: AppShortcutsProvider {
     /// The leading text of each "start a stream" phrase; the app name follows in the literal below.
+    /// Deliberately share NO exact phrase with `newThoughtPhraseLeads`: "New thought in" belongs to the
+    /// new-thought intent alone, so Siri never has to disambiguate an identical phrase between the two.
     static let startPhraseLeads = [
         "Start a thought stream in",
         "Start a stream in",
-        "Start dictating in",
-        "New thought in"
+        "Start dictating in"
     ]
 
-    /// The leading text of each "new thought" phrase; the app name follows in the literal below.
+    /// The leading text of each "new thought" phrase; the app name follows in the literal below. Kept
+    /// distinct from `startPhraseLeads` so no phrase is shared across the two intents.
     static let newThoughtPhraseLeads = [
         "New thought in",
         "Start a thought in"
@@ -110,8 +112,7 @@ struct ThoughtStreamShortcuts: AppShortcutsProvider {
             phrases: [
                 "Start a thought stream in \(.applicationName)",
                 "Start a stream in \(.applicationName)",
-                "Start dictating in \(.applicationName)",
-                "New thought in \(.applicationName)"
+                "Start dictating in \(.applicationName)"
             ],
             shortTitle: "Start a Stream",
             systemImageName: "waveform"

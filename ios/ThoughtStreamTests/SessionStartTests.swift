@@ -178,6 +178,13 @@ final class SessionStartTests: XCTestCase {
         XCTAssertTrue(ThoughtStreamShortcuts.newThoughtPhraseLeads.contains { $0.contains("thought") },
                       "a new-thought phrase should mention a thought")
 
+        // No phrase is shared across the two intents (task 11): a duplicate lead would render an
+        // identical spoken phrase on both shortcuts, making Siri disambiguate unpredictably.
+        let startLeads = Set(ThoughtStreamShortcuts.startPhraseLeads)
+        let newThoughtLeads = Set(ThoughtStreamShortcuts.newThoughtPhraseLeads)
+        XCTAssertTrue(startLeads.isDisjoint(with: newThoughtLeads),
+                      "the two intents must not share an identical phrase, or Siri disambiguates unpredictably")
+
         // Every phrase is built as "<lead> \(.applicationName)", so the rendered phrase ends with the
         // app name. Prove the construction prepends the lead and appends the app name.
         for lead in leads {

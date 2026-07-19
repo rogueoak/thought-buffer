@@ -174,7 +174,8 @@ final class ThoughtStoreDriver {
     /// sibling `.m4a`, so a recorded thought keeps its recording. Reloads so the list reflects the move.
     func move(_ thought: Thought, to folderPath: [String]) async {
         await Task.detached(priority: .userInitiated) { [store] in
-            try? store.save(thought.withFolderPath(folderPath))
+            // Discard the saved URL: this is a fire-and-forget re-file, the reload below reflects the move.
+            _ = try? store.save(thought.withFolderPath(folderPath))
         }.value
         await reload()
     }
