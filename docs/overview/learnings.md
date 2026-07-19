@@ -496,6 +496,61 @@ reconsider the merge rather than silently break the mapping. Generalizes to any 
 where one governs "what we combine" and the other "what we remove", and the combine is only reversible
 while the remove never reaches inside a combined unit.
 
+## Gate a cosmetic transform on the condition that justifies it, not on every pass (spec 0016)
+
+`FillerRemovalProcessor` was to "re-capitalize a sentence whose leading filler was removed", but the
+first implementation capitalized the leading letter of EVERY segment it processed - including ones with
+no filler removed at all. On the happy path (a filler-only or filler-led segment) it looked correct;
+the over-reach only showed when a clean segment with a deliberately lowercase lead ("second thought", a
+grouped continuation) flowed through and got silently title-cased to "Second thought". The tell: a
+cleanup step whose JUSTIFICATION is a specific event (a leading token was stripped) applied
+UNCONDITIONALLY on every input, so it mutated inputs the event never happened to. The fix threads the
+condition (`removedLeadingFiller`) into the tidy step and only capitalizes when it holds. Two supports
+made the miss cheap to catch: the transform is a pure function with a boolean gate that is unit-tested
+both ways, and a view-model test drove a REAL grouped continuation through it (not just isolated filler
+strings), which is exactly the input that exposed the over-reach. Generalizes to any "clean up the mess
+X left behind" step - re-capitalization, re-spacing, re-punctuation, trimming - which must fire only
+when X actually happened on this input, or it becomes a silent content change on the inputs where it did
+not; and test it against a realistic no-op input, not only the input that triggers it.
+
+## Normalize before you match: order regex cleanup passes so no pattern sees an unbounded run (spec 0016)
+
+`FillerRemovalProcessor.tidy` ran a `\s+([,.;:!?])` "drop the space before punctuation" pass BEFORE the
+`[ \t]+` "collapse whitespace" pass. On a long whitespace run NOT followed by terminal punctuation, the
+`\s+` alternation backtracks quadratically (O(n^2)) - 8k spaces took ~2.3s on the main thread. Not
+attacker-reachable here (input is bounded on-device dictation, never network/paste), so it is a
+main-thread-hang robustness concern rather than a ReDoS, but the shape is the lesson: a later pass that
+would have COLLAPSED the run to a single space was sequenced after the pass that scanned it greedily. The
+fix reorders so normalization (collapse whitespace to one space) runs FIRST, and the punctuation passes
+then match a bounded single space (` ?`) instead of `\s+`. Two rules generalize. First: when a pipeline
+of string passes includes a normalizer that shrinks a class of input (whitespace, separators, casing),
+run it EARLY so every downstream pattern matches the normalized, bounded form - never let a
+greedy-quantifier pass scan the un-normalized run. Second: any repetition quantifier (`\s+`, `.*`, `+`)
+over user-controlled length that is not anchored on both sides by a required literal is a backtracking
+risk; either bound it or eliminate the run before it is reached. Generalizes to any multi-pass regex
+cleanup (sanitizers, formatters, tokenizers) where an early normalization would make later patterns both
+cheaper and simpler.
+
+## A default-on transform must set its threshold at "can never change meaning", not "usually fine" (spec 0016)
+
+The filler-removal default set first included `mm`/`mmm`/`er`/`ah`. Each is a plausible hesitation, but
+`mm` is the millimetre UNIT ("20 mm of rain" -> "20 of rain", a factual change) and `ah`/`er` are real
+interjections/words ("Ah, finally!" -> "Finally!"). The trap: the feature ships ON BY DEFAULT, so every
+user's notes pass through it silently - a token that is "usually a filler" is not good enough, because
+the rare real-word case is a silent content edit the user never opted into and may not notice. The bar
+for a default-on, content-mutating transform is therefore "can this token EVER be a real word, unit, or
+name in normal use" - if yes, it is out of the default, no matter how often it is a filler. The same
+review surfaced a second class of the same bug: stripping a filler INSIDE quoted speech (`he said
+"um, no"`) edits a quotation the user is transcribing verbatim. Two rules generalize. First: split the
+policy into a safe-by-default set (only tokens that can never be meaningful) and an explicit opt-in
+"aggressive" set for the ambiguous ones - never let convenience push an ambiguous token into the default.
+Second: a content transform must respect the user's framing markers (quotes, code spans, verbatim
+blocks) and skip protected regions, because inside them the user's INTENT is "leave this exactly as I
+said it". Generalizes to any auto-applied rewrite (autocorrect, filler/dead-air removal, summarization,
+redaction): gate the default on "never wrong", offer the rest as opt-in, and never rewrite inside a
+verbatim/quoted span. Ship the pure core with negative tests for the exact real-word collisions ("20 mm",
+"Ah, finally!", quoted "um") so the boundary is pinned in CI, not just reasoned about.
+
 ## Factor a repeated action surface before it forks, and tie its transient confirmation to the view (spec 0017)
 
 The Share + Copy menu, the copy-to-pasteboard-and-flash routine, and the "Copied to clipboard" chip

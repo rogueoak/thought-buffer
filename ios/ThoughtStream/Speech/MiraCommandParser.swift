@@ -149,7 +149,19 @@ struct MiraCommandParser {
     /// that note back to the team") does not - "note" is not filler, so it does not match and the
     /// segment is dropped as an unrecognized command rather than mis-firing.
     private static let grammar: [([[String]], MiraCommand)] = [
-        ([["remove", "last", "sentence"], ["delete", "last", "sentence"]], .removeLastSentence),
+        // "delete/remove last sentence", "delete/remove/scratch last line", and "scratch that" all
+        // reuse the existing `removeLastSentence` action (spec 0016): a spoken "line" maps to the last
+        // thing said (one sentence), and "scratch that" is the natural no-control-word-noun phrasing.
+        // "last paragraph" stays the way to drop a whole block. "scratch that" reduces to "scratch"
+        // once inner/trailing filler drops "that", so "scratch" is what the grammar lists.
+        (
+            [
+                ["remove", "last", "sentence"], ["delete", "last", "sentence"],
+                ["remove", "last", "line"], ["delete", "last", "line"],
+                ["scratch", "that"], ["scratch"],
+            ],
+            .removeLastSentence
+        ),
         ([["remove", "last", "paragraph"], ["delete", "last", "paragraph"]], .removeLastParagraph),
         ([["new", "note"], ["start", "new", "note"]], .newNote),
         // "read back that" / "read back it" are omitted: `innerFiller` drops "that"/"it", so they

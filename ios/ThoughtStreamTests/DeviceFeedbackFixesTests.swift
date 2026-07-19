@@ -478,6 +478,15 @@ final class CheatSheetGrammarTests: XCTestCase {
             XCTAssertEqual(parsed, command, "\(cw) \(command.spokenPhrase) must fire \(command)")
         }
     }
+
+    /// Spec 0016: the remove-last-sentence cheat-sheet detail LISTS the new phrasings, so the
+    /// on-screen help stays truthful and a dropped phrasing regresses visibly rather than silently.
+    /// Both new phrasings are also proved to fire in `MiraCommandParserTests`.
+    func testRemoveLastSentenceDetailListsNewPhrasings() {
+        let detail = MiraCommand.removeLastSentence.cheatSheetDetail
+        XCTAssertTrue(detail.contains("delete the last line"), "detail must mention the line phrasing")
+        XCTAssertTrue(detail.contains("scratch that"), "detail must mention the scratch phrasing")
+    }
 }
 
 /// Feedback 0008: resuming a note continues it (same id/created), appended text is added, and the

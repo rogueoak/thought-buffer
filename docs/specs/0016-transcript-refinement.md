@@ -35,13 +35,20 @@ A new `FillerRemovalProcessor` conforming to `TextProcessor`, composed into
 only ever touches committed dictation text (never the command portion).
 
 - Removes standalone hesitation tokens from a **conservative** default list:
-  `um, umm, uh, uhh, erm, hmm, mm, mmm, er, ah, uh-huh` (as whole tokens only).
+  `um, umm, uh, uhh, erm, hmm, uh-huh` (as whole tokens only). Because refinement is
+  ON BY DEFAULT, the default list contains only unambiguous hesitations that can
+  never be a real word or a unit, so stripping one can never change meaning.
 - Never removes a token that is part of a real word ("I am", "a hummingbird"): it
   matches whole tokens, case-insensitively, and preserves surrounding words,
   casing, and punctuation.
+- Never removes a filler INSIDE a quoted span (straight `"` or curly U+201C/U+201D,
+  an unmatched opening quote protecting to end of string): a quoted hesitation is
+  the user transcribing someone's literal words, so `he said "um, no"` is kept
+  verbatim.
 - Collapses the whitespace and dangling punctuation a removed filler leaves behind
-  (e.g. "So, um, yeah -> "So, yeah") and re-capitalizes a sentence whose leading
-  filler was removed.
+  (e.g. "So, um, yeah" -> "So, yeah"), so no broken artifact (a dangling comma, a
+  separator hugging an opening quote) survives ANY removal, not only one at the
+  absolute start; and re-capitalizes a sentence whose leading filler was removed.
 - If removing fillers would empty a segment, the segment is dropped (no empty
   paragraph).
 - INTERACTION WITH FLOW GROUPING (feedback 0012): the paragraph grouper advances
@@ -50,10 +57,13 @@ only ever touches committed dictation text (never the command portion).
   anchor or create a paragraph - preserve that ordering (process first, then group
   on the committable result). Do not move filler removal ahead of the grouper in a
   way that lets a dropped segment shift paragraph boundaries.
-- Risky words that are often meaningful ("like", "so", "you know", "yeah",
-  "right") are NOT in the default set. Rationale documented inline: false
-  positives silently change meaning, which is worse than leaving a filler in. A
-  later milestone can add an opt-in "aggressive" list if wanted.
+- Words that can change meaning are NOT in the default set. Rationale documented
+  inline: a false positive silently changes meaning, which is worse than leaving a
+  filler in. This excludes the often-meaningful connectives ("like", "so",
+  "you know", "yeah", "right") AND the ambiguous hesitations `mm`/`mmm` (the
+  millimetre unit - "20 mm of rain") and `er`/`ah` (real interjections/words -
+  "Ah, finally!"). A later milestone can add an opt-in "aggressive" list that
+  includes these; it is out of scope here.
 
 ### 2. "Delete the last line" and "scratch that" voice commands
 
@@ -105,7 +115,9 @@ taking effect on the next dictation session (same lifecycle as the control word)
 - With refine ON (default), a dictated segment "um so, uh, the plan" saves as "So,
   the plan" (fillers gone, spacing/caps tidy); audio unchanged.
 - With refine OFF, text is committed verbatim (fillers kept).
-- "I am hungry" is never altered by filler removal ("am"/"ah" not mis-stripped).
+- "I am hungry" is never altered by filler removal ("am" not mis-stripped).
+- The default set never changes factual content: "20 mm of rain", "Ah, finally!",
+  and a quoted `he said "um, no"` are all left verbatim.
 - After the control word, "delete the last line" and "scratch that" both remove the
   last sentence; the cheat sheet lists them.
 - `TranscriptCleanup.reflow` merges a lowercase continuation line into its

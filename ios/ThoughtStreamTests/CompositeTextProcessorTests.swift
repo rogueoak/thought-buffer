@@ -93,4 +93,58 @@ final class CompositeTextProcessorTests: XCTestCase {
             .split(preText: "", command: .unrecognizedCommand)
         )
     }
+
+    // MARK: - Filler stage (spec 0016): only when enabled, only on dictation text
+
+    func testFillerRemovedWhenEnabled() {
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [], removesFillers: true)
+        XCTAssertEqual(processor.process("um so, uh, the plan"), .text("So, the plan"))
+    }
+
+    func testFillerNotRemovedWhenDisabled() {
+        // Default (removesFillers: false) commits verbatim - today's behavior.
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [])
+        XCTAssertEqual(processor.process("um so, uh, the plan"), .text("um so, uh, the plan"))
+    }
+
+    func testFillerOnlySegmentDropsWhenEnabled() {
+        // A segment that is nothing but fillers drops, so the view model creates no empty paragraph.
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [], removesFillers: true)
+        XCTAssertEqual(processor.process("um uh hmm"), .drop)
+    }
+
+    func testFillerRunsAfterSpellingOnPreText() {
+        // Spelling applies to the pre-text, then filler removal; the command portion is untouched.
+        let overrides = [SpellingOverride(from: "Shay", to: "Shea")]
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: overrides, removesFillers: true)
+        XCTAssertEqual(
+            processor.process("um call Shay Mira new note"),
+            .split(preText: "Call Shea", command: .command(.newNote))
+        )
+    }
+
+    func testFillerNeverTouchesCommandPortion() {
+        // The command remainder is split off before the filler stage, so the command still fires with
+        // filler removal on.
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [], removesFillers: true)
+        XCTAssertEqual(
+            processor.process("Mira remove the last sentence"),
+            .split(preText: "", command: .command(.removeLastSentence))
+        )
+    }
+
+    func testFillerEmptiedPreTextStillRunsCommand() {
+        // A pre-text that is nothing but fillers empties, but the command still runs (empty pre-text is
+        // the view model's "command only" case); the whole segment is NOT dropped.
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [], removesFillers: true)
+        XCTAssertEqual(
+            processor.process("um uh Mira new note"),
+            .split(preText: "", command: .command(.newNote))
+        )
+    }
+
+    func testFillerDoesNotAlterIAmHungryThroughComposite() {
+        let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [], removesFillers: true)
+        XCTAssertEqual(processor.process("I am hungry"), .text("I am hungry"))
+    }
 }

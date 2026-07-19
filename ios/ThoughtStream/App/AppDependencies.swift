@@ -63,7 +63,10 @@ struct AppDependencies {
         self.makeTextProcessor = makeTextProcessor ?? {
             CompositeTextProcessor(
                 controlWord: settingsStore.controlPhrase,
-                overrides: settingsStore.spellingOverrides
+                overrides: settingsStore.spellingOverrides,
+                // Spec 0016: the filler-removal stage is present only when refine is on, read at build
+                // time so a Settings toggle takes effect on the next session (like the control phrase).
+                removesFillers: settingsStore.refineTranscript
             )
         }
         // Built here (on the main actor) when none is injected, so the route's main-actor

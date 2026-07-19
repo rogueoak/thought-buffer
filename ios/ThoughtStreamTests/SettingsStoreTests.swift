@@ -230,4 +230,28 @@ final class SettingsStoreTests: XCTestCase {
             XCTAssertEqual(reopened.noteSortOrder, order, "\(order) should round-trip")
         }
     }
+
+    // MARK: - Refine transcript (spec 0016)
+
+    func testRefineTranscriptDefaultsToTrue() {
+        // A fresh install (no key stored) must read as ON, not the `bool(forKey:)` false default.
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertTrue(store.refineTranscript)
+    }
+
+    func testRefineTranscriptPersistsFalseAcrossInstances() {
+        // An explicit OFF must survive relaunch and not be masked by the true default.
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.refineTranscript = false
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertFalse(reopened.refineTranscript)
+    }
+
+    func testRefineTranscriptPersistsTrueAcrossInstances() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.refineTranscript = false
+        store.refineTranscript = true
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertTrue(reopened.refineTranscript)
+    }
 }

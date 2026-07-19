@@ -161,7 +161,12 @@ How the system is built and why.
   device). Also holds the Mira control-word pieces: `MiraCommandParser` (pure segment ->
   `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST control word found anywhere),
   `MiraTextProcessor` (the `TextProcessor` that splits at commands), `SentenceTokenizer`
-  (`NLTokenizer`-backed, for "remove the last sentence"), and `Speaker`/`SystemSpeaker`
+  (`NLTokenizer`-backed, for "remove the last sentence"), `FillerRemovalProcessor` (spec 0016: a pure
+  `TextProcessor` that strips standalone hesitation tokens from a conservative default set - only
+  unambiguous hesitations, since it is on by default, so no unit/word/interjection is ever removed and a
+  filler inside a quoted span is kept - and drops a filler-only segment to `.drop`), `TranscriptCleanup`
+  (spec 0016: pure `reflow` that merges obvious continuation lines, plus `refinedForSave(note, refine:)`
+  - the single gate for reflow-on-edit-save), and `Speaker`/`SystemSpeaker`
   (`AVSpeechSynthesizer` text to speech for "read that back"). `SystemSpeaker` sets each utterance's
   voice to the best installed one for the user's language (spec 0014) via the pure `VoiceSelector`
   (`bestVoiceIdentifier(from:languageCode:)`, premium > enhanced > default, exact-region preferred,
@@ -198,23 +203,29 @@ How the system is built and why.
 - `TextProcessor` seam - a finalized segment runs through `process`, which returns a
   `ProcessedSegment`: `.text` to commit, `.split(preText:command:)` (feedback 0006: the dictation
   before the control word plus a command outcome - `.command` to execute or `.unrecognizedCommand` to
-  drop with a chip), or `.drop` (reserved). `PassthroughTextProcessor` always returns `.text`;
+  drop with a chip), or `.drop` (a segment to discard with no paragraph - emitted by the filler stage
+  when removal empties a segment). `PassthroughTextProcessor` always returns `.text`;
   `MiraTextProcessor` returns `.split` when the parser finds the control word anywhere (built with the
   configured control word); `SpellingOverrideProcessor` is text -> text, applying the user's
   whole-word, case-insensitive overrides via an `NSRegularExpression` word walk (so a substring is
   never corrupted). `CompositeTextProcessor` composes them in the required order: split at the control
-  word on the RAW segment FIRST (the command portion must never be spelling-mangled or transcribed),
-  and apply spelling overrides ONLY to the pre-keyword dictation (or the whole segment when no control
-  word is present). The composition root
-  (`AppDependencies.makeTextProcessor`) builds one per session, reading the current control phrase
-  and overrides off `SettingsStoring` at build time - so edits in Settings apply to the next
-  session started, not one in flight.
+  word on the RAW segment FIRST (the command portion must never be spelling-mangled, filler-stripped,
+  or transcribed), apply spelling overrides, then (spec 0016, only when `refineTranscript` is on) the
+  filler stage, ONLY to the pre-keyword dictation (or the whole segment when no control word is
+  present). A whole-segment `.text` that filler removal empties becomes `.drop` (no empty paragraph, and
+  the grouper anchor is not advanced - see below); a `.split` whose pre-text empties still runs its
+  command with an empty pre-text. The composition root
+  (`AppDependencies.makeTextProcessor`) builds one per session, reading the current control phrase,
+  overrides, and refine flag off `SettingsStoring` at build time - so edits in Settings apply to the
+  next session started, not one in flight.
 - `Settings/` - `SettingsStoring` (protocol) and `UserDefaultsSettingsStore` (the local
   `UserDefaults`-backed impl, injected from the composition root) hold the control phrase
   (validated: trimmed, non-empty, sensible max length, else falls back to "Mira"), the ordered
-  `SpellingOverride` list (persisted as JSON), and the `AudioRetention` policy (spec 0007:
+  `SpellingOverride` list (persisted as JSON), the `AudioRetention` policy (spec 0007:
   keep / transcript-only / auto-delete after N days, persisted as a small string tag so an unknown
-  value falls back to `.keep`). Local only - no cloud sync, no per-note settings.
+  value falls back to `.keep`), and `refineTranscript` (spec 0016: a `Bool` defaulting to `true` -
+  presence-checked on read so a fresh install reads ON, not the `bool(forKey:)` false default - gating
+  the filler stage and the edit-save reflow). Local only - no cloud sync, no per-note settings.
 - `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
   logic: it drives `DictationView` from the speech service, routes finalized segments through the
   `TextProcessor`, executes `MiraCommand`s (note mutations, new note save+reset, read-back), and
@@ -222,7 +233,11 @@ How the system is built and why.
   `ParagraphGrouper` (feedback 0012) rather than one-paragraph-per-result: the view model calls
   `grouper.decide(...)` with the segment's raw analysis-relative seconds and analysis-start flag and
   either commits a new paragraph or appends to the current one (joined with a space, timings merged so
-  the range spans first-start-through-last-end). It keeps a `paragraphTimings` array in lockstep with `paragraphs`
+  the range spans first-start-through-last-end). ORDER MATTERS with the filler stage (spec 0016): the
+  view model runs `processor.process` FIRST and only calls `grouper.decide` for a segment that actually
+  commits dictation text, so a filler-only segment that the processor reduces to `.drop` neither creates
+  a paragraph nor advances the grouper's gap anchor - preserving the feedback-0012 invariant that a
+  blank/dropped segment mid-flow cannot shift the boundary the next real segment is measured against. It keeps a `paragraphTimings` array in lockstep with `paragraphs`
   (spec 0007), so every note mutation (commit, remove-sentence/paragraph, fold-partial) updates
   both, and builds the saved `Note` with its recording (adopted from the service's temp file into
   the store) and timings at `finish()`. Mid-session "new note" saves the transcript only - the one
@@ -306,9 +321,15 @@ How the system is built and why.
   compose button (spec 0013) calls `onNewNote(currentPath)`, and `StreamListView` pushes a `.newNote`
   route seeded with a fresh `Note(title: "", paragraphs: [], folderPath: currentPath)`. `FolderRow` mirrors `NoteCard`'s surface with a folder
   glyph, item count, and chevron. `DictationView` binds to `DictationViewModel`; `NoteCard`,
-  `NoteDetailView` stay presentational. `SettingsView` edits the injected `SettingsStoring`
-  instance directly (control-phrase field with validation hint, add/edit/delete override rows, a
-  read-only storage-status row from `NoteStoreKind`). The chosen `NoteSortOrder` persists through
+  `NoteDetailView` stay presentational. On a committed edit, `StreamListView`'s `onCommitEdit` runs
+  the note through the pure `TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)`
+  before saving (spec 0016): when the flag is on it reflows continuation lines, rebuilding via
+  `Note.editedCopy` so the title, recording, timings, and folder are preserved, and returns the note
+  unchanged when off or when nothing merges. That pure gate is the SINGLE enforcement of "reflow on
+  edit-save when refine is on, never on load" - no load path calls it, so an untouched loaded note is
+  never silently rewritten (unit-tested off/on/no-op). `SettingsView` edits the injected
+  `SettingsStoring` instance directly (control-phrase field with validation hint, a "Refine transcript"
+  toggle, add/edit/delete override rows, a read-only storage-status row from `NoteStoreKind`). The chosen `NoteSortOrder` persists through
   `SettingsStoring.noteSortOrder` (a stable string tag; unknown -> `.newest`).
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.

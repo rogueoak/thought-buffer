@@ -43,6 +43,28 @@ final class AppDependenciesFactoryTests: XCTestCase {
         let processor = deps.makeTextProcessor()
         XCTAssertEqual(processor.process("Call Shay today"), .text("Call Shea today"))
     }
+
+    /// Spec 0016: the filler stage is present in the built processor only when `refineTranscript` is
+    /// on, read at build time so a Settings toggle takes effect on the next session. When off, text
+    /// commits verbatim; when on, standalone fillers are stripped.
+    func testFillerStagePresentOnlyWhenRefineOn() {
+        let store = MutableSettingsStore()
+        let deps = AppDependencies(settingsStore: store)
+
+        // Off: text commits verbatim.
+        store.refineTranscript = false
+        XCTAssertEqual(
+            deps.makeTextProcessor().process("um the plan"),
+            .text("um the plan")
+        )
+
+        // On: the filler stage strips the standalone filler and re-capitalizes.
+        store.refineTranscript = true
+        XCTAssertEqual(
+            deps.makeTextProcessor().process("um the plan"),
+            .text("The plan")
+        )
+    }
 }
 
 /// An in-memory `SettingsStoring` for tests that need to mutate settings after the composition root
@@ -58,4 +80,5 @@ private final class MutableSettingsStore: SettingsStoring {
     var audioRetention: AudioRetention = .keep
     var lockScreenTitle: LockScreenTitle = .noteTitle
     var noteSortOrder: NoteSortOrder = .newest
+    var refineTranscript = true
 }

@@ -94,6 +94,14 @@ struct StreamListView: View {
         Note(title: "", paragraphs: [], createdAt: Date(), folderPath: folderPath)
     }
 
+    /// Apply the transcript reflow pass (spec 0016) to a note being SAVED AFTER AN EDIT. The gating -
+    /// reflow only when `refineTranscript` is on, and only on this commit-edit path (never on load) -
+    /// lives in the pure, tested `TranscriptCleanup.refinedForSave(_:refine:)`; this reads the current
+    /// setting and delegates, so a load path can never reach it and an untouched note is never rewritten.
+    private func refined(_ note: Note) -> Note {
+        TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             FolderContentsView(
@@ -139,7 +147,7 @@ struct StreamListView: View {
                         onResume: { current in resumeNote = current },
                         onCommitEdit: { edited in
                             Task {
-                                _ = try? store.save(edited)
+                                _ = try? store.save(refined(edited))
                                 await feed.reload()
                             }
                         },
@@ -164,7 +172,7 @@ struct StreamListView: View {
                         onResume: { current in resumeNote = current },
                         onCommitEdit: { edited in
                             Task {
-                                _ = try? store.save(edited)
+                                _ = try? store.save(refined(edited))
                                 await feed.reload()
                             }
                         },
