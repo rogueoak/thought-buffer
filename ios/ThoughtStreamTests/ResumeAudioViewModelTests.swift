@@ -494,13 +494,21 @@ private final class StubAudioConcatenator: AudioConcatenating, @unchecked Sendab
 
     init(result: AudioConcatenationResult) { self.result = result }
 
-    func concatenate(existing: URL, new: URL) async -> AudioConcatenationResult {
+    /// Run `body` under `lock` and return its result. A SYNC helper so the async `concatenate` never calls
+    /// `NSLock.lock()`/`unlock()` directly from an async context (unavailable there in Swift 6 mode).
+    private func withLock<T>(_ body: () -> T) -> T {
         lock.lock()
-        invoked = true
-        let toResume = invocationWaiters
-        invocationWaiters.removeAll()
-        let mustPause = pauseUntilReleased && !released
-        lock.unlock()
+        defer { lock.unlock() }
+        return body()
+    }
+
+    func concatenate(existing: URL, new: URL) async -> AudioConcatenationResult {
+        let (toResume, mustPause) = withLock { () -> ([CheckedContinuation<Void, Never>], Bool) in
+            invoked = true
+            let waiters = invocationWaiters
+            invocationWaiters.removeAll()
+            return (waiters, pauseUntilReleased && !released)
+        }
         toResume.forEach { $0.resume() }
 
         if mustPause {

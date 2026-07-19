@@ -147,6 +147,29 @@ final class AdaptiveLayoutTests: XCTestCase {
         XCTAssertFalse(SplitDetailReconcile.deleteClearsSelection(deletedId: UUID(), shownThoughtId: nil))
     }
 
+    // MARK: - Split content-column subject reconcile (spec 0026)
+
+    func testContentSubjectSurvivesWhenUserFolderStillExists() {
+        XCTAssertTrue(SplitDetailReconcile.contentSubjectSurvives(.userFolder("Work"), inFolderNames: ["Work", "Home"]))
+    }
+
+    func testContentSubjectDoesNotSurviveWhenUserFolderRenamedOrDeleted() {
+        // The shown folder is gone from the reloaded names (renamed to "Job" or deleted): the content column
+        // must revert, so this returns false.
+        XCTAssertFalse(SplitDetailReconcile.contentSubjectSurvives(.userFolder("Work"), inFolderNames: ["Job", "Home"]))
+        XCTAssertFalse(SplitDetailReconcile.contentSubjectSurvives(.userFolder("Work"), inFolderNames: []))
+    }
+
+    func testAliasSubjectAlwaysSurvives() {
+        // Aliases are virtual - never renamed/deleted - so they survive any folder-names reload.
+        XCTAssertTrue(SplitDetailReconcile.contentSubjectSurvives(.alias(.allThoughts), inFolderNames: []))
+        XCTAssertTrue(SplitDetailReconcile.contentSubjectSurvives(.alias(.recents), inFolderNames: ["Work"]))
+    }
+
+    func testNoSubjectTriviallySurvives() {
+        XCTAssertTrue(SplitDetailReconcile.contentSubjectSurvives(nil, inFolderNames: ["Work"]))
+    }
+
     // MARK: - Helpers
 
     private func thought(title: String, folderPath: [String] = []) -> Thought {

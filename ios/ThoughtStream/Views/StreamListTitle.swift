@@ -1,8 +1,37 @@
 import SwiftUI
 import UIKit
 
+/// The screen title as the FIRST row of the scrollable list (spec 0026), so it scrolls away with the
+/// content instead of sitting pinned below the toolbar. Rendered at the same Canopy H3 size + bold weight
+/// the old fixed title used (`StreamListTitle`), inset to line up with the cards below it, and stripped of
+/// list-row chrome so it reads as a plain header. Every top-level and folder list uses this one row, so the
+/// title placement is single-sourced.
+struct StreamListTitleRow: View {
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: StreamListTitle.fontSize, weight: .bold))
+            .foregroundStyle(CanopyColor.text)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .listRowInsets(EdgeInsets(
+                top: CanopySpacing.x3,
+                leading: CanopySpacing.x4,
+                bottom: CanopySpacing.x2,
+                trailing: CanopySpacing.x4
+            ))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .accessibilityAddTraits(.isHeader)
+    }
+}
+
 /// The below-the-toolbar list title for the Thoughts / folder screens (spec 0021, sized down by feedback
 /// 0020). The title stays a LARGE navigation title BELOW the toolbar buttons - only its type size changes.
+///
+/// NOTE (spec 0026): the redesigned top-level and folder screens now render the title as the first
+/// SCROLLABLE row via `StreamListTitleRow` instead of this fixed navigation title, so `.streamListTitle`
+/// is no longer applied there. It is retained for any screen that still wants a fixed large title.
 ///
 /// Device feedback 0020: the system large title read one Canopy step too big (roughly an H2). This drops it
 /// ONE step on the Canopy scale (`sizeX3xl`, the H3-equivalent) so the header is calmer while keeping the

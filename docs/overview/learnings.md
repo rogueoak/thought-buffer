@@ -721,3 +721,35 @@ as create.
 ## Host a focused field on a STABLE node, above the content that switches on state (feedback 0024)
 
 The bottom-bar search `TextField` lost focus after the first character: typing one letter flipped the resolved `FolderScreenState` from `.normal` to `.searchResults`, which swapped one `List` for another inside a `Group { switch state }`. The bar was pinned to that SAME switching node via `.safeAreaInset(edge: .bottom)`, so the state flip tore down and rebuilt the modified subtree - including the inset that hosts the field - and the field resigned first responder, dropping the keyboard. The trap is that `.safeAreaInset` (and `.overlay`, `.background`, and other content-carrying modifiers) attach their content to the node they modify, so a modifier hosting a focused/stateful view must NOT sit on a node whose body structurally switches. The fix factored the state-driven `switch` into ONE inner view with a pinned identity (`.id`), and moved the bottom-bar inset (and the banners/toolbar/alerts) to the STABLE outer node above it - so only the inner content swaps on a state change and the field is one persistent instance across the empty->results transition. A supporting invariant kept the field from unmounting for a different reason: `FolderScreenState.showsSearchField` stays true across `.normal` -> `.searchResults` -> `.noMatches` (false only in the empty store), pinned by a unit test, and the `TextField` itself has no `if` wrapping it (only the clear button appears/disappears, which does not change the field's identity). Generalizes to any SwiftUI view that keeps first-responder or `@FocusState` (a search field, an inline editor, a chat composer) living alongside content that switches on state: host the stateful view on a node whose identity does NOT change with that state - lift it above the switch (or give the switching content its own pinned `.id` so the swap is contained) - because a modifier's content is rebuilt when its host node's body structurally changes, and a rebuilt text field silently loses focus.
+
+## When a shipped model gets simpler, replace it with a new pure seam - then DELETE the old one, don't leave it dangling (spec 0026)
+
+Spec 0026 dropped spec 0010's nested folders + interleaved folders-and-thoughts for a folders-only, one-level
+model with two virtual alias folders. The temptation was to bend the existing `FolderListModel` (its
+interleave, its recursive newest-descendant dates, its empty-folder sink) into the new shape. Instead the
+new behavior went into a fresh pure seam (`TopLevelFolders` + `NewThoughtPlacement` + `FolderSubject`) that
+models exactly what the redesign needs - flat alias projections, a flattened-over-legacy folder view, an
+uncategorized filter, a placement decision. The new seam has no dead interleave/nesting code to reason
+around, and the diff is additive (new files) rather than a risky in-place rewrite of a heavily-tested model
+whose every branch the redesign no longer exercises. The tell that a change is a REPLACE not an EDIT: the new
+requirements delete whole capabilities of the old model (here nesting and interleaving) rather than extend it.
+The follow-through matters too: the first pass KEPT `FolderListModel` "only for its tests", but three review
+personas independently flagged that a superseded model with no non-test caller is dead code carrying a second
+copy of the count logic - a drift trap, since a later reader can't tell it is retired. So it and its ~250-line
+test file were deleted; a self-referential test (a model tested only by tests, used by nothing) proves
+nothing about the shipped app and just anchors stale behavior. Generalizes: when the product simplifies,
+write the new pure seam and test it against the new reality, then REMOVE the old abstraction and its
+now-orphaned tests in the same PR - don't launder it into the new one, and don't leave it "for its tests".
+
+## Migrate by projecting old data through the new view, not by rewriting the store (spec 0026)
+
+The redesign forbids new nesting but old thoughts may live in deep folders on disk. Rather than a storage
+migration (walk the tree, move every nested `.md` up a level), the flattening is a pure VIEW projection: a
+top-level folder shows every thought whose `folderPath.first` is the folder name, so a legacy
+`["Work", "Q1"]` thought surfaces under "Work" with no file touched. Storage stays byte-identical (thoughts
+are still `<id>.md`, folders still directories, root still uncategorized), so there is no migration to get
+wrong, no half-migrated state on a crash, and other apps / older builds still read the files. The UI simply
+stops CREATING new nesting (create-folder and move-to-folder target the top level) while still SURFACING the
+old nesting flattened. Generalizes: when a redesign narrows what the app produces but must keep old data
+visible, prefer a read-time projection over a write-time migration - it is reversible, crash-safe, and keeps
+the on-disk format a stable contract, at the cost of a slightly smarter query.
