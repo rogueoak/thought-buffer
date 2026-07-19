@@ -36,4 +36,19 @@ enum StreamContainer: Equatable {
         case .split: return false
         }
     }
+
+    /// Whether the THOUGHT DETAIL screen hosts the shared bottom PLAYER in its own bottom inset (feedback
+    /// 0027). In the COMPACT stack a `NavigationStack` push swaps the pushing screen's `safeAreaInset`, so
+    /// the pushed detail must re-host the one shared `BottomPlayer` (true) or the transport vanishes on the
+    /// thought page. In the SPLIT view the player is LIFTED above all columns once
+    /// (`StreamListView.liftedBottomStack`), so the detail column must NOT host it (false) or it double-
+    /// renders. Deriving this from the container - the SAME seam `folderScreenShowsOwnBottomBar` uses - keeps
+    /// "who hosts the player" a SINGLE tested decision, so a future lifting container cannot silently
+    /// double-render by a call site forgetting to pass a flag.
+    var detailHostsBottomPlayer: Bool {
+        switch self {
+        case .stack: return true
+        case .split: return false
+        }
+    }
 }

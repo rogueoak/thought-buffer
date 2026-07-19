@@ -825,3 +825,38 @@ feedback 0018 un-stacked-alerts lesson (which fixed presentation identity): un-s
 present, but the payload READ still has to beat the dismissal. A tell for this class of bug: the action is
 correct in isolation (its tests pass by calling it directly) yet no-ops only through the real UI, because
 only the UI path runs the dismissal binding that clears the state the deferred read depends on.
+
+## A Slider's `set` and `onEditingChanged` are not ordered - gate the drag-hold on an explicit flag (feedback 0027)
+
+The bottom player's scrubber froze after a seek: it held the in-drag thumb value in `@State scrubbing:
+Double?` and displayed `scrubbing ?? elapsed`, clearing `scrubbing` back to nil ONLY inside
+`Slider.onEditingChanged(editing: false)`. But a SwiftUI `Slider`'s value-binding `set` and its
+`onEditingChanged(false)` callback have NO ordering guarantee: the slider can fire the binding's `set` with
+the final touch-up value AFTER `onEditingChanged(false)` already ran the nil-clear, re-populating `scrubbing`
+so the display reads the frozen scrub value forever and the live `elapsed` (still advancing under the
+progress ticker) is permanently masked - the bar stalls even though the seek itself worked and playback
+continued. Clearing a "user is dragging" hold on the assumption that `onEditingChanged` fires last is
+fragile. The fix gates "show the dragged value" on an explicit `isScrubbing` bool set from
+`onEditingChanged`, and falls back to the live source the instant the flag drops - so a late `set` write is
+ignored on the next render. Two supports made it provable off-device: the display-selection rule is a pure
+`PlaybackProgress.scrubDisplay(isScrubbing:scrubValue:elapsed:)` (a stale scrub value with `isScrubbing ==
+false` still yields `elapsed`), unit-tested as the "editing state cannot suppress live progress" CI gate; and
+the resume-from-sought-position is proven at the controller level with a spy player (seek, then advance the
+player's time, assert the ticker samples the new positions) rather than only on real audio. Generalizes to
+any control whose transient interaction state must yield back to a live model value: drive the handoff off an
+explicit interaction flag with a live fallback, never off the last-callback assumption, and keep the
+selection rule pure so the invariant is testable.
+
+## A persistent affordance must be hosted per container layout, not assumed to carry across a push (feedback 0027)
+
+The one shared bottom player showed on the list / folder screens but vanished when a thought was pushed on
+the phone: each list screen hosted `StreamBottomStack` (which contains the player) in its OWN
+`.safeAreaInset(edge: .bottom)`, but the pushed `ThoughtDetailView` had a DIFFERENT bottom inset (only its
+find/resume bar), so a `NavigationStack` push replaced the whole inset and the player was gone. The iPad
+split view was already correct because there the stack is LIFTED above all columns once, so the detail column
+inherits it. The lesson: a "persistent" bottom affordance is only persistent within the view that hosts its
+inset - a compact stack push swaps the inset, so the shared content has to be repeated on the pushed screen
+(here: render the same `BottomPlayer` in the detail's inset), gated so it does not double-render where a
+parent already lifts it (a `showsBottomPlayer` flag, false in the split container). Generalizes to any
+safe-area-inset / overlay chrome meant to span screens: decide per container whether the child re-hosts it or
+a parent lifts it once, and never assume a `safeAreaInset` on the pushing screen persists across the push.

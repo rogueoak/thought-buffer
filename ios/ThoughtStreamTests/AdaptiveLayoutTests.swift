@@ -36,6 +36,20 @@ final class AdaptiveLayoutTests: XCTestCase {
         XCTAssertFalse(StreamContainer.split.folderScreenShowsOwnBottomBar)
     }
 
+    /// The compact stack's pushed detail RE-HOSTS the shared bottom player (feedback 0027): a `NavigationStack`
+    /// push swaps the pushing screen's `safeAreaInset`, so the detail must host the player itself or the
+    /// transport vanishes on the thought page.
+    func testCompactDetailHostsTheBottomPlayer() {
+        XCTAssertTrue(StreamContainer.stack.detailHostsBottomPlayer)
+    }
+
+    /// The split view's detail column does NOT host the bottom player (feedback 0027): the player is lifted
+    /// above all columns once, so hosting it in the detail column too would double-render it. Locking this in a
+    /// test means a future lifting container cannot silently ship two players.
+    func testSplitDetailDoesNotHostTheBottomPlayer() {
+        XCTAssertFalse(StreamContainer.split.detailHostsBottomPlayer)
+    }
+
     // MARK: - Lifted search projection (the one shared search surface)
 
     /// Before the initial load completes, the projection is `.normal` with no results, so a not-yet-loaded

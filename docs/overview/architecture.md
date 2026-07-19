@@ -394,8 +394,13 @@ How the system is built and why.
     clamped to `[0, duration]` via the pure `PlaybackProgress.clamp`) that the in-app slider drag AND the
     system scrubber both drive; `skip(by:)` routes through `seek` so it clamps too. The phone detail view
     no longer hosts an in-note transport (spec 0027 removed `ThoughtPlaybackModel`): its "Play recording"
-    button just starts the thought on the controller, surfacing the bottom player. The CarPlay scene drives
-    the same controller. **Queue (spec 0015):** the
+    button just starts the thought on the controller, surfacing the bottom player - which the detail page now
+    ALSO anchors in its own bottom safe-area inset (feedback 0027, see `ThoughtDetailView` below), so the same
+    transport works while a thought is open, not only on the list screens. The CarPlay scene drives
+    the same controller. **Scrubber stall fix (feedback 0027):** the bottom player's slider display is gated by
+    an explicit `isScrubbing` drag flag through the pure `PlaybackProgress.scrubDisplay` (shows the held scrub
+    value only WHILE dragging, else the live `elapsed`), so a stray post-release `Slider` binding write cannot
+    permanently mask progress and freeze the bar at the drop point. **Queue (spec 0015):** the
     controller also owns an internal ordered `queue: [Thought]` + index. `playQueue(_:)` filters to
     `hasAudio` thoughts and plays the first through the shared start path; the NATURAL end-of-track path
     (`handleFinish`) advances to the next until the queue is exhausted, then clears. The advance is
@@ -481,7 +486,14 @@ How the system is built and why.
   three bottom affordances compose without overlap. `ThoughtDetailView`'s bottom bar reuses the SAME
   `BottomBar` with a resume icon (shown only when `resumeApplies` per the audio-retention setting,
   computed at the root); its search field routes to the global results on SUBMIT (via `onSearch`, which
-  pops to root and sets the shared query) rather than per keystroke. **Folder dialogs (feedback 0018):**
+  pops to root and sets the shared query) rather than per keystroke. The detail page's bottom inset ALSO
+  hosts the shared `BottomPlayer` above its own bar (feedback 0027, `detailBottomStack`), gated on the SINGLE
+  container decision `StreamContainer.detailHostsBottomPlayer` (the same seam shape as
+  `folderScreenShowsOwnBottomBar`, derived once in `StreamListView.detailView`) - TRUE on the compact stack
+  (the pushed detail owns its own inset, so the player is repeated there and the transport works on the thought
+  page) and FALSE in the iPad split view (the player is lifted above all columns, so hosting it in the detail
+  column too would double-render it). A tap on the player's title routes through the detail's `onOpenThought`
+  (the same container-aware `openThought` the list uses). **Folder dialogs (feedback 0018):**
   the New folder / Rename / Delete alerts were three STACKED `.alert`s on one node (a SwiftUI flakiness
   source that broke rename); they are now ONE `FolderDialog` enum (`@State activeDialog`) with each alert
   on its OWN hidden `Color.clear` background anchor via a per-case binding, and the name text in a

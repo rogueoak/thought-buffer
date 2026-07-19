@@ -452,6 +452,11 @@ struct StreamListView: View {
         onPopNewThought: @escaping () -> Void
     ) -> some View {
         let enablesFind = showsDetailSearch
+        // Whether THIS detail hosts the shared bottom player is a SINGLE container decision (feedback 0027),
+        // not a per-call-site flag: compact re-hosts it (the push swaps the inset), split does not (the player
+        // is lifted above all columns). Deriving it here means a call site cannot forget to opt out and
+        // double-render.
+        let showsBottomPlayer = StreamContainer.decide(horizontalSizeClass: horizontalSizeClass).detailHostsBottomPlayer
         switch route {
         case let .thought(thought):
             ThoughtDetailView(
@@ -471,6 +476,11 @@ struct StreamListView: View {
                     onPopThought()
                     Task { await deletion.delete(id: id) }
                 },
+                // The bottom player now lives on the thought page too (feedback 0027); tapping its title
+                // opens that thought in whichever container is active (a re-open of the shown thought is a
+                // harmless no-op, a queue-advanced other thought navigates).
+                onOpenThought: { openThought($0) },
+                showsBottomPlayer: showsBottomPlayer,
                 enablesFind: enablesFind,
                 resumeApplies: resumeApplies(for: thought)
             )
@@ -495,6 +505,8 @@ struct StreamListView: View {
                     }
                     onPopNewThought()
                 },
+                onOpenThought: { openThought($0) },
+                showsBottomPlayer: showsBottomPlayer,
                 enablesFind: enablesFind,
                 startInEdit: true
             )

@@ -37,6 +37,18 @@ struct ThoughtDetailView: View {
     /// composition root soft-deletes it through the shared undoable path AND pops back to the list where
     /// the undo affordance is visible. Nil at bare/preview call sites (no Delete shown).
     private let onDelete: ((UUID) -> Void)?
+    /// Route a bottom-player title tap to the thought it names (feedback 0027): the shared player now lives on
+    /// the thought page too, and tapping its title opens that thought. Usually the thought already shown (a
+    /// harmless re-open); when a folder queue has advanced to a DIFFERENT recording, this opens that one. The
+    /// compact stack pushes it, the split detail selects it. Defaults to a no-op for a bare/preview call site.
+    private let onOpenThought: (Thought) -> Void
+    /// Whether this detail screen hosts the shared bottom PLAYER in its own bottom inset (feedback 0027). The
+    /// real call site derives this from `StreamContainer.detailHostsBottomPlayer` (the ONE container decision):
+    /// true on the compact (phone) stack, where the pushed detail owns its bottom inset so the player must be
+    /// repeated here; false in the iPad split view, where the player is LIFTED above all columns
+    /// (`StreamListView.liftedBottomStack`) - hosting it here too would double-render it. Defaults to true so a
+    /// bare/preview call site (compact-like) still shows it.
+    private let showsBottomPlayer: Bool
     /// Whether the bottom-bar search field performs IN-THOUGHT find on this detail screen (spec 0025,
     /// superseding spec 0021's "detail search routes to global results"): the field finds within THIS
     /// thought - seek + highlight + skip - rather than routing to the list. False at bare/preview call
@@ -105,6 +117,8 @@ struct ThoughtDetailView: View {
         onCommitEdit: ((Thought) -> Void)? = nil,
         onDiscardEmpty: (() -> Void)? = nil,
         onDelete: ((UUID) -> Void)? = nil,
+        onOpenThought: @escaping (Thought) -> Void = { _ in },
+        showsBottomPlayer: Bool = true,
         enablesFind: Bool = false,
         resumeApplies: Bool = true,
         startInEdit: Bool = false
@@ -116,6 +130,8 @@ struct ThoughtDetailView: View {
         self.onCommitEdit = onCommitEdit
         self.onDiscardEmpty = onDiscardEmpty
         self.onDelete = onDelete
+        self.onOpenThought = onOpenThought
+        self.showsBottomPlayer = showsBottomPlayer
         self.enablesFind = enablesFind
         self.resumeApplies = resumeApplies
         _paragraphs = State(initialValue: thought.paragraphs)
@@ -221,10 +237,7 @@ struct ThoughtDetailView: View {
         // the keyboard and a brand-new thought does not present two competing text fields. The bar reuses the
         // SAME component the list uses (not a fork).
         .safeAreaInset(edge: .bottom) {
-            if bottomBarLayout.isVisible {
-                bottomBar
-                    .padding(.bottom, CanopySpacing.x2)
-            }
+            detailBottomStack
         }
         .navigationTitle(currentThought.title)
         .navigationBarTitleDisplayMode(.inline)
@@ -405,6 +418,32 @@ struct ThoughtDetailView: View {
             isEditing: isEditingAnything,
             isUnsavedNewThought: isUnsavedNewThought
         )
+    }
+
+    /// The thought page's bottom safe-area inset (feedback 0027): the SHARED bottom PLAYER above the thought's
+    /// own bottom bar, in the same order the list screens' `StreamBottomStack` uses (player above the bar).
+    /// This anchors the ONE shared player on the thought page so playing a recording surfaces the same
+    /// transport - play/pause, scrubber, +/-15s - that the list screens show, driven by the same
+    /// `playbackController`. The player renders itself only while a recording is loaded (it collapses to
+    /// nothing otherwise), and it is independent of the bar's editing gate - so it stays visible while the
+    /// thought text is being edited, exactly as it does on the list screens. On the iPad split view this inset
+    /// is empty for the detail column (the player is lifted above all columns), so the player never
+    /// double-renders there; on compact this IS the player's home while a thought is open.
+    ///
+    /// Unlike the list's `StreamBottomStack` (which also gates its player on `screenState != .emptyStore`),
+    /// the detail player is gated ONLY on `showsBottomPlayer` (architect review): the empty-store gate is
+    /// deliberately omitted here because a thought detail is never the empty-store screen, so the two
+    /// predicates are intentionally not coupled - do not re-add the store-state gate to this call site.
+    private var detailBottomStack: some View {
+        VStack(spacing: CanopySpacing.x3) {
+            if showsBottomPlayer {
+                BottomPlayer(controller: playbackController, onOpenThought: { onOpenThought($0) })
+            }
+            if bottomBarLayout.isVisible {
+                bottomBar
+            }
+        }
+        .padding(.bottom, CanopySpacing.x2)
     }
 
     /// The persistent bottom bar for the thought page: the SAME `BottomBar` component the list uses, its
