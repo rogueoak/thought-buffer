@@ -85,6 +85,10 @@ final class StreamFeed: ObservableObject {
     /// Move a thought into `folderPath` (empty = top level) by re-saving it there, then reload.
     func move(_ thought: Thought, to folderPath: [String]) async { await driver.move(thought, to: folderPath) }
 
+    /// Move SEVERAL thoughts into `folderPath` in one pass, reloading ONCE (feedback 0026, item 6), so the
+    /// empty-folder "move thoughts here" picker does not trigger one full reload per selected thought.
+    func move(_ thoughts: [Thought], to folderPath: [String]) async { await driver.move(thoughts, to: folderPath) }
+
     /// Copy the driver's current state into the published properties so observers refresh.
     private func mirror() {
         thoughts = driver.thoughts

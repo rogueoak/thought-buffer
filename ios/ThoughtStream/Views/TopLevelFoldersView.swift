@@ -88,6 +88,12 @@ struct TopLevelFoldersView: View {
                         onNewKeyboardThought: { onNewKeyboardThought(topLevelPlacement) },
                         onNewThought: { onNewThought(topLevelPlacement) }
                     )
+                    // Pin a STABLE identity on the bottom stack (feedback 0026, item 3): when the primary
+                    // content swaps one List for another on the first keystroke (normal -> searchResults),
+                    // the `.safeAreaInset` re-lays-out; without a fixed id SwiftUI can rebuild the stack's
+                    // search `TextField` and drop first responder, so the field lost focus after one letter.
+                    // A constant id keeps the field the SAME instance across every content-state flip.
+                    .id("stream-bottom-stack")
                 }
             }
             .overlay(alignment: .top) {
@@ -346,7 +352,13 @@ struct TopLevelFoldersView: View {
         Color.clear
             .alert("Rename folder", isPresented: dialogBinding { $0.isRenameFolder }) {
                 folderNameTextField(placeholder: "Name")
-                Button("Rename") { Task { await renameFolder() } }
+                Button("Rename") {
+                    // Capture the payload SYNCHRONOUSLY through the pure `FolderDialogAction.capture` seam
+                    // (feedback 0026, item 4): tapping an alert button dismisses the alert, which fires the
+                    // dialog binding and clears `activeDialog`. A deferred `Task` that read `activeDialog`
+                    // ran AFTER that clear and saw nil, so the rename silently did nothing. Capture now.
+                    performCaptured(FolderDialogAction.capture(from: activeDialog, name: folderNameField))
+                }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             }
     }
@@ -354,7 +366,10 @@ struct TopLevelFoldersView: View {
     private var deleteFolderAlertAnchor: some View {
         Color.clear
             .alert("Delete folder?", isPresented: dialogBinding { $0.isDeleteFolder }) {
-                Button("Delete", role: .destructive) { Task { await deleteFolder() } }
+                Button("Delete", role: .destructive) {
+                    // Capture synchronously, same reason as rename above (feedback 0026, item 4).
+                    performCaptured(FolderDialogAction.capture(from: activeDialog, name: folderNameField))
+                }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             } message: {
                 Text("This deletes the folder and everything inside it - its thoughts and their recordings. This can't be undone.")
@@ -383,9 +398,22 @@ struct TopLevelFoldersView: View {
         }
     }
 
-    private func renameFolder() async {
-        guard case let .renameFolder(path, _)? = activeDialog else { return }
-        let newName = folderNameField
+    /// Dispatch a captured folder action (feedback 0026, item 4). The payload was read synchronously at tap
+    /// time via `FolderDialogAction.capture`, so it is independent of `activeDialog`, which the alert's
+    /// dismissal will clear before this async work runs.
+    private func performCaptured(_ action: FolderDialogAction?) {
+        guard let action else { return }
+        Task {
+            switch action {
+            case let .rename(path, newName):
+                await renameFolder(at: path, to: newName)
+            case let .delete(path):
+                await deleteFolder(at: path)
+            }
+        }
+    }
+
+    private func renameFolder(at path: [String], to newName: String) async {
         activeDialog = nil
         let renamed = await feed.renameFolder(at: path, to: newName)
         await reloadFolders()
@@ -394,8 +422,7 @@ struct TopLevelFoldersView: View {
         }
     }
 
-    private func deleteFolder() async {
-        guard case let .deleteFolder(path)? = activeDialog else { return }
+    private func deleteFolder(at path: [String]) async {
         activeDialog = nil
         await feed.deleteFolder(at: path)
         await reloadFolders()

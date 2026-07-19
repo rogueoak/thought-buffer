@@ -20,10 +20,13 @@ struct StreamListTitleRow: View {
             .foregroundStyle(CanopyColor.text)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.leading, CanopySpacing.x4)
+            // Tight header insets (feedback 0026, item 1): the title sits close to its rows, Notes-app
+            // style, rather than floating with a large gap above and below. The list's own top content
+            // margin is tightened in `unifiedList()` so the header also sits close to the toolbar.
             .listRowInsets(EdgeInsets(
-                top: CanopySpacing.x3,
+                top: CanopySpacing.x1,
                 leading: CanopySpacing.x0,
-                bottom: CanopySpacing.x2,
+                bottom: CanopySpacing.x1,
                 trailing: CanopySpacing.x0
             ))
             .listRowBackground(Color.clear)
