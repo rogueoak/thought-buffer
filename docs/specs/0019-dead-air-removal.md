@@ -42,6 +42,16 @@ replace the original. Any failure leaves the original recording untouched.
    around save, off the main actor; failure falls back to keeping the original
    untrimmed (never lose the recording).
 
+   LOAD-BEARING INVARIANT (from feedback 0012 review): the minimum-pause trim
+   threshold (2.0 s) MUST stay strictly ABOVE the paragraph gap threshold
+   (`ParagraphGrouper.defaultGapThreshold`, 1.5 s). That guarantees any silence long
+   enough to trim is always a PARAGRAPH BOUNDARY, never an interior sub-threshold
+   silence inside a merged paragraph - so trimming only ever removes time BETWEEN
+   paragraphs and the merged `[start, duration]` timings stay remappable by shifting
+   paragraph starts. Add a guard test asserting `trimThreshold > groupThreshold`; if
+   a future device pass lowers the trim threshold below the group threshold, the
+   merged-timing model must first be revisited (retain per-segment sub-ranges).
+
 3. **Timing remap (critical).** Paragraph `ParagraphTiming`s reference ABSOLUTE
    recording time. After trimming, every timing's start/duration must be re-mapped
    onto the compressed timeline (subtract the total removed-silence duration that
