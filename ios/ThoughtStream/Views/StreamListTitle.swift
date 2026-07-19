@@ -3,9 +3,14 @@ import UIKit
 
 /// The screen title as the FIRST row of the scrollable list (spec 0026), so it scrolls away with the
 /// content instead of sitting pinned below the toolbar. Rendered at the same Canopy H3 size + bold weight
-/// the old fixed title used (`StreamListTitle`), inset to line up with the cards below it, and stripped of
-/// list-row chrome so it reads as a plain header. Every top-level and folder list uses this one row, so the
-/// title placement is single-sourced.
+/// the old fixed title used (`StreamListTitle`), and stripped of list-row chrome so it reads as a plain
+/// header. Every top-level and folder list uses this one row, so the title placement is single-sourced.
+///
+/// Feedback 0025 (unified list): the title now sits ABOVE the one grouped card (Notes-app style). It keeps
+/// only its own leading padding so it lines up with the card's leading text edge; its horizontal LIST-ROW
+/// inset is zeroed so the grouped section margin (which insets the card from the screen edge) governs the
+/// alignment, and the title tracks the card no matter the device's grouped margin. Its row background is
+/// clear and its separator hidden so it carries no card chrome of its own.
 struct StreamListTitleRow: View {
     let title: String
 
@@ -14,11 +19,12 @@ struct StreamListTitleRow: View {
             .font(.system(size: StreamListTitle.fontSize, weight: .bold))
             .foregroundStyle(CanopyColor.text)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.leading, CanopySpacing.x4)
             .listRowInsets(EdgeInsets(
                 top: CanopySpacing.x3,
-                leading: CanopySpacing.x4,
+                leading: CanopySpacing.x0,
                 bottom: CanopySpacing.x2,
-                trailing: CanopySpacing.x4
+                trailing: CanopySpacing.x0
             ))
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)

@@ -159,38 +159,46 @@ struct TopLevelFoldersView: View {
         // rescan the whole thoughts array (O(thoughts) here, not O(folders x thoughts) per render).
         let counts = TopLevelFolders.folderThoughtCounts(feed.thoughts)
         return List {
+            // The title sits ABOVE the unified card (Notes-app style), as its own chrome-free header row so
+            // the grouped container below holds ONLY the folder rows (feedback 0025).
             StreamListTitleRow(title: "Thoughts")
 
-            ForEach(AliasFolder.allCases) { alias in
-                aliasRow(alias)
-            }
+            // The alias + user folders form ONE unified inset card: surface + border + rounded corners wrap
+            // the whole section, and the rows are separated by hairline dividers (feedback 0025).
+            Section {
+                ForEach(AliasFolder.allCases) { alias in
+                    aliasRow(alias)
+                }
 
-            ForEach(userFolders, id: \.self) { name in
-                folderRow(name: name, count: counts[name] ?? 0)
+                ForEach(userFolders, id: \.self) { name in
+                    folderRow(name: name, count: counts[name] ?? 0)
+                }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        .unifiedList()
     }
 
     private func searchResultsList(_ results: [Thought]) -> some View {
         List {
-            ForEach(results) { thought in
-                // The SAME shared row the folder screen uses (spec 0026, architect review), so a global
-                // search result is identical everywhere - it keeps its play/move leading swipe here too,
-                // rather than a hand-rolled row that silently dropped those actions.
-                ThoughtResultRow(
-                    thought: thought,
-                    playbackController: playbackController,
-                    onOpen: onOpenThought,
-                    onMove: { moveThought = $0 },
-                    onDelete: onDeleteThought,
-                    onCopied: { copiedTrigger += 1 }
-                )
+            // The search results form ONE unified inset card too (feedback 0025), so a global search reads the
+            // same grouped way as a folder list.
+            Section {
+                ForEach(results) { thought in
+                    // The SAME shared row the folder screen uses (spec 0026, architect review), so a global
+                    // search result is identical everywhere - it keeps its play/move leading swipe here too,
+                    // rather than a hand-rolled row that silently dropped those actions.
+                    ThoughtResultRow(
+                        thought: thought,
+                        playbackController: playbackController,
+                        onOpen: onOpenThought,
+                        onMove: { moveThought = $0 },
+                        onDelete: onDeleteThought,
+                        onCopied: { copiedTrigger += 1 }
+                    )
+                }
             }
         }
-        .listStyle(.plain)
-        .scrollContentBackground(.hidden)
+        .unifiedList()
     }
 
     /// A pinned virtual alias folder row (All Thoughts / Recents), visually distinct from a user folder (a
@@ -202,7 +210,7 @@ struct TopLevelFoldersView: View {
             AliasFolderRow(alias: alias)
         }
         .buttonStyle(.plain)
-        .tightRowInsets()
+        .unifiedRow()
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             // A leading swipe on an alias plays its recordings as a queue (parity with the old folder swipe).
             if let controller = playbackController {
@@ -226,7 +234,7 @@ struct TopLevelFoldersView: View {
             )
         }
         .buttonStyle(.plain)
-        .tightRowInsets()
+        .unifiedRow()
         .contextMenu {
             Button {
                 beginRename(name: name)
@@ -401,6 +409,9 @@ struct TopLevelFoldersView: View {
 /// A pinned virtual alias folder row (spec 0026): a tinted glyph, the alias title, and a chevron - visually
 /// distinct from a user `FolderRow` (no count, filled tinted icon background) so All Thoughts / Recents read
 /// as smart folders. No rename/delete affordance.
+///
+/// Feedback 0025 (unified list): the surface / border / rounded-corner chrome moved off this row onto the
+/// whole list container (Notes-app-style grouped list), so only the row CONTENT lives here now.
 struct AliasFolderRow: View {
     let alias: AliasFolder
 
@@ -426,11 +437,5 @@ struct AliasFolderRow: View {
         }
         .padding(CanopySpacing.x4)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(CanopyColor.surface)
-        .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: CanopyRadius.lg, style: .continuous)
-                .stroke(CanopyColor.border, lineWidth: 1)
-        )
     }
 }

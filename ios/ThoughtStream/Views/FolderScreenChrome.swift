@@ -29,7 +29,7 @@ struct ThoughtResultRow: View {
             ThoughtCard(thought: thought)
         }
         .buttonStyle(.plain)
-        .tightRowInsets()
+        .unifiedRow()
         .contextMenu {
             ThoughtActionsMenu(thought: thought, onCopied: onCopied) {
                 Button {
@@ -71,20 +71,40 @@ struct ThoughtResultRow: View {
 }
 
 extension View {
-    /// The TIGHTER row insets for the redesigned dense list (spec 0026): the vertical inset drops from the
-    /// old `x1_5` (6pt) to `x0_5` (2pt) so rows read as a compact list rather than bulky spaced cards, while
-    /// the horizontal inset (`x4`) and each card's own internal padding are unchanged - so tap targets stay
-    /// adequate and the metadata stays legible.
-    func tightRowInsets() -> some View {
+    /// A row inside the UNIFIED, Notes-app-style grouped list (feedback 0025). The per-row surface / border /
+    /// rounded-corner CHROME moved off the individual rows and onto the whole list container: rows now sit on
+    /// the shared `surface` fill and are separated by hairline dividers in the Canopy `border` color, so the
+    /// list reads as ONE inset card rather than a stack of free-floating cards.
+    ///
+    /// The row content supplies its own internal padding (the card views' `x4`), so the row insets here are
+    /// zeroed on the leading/trailing edge (`x4` is baked into the content) and the vertical inset is dropped
+    /// to `x0` - the compact rhythm now comes from the content padding + dividers, not from gaps between
+    /// cards. The separator is inset to line up with the content, matching the Notes app.
+    func unifiedRow() -> some View {
         self
             .listRowInsets(EdgeInsets(
-                top: CanopySpacing.x0_5,
-                leading: CanopySpacing.x4,
-                bottom: CanopySpacing.x0_5,
-                trailing: CanopySpacing.x4
+                top: CanopySpacing.x0,
+                leading: CanopySpacing.x0,
+                bottom: CanopySpacing.x0,
+                trailing: CanopySpacing.x0
             ))
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
+            .listRowBackground(CanopyColor.surface)
+            .listRowSeparatorTint(CanopyColor.border)
+            .alignmentGuide(.listRowSeparatorLeading) { _ in CanopySpacing.x4 }
+    }
+}
+
+extension View {
+    /// The single container styling for a UNIFIED, Notes-app-style grouped list (feedback 0025): the inset
+    /// rounded card that wraps ALL the rows as one surface, so the border and background belong to the WHOLE
+    /// list rather than each row. `.insetGrouped` supplies the inset rounded container + hairline dividers;
+    /// `scrollContentBackground(.hidden)` drops the system grouped backdrop so the screen's Canopy `bg` shows
+    /// through around the card. Used identically by both list screens and the search results so the grouping
+    /// is single-sourced.
+    func unifiedList() -> some View {
+        self
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
     }
 }
 

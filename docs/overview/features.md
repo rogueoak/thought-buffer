@@ -736,11 +736,15 @@ fixed below-the-toolbar title placement.
   top-level folder (its folder name is the first path component), so no thought is hidden by the redesign.
   Storage is unchanged - thoughts stay `<id>.md`, folders stay directories, the root holds uncategorized
   thoughts - so existing thoughts and folders load exactly as before.
-- **Title scrolls with the list; tighter rows.** Each screen's title ("Thoughts" at the top level; the
-  folder name / "All Thoughts" / "Recents" inside) is now the FIRST row of the scrollable list and scrolls
-  away, instead of a fixed title pinned below the toolbar. Rows are tighter (reduced inter-row padding) so
-  the list reads as a compact, dense list while staying legible and tappable. The search-field
-  focus-stability fix (feedback 0024) is preserved.
+- **Title scrolls with the list; one unified grouped list.** Each screen's title ("Thoughts" at the top
+  level; the folder name / "All Thoughts" / "Recents" inside) is now the FIRST row of the scrollable list
+  and scrolls away, instead of a fixed title pinned below the toolbar. The rows themselves are a UNIFIED,
+  Notes-app-style grouped list (feedback 0025): the surface + border + rounded corners wrap the WHOLE list
+  as ONE inset card, with rows separated by hairline Canopy-border dividers, rather than each folder or
+  thought floating as its own bordered card. The title sits above that card. The search-field
+  focus-stability fix (feedback 0024) is preserved. This applies on both list screens (top-level folders
+  and folder-thoughts) and to search results, and in both the iPad split content column and the compact
+  stack.
 - **Pure, tested core.** The alias projections (`allThoughts(sorted:)`, `recents(limit: 10)`), a user
   folder's flattened thoughts, the uncategorized filter, and the new-thought placement decision are the
   pure, unit-tested `TopLevelFolders` + `NewThoughtPlacement`. The list layout, the title-in-list, and the
