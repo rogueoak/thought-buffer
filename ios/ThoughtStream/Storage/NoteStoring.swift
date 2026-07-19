@@ -20,6 +20,29 @@ protocol NoteStoring: Sendable {
     /// exist.
     func delete(id: UUID) throws
 
+    // MARK: - Recoverable delete (spec 0020)
+
+    /// Soft-delete a note: MOVE its `<id>.md` (and sibling `<id>.m4a` if present) into the store's
+    /// trash directory rather than removing them, returning a `DeletedNote` token sufficient to
+    /// `restore(_:)` it. Returns nil when the note has no file to delete (nothing to trash). The move
+    /// stays inside the store root, guarded like every other file op.
+    @discardableResult
+    func softDelete(id: UUID) throws -> DeletedNote?
+
+    /// Restore a soft-deleted note: move its trashed files back to their former folder path. If that
+    /// folder no longer exists the note lands at ROOT instead (never a failure); the returned
+    /// `RestoredNote` records where it actually landed. No-op-safe if the trashed files are gone.
+    @discardableResult
+    func restore(_ token: DeletedNote) throws -> RestoredNote
+
+    /// Permanently remove a soft-deleted note's trashed files (commit the delete). Called when the
+    /// undo window closes and opportunistically on launch. No-op if the trashed files are already gone.
+    func purge(_ token: DeletedNote) throws
+
+    /// Permanently remove EVERY trashed note (a launch-time sweep for tokens with no pending undo).
+    /// Empties the store's trash directory. No-op when the trash is empty or absent.
+    func purgeAllTrash() throws
+
     // MARK: - Audio recording (spec 0007)
 
     /// The on-disk URL of the sibling audio recording for a note id (`<id>.m4a` next to `<id>.md`),
@@ -74,6 +97,31 @@ extension NoteStoring {
     /// The file extension used for a note's sibling audio recording. AAC in an `.m4a` container:
     /// compressed so a long session stays small, and natively playable by `AVAudioPlayer`.
     static var audioFileExtension: String { "m4a" }
+
+    /// The name of the per-store trash directory (spec 0020): a hidden subdirectory INSIDE the store
+    /// root that holds soft-deleted files until they are restored or purged. Hidden (leading dot) so it
+    /// never shows in the Files app or is walked by `loadAll` (which skips hidden files). One constant
+    /// so both stores agree on the location.
+    static var trashDirectoryName: String { ".trash" }
+
+    // MARK: - Recoverable-delete defaults (spec 0020)
+
+    /// Default: a store without an on-disk tree (an in-memory test stub) has nothing to soft-delete.
+    /// The file-backed stores override this. It still hard-`delete`s so the stub stays consistent.
+    @discardableResult
+    func softDelete(id: UUID) throws -> DeletedNote? { try delete(id: id); return nil }
+
+    /// Default no-op for stores without a trash directory. The file-backed stores override this.
+    @discardableResult
+    func restore(_ token: DeletedNote) throws -> RestoredNote {
+        RestoredNote(id: token.id, folderPath: token.formerFolderPath, landedAtRoot: false)
+    }
+
+    /// Default no-op for stores without a trash directory. The file-backed stores override this.
+    func purge(_ token: DeletedNote) throws {}
+
+    /// Default no-op for stores without a trash directory. The file-backed stores override this.
+    func purgeAllTrash() throws {}
 
     // MARK: - Audio defaults
 

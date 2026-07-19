@@ -207,8 +207,9 @@ Fixes from real device testing:
   never loses text.
 - **Keyword-led command mode** - anything that leads with the control word is treated as a command
   and never transcribed; an unrecognized keyword-led phrase is dropped with a chip (see Mira above).
-- **Swipe to delete** - the Stream list is a `List` with iOS-standard swipe-to-delete that removes
-  the note and its sibling recording through the store, then reloads.
+- **Swipe to delete** - the Stream list is a `List` with iOS-standard swipe-to-delete. As of spec
+  0020 the delete is UNDOABLE (see "Undoable delete" below): the note and its recording are moved to
+  the store's trash, an Undo affordance shows, and shaking the device offers "Undo Delete".
 - **Word count** - note cards and the detail header show a word count ("12 words" / "1 word")
   instead of a paragraph count.
 - **Louder waveform** - the mic-level -> bar-height mapping is tuned (perceptual curve, higher gain)
@@ -482,3 +483,56 @@ finalized result = one paragraph" rule split a single spoken sentence into sever
   later device pass a way to measure real cadence; the mic tap buffer is a named constant so it can
   be tuned there. Final latency tuning is deferred to that device session (release builds carry no
   instrumentation overhead).
+
+## Note share and copy actions (spec 0017)
+
+A note's text can leave the app: send it to another app or copy it to the clipboard.
+
+- **"..." actions menu on the note page.** The note detail toolbar carries an ellipsis menu (beside
+  the mic and gear, shown in the normal non-editing state) with **Share** and **Copy text**. Share
+  opens the system share sheet (`ShareLink`) so the note can go to Messages, Mail, Notes, etc.; Copy
+  text puts the same text on the pasteboard and flashes a brief "Copied to clipboard" confirmation.
+- **Long-press a note in the list.** A note row's context menu also offers **Share** and **Copy
+  text** (alongside "Move to folder"), so a note can be shared without opening it. Folder rows get no
+  share/copy - only notes have shareable text.
+- **One plain-text form.** Both surfaces build the shared string from the pure, unit-tested
+  `Note.shareableText`: the title on its own line, a blank line, then the body paragraphs joined by
+  blank lines. A note with no custom title shares its derived title; a note with no body shares just
+  its title. Audio is never shared here - text only.
+
+## Note UX polish, round 3 (feedback 0013-0016)
+
+Small consistency fixes to the note card, detail page, and Thoughts header, from a round of device
+use:
+
+- **Tighter timer spacing (0013).** The note card's timer/duration glyph sits as close to its label
+  as the clock glyph does to its relative time, both using the same `CanopySpacing.x1` token.
+- **Tap out to save a title (0014).** Editing a note's title and tapping anywhere outside the field
+  (the background, or into the body) now commits the title and resigns focus, just like the Done
+  button - no Done tap required. The commit reads the live edited text, and title/body editing stay
+  mutually exclusive (tapping into the body commits the title first).
+- **Matching duration on the detail page (0015).** The note detail header shows the recording
+  duration with the same timer glyph and spacing as the list card, not a dash. Both the card and the
+  detail header now render one shared `NoteMetaStats` component, so their metadata line cannot drift.
+- **Inline Thoughts header (0016).** The top-level "Thoughts" title sits on the same navigation-bar
+  row as the mic and gear buttons (inline title) instead of on its own large-title row below them.
+
+## Undoable delete (spec 0020)
+
+Deleting a note is recoverable, matching the iOS "Shake to Undo" expectation and adding a Delete
+action to the note's actions menu:
+
+- **Delete in the menus.** The shared `NoteActionsMenu` "..." menu (note detail) and the list-row
+  long-press context menu both carry a destructive **Delete**. The list-row swipe deletes through the
+  same path. Deleting from the detail page pops back to the list, where the undo affordance shows.
+- **Soft delete (trash + restore).** A delete does not destroy files: it MOVES the note's `<id>.md`
+  (and sibling `<id>.m4a`) into a hidden `.trash/<id>/` directory inside the store root, returning a
+  lightweight `DeletedNote` token. Restore moves the files back to their original folder - or to the
+  root if that folder was deleted meanwhile (never a failure). The trash never escapes the store root
+  and is skipped by the notes list.
+- **Undo affordance.** A brief, non-blocking "Note deleted - Undo" chip (~5s, styled like the
+  "Copied to clipboard" confirmation) appears after any delete; tapping Undo restores the note.
+- **Shake to Undo.** The delete is registered with the system `UndoManager`, so shaking the device
+  offers "Undo Delete" (and redo re-deletes). Nothing else about shake-to-edit changes.
+- **Purge.** When the undo window elapses the delete is committed (the trashed files are purged), and
+  the trash is swept on launch so it never accumulates across app runs.

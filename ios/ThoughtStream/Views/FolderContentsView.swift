@@ -29,6 +29,10 @@ struct FolderContentsView: View {
     let onNewNote: ([String]) -> Void
     let onNewThought: () -> Void
     let onOpenSettings: () -> Void
+    /// Soft-delete a note by id through the shared undoable path (spec 0020), so the list swipe and the
+    /// list-row context-menu Delete both route through the composition root's `NoteDeletionController`
+    /// (which registers undo + shows the affordance) rather than deleting the store directly.
+    let onDeleteNote: (UUID) -> Void
 
     /// The child folder names at this path, loaded off-main (the store walk can coordinate on iCloud)
     /// and refreshed after a folder edit. Kept local to this screen so each path shows its own folders.
@@ -51,6 +55,12 @@ struct FolderContentsView: View {
 
     // A transient message for a rejected/conflicting folder name.
     @State private var folderError: String?
+
+    // Drives the shared "Copied to clipboard" confirmation after a note-row Copy text (spec 0017):
+    // `copiedTrigger` is bumped on each copy so the lifecycle-tied confirmation re-arms its auto-hide,
+    // and `showCopiedConfirmation` holds its visibility.
+    @State private var copiedTrigger = 0
+    @State private var showCopiedConfirmation = false
 
     /// The interleaved, sorted rows for this screen: child folders + notes at this path.
     private var items: [FolderListItem] {
@@ -102,6 +112,9 @@ struct FolderContentsView: View {
                     }
             }
         }
+        // The shared, lifecycle-tied "Copied to clipboard" confirmation (spec 0017), pinned at the top
+        // like the sibling banners; a rapid re-copy re-arms it and navigation cancels its timer.
+        .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .top)
         .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
         .animation(.easeInOut(duration: 0.2), value: folderError)
         .toolbar { toolbarContent }
@@ -237,10 +250,22 @@ struct FolderContentsView: View {
         .buttonStyle(.plain)
         .rowInsets()
         .contextMenu {
-            Button {
-                moveNote = note
-            } label: {
-                Label("Move to folder", systemImage: "folder")
+            // Long-press a note row for Share + Copy from the ONE shared `NoteActionsMenu` (spec 0017),
+            // with this screen's Move-to-folder appended after them. `onCopied` bumps the trigger that
+            // flashes the shared confirmation. Folder rows get no share/copy - only notes.
+            NoteActionsMenu(note: note, onCopied: { copiedTrigger += 1 }) {
+                Button {
+                    moveNote = note
+                } label: {
+                    Label("Move to folder", systemImage: "folder")
+                }
+                // Delete via the shared undoable path (spec 0020): the same route the swipe uses, so
+                // every entry point registers undo and shows the affordance. Destructive role tints it.
+                Button(role: .destructive) {
+                    onDeleteNote(note.id)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -262,8 +287,10 @@ struct FolderContentsView: View {
             .tint(CanopyColor.primary)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            // The swipe deletes through the SAME undoable path (spec 0020) as the menus, so it registers
+            // undo and shows the affordance instead of hard-deleting the store.
             Button(role: .destructive) {
-                Task { await feed.delete(id: note.id) }
+                onDeleteNote(note.id)
             } label: {
                 Label("Delete", systemImage: "trash")
             }

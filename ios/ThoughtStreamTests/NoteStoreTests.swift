@@ -352,6 +352,165 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(all.first?.folderPath.map { $0.lowercased() }, ["work"])
     }
 
+    // MARK: - Recoverable delete (spec 0020)
+
+    /// Soft-delete moves the note out of the tree (it no longer loads) but does NOT destroy it, and
+    /// restore brings it back to its original folder with its content intact.
+    func testSoftDeleteThenRestoreRoundTrip() throws {
+        let note = Note(title: "Recoverable", paragraphs: ["Keep me around."], createdAt: Date(),
+                        folderPath: ["Work"])
+        try store.save(note)
+
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+        XCTAssertEqual(token.id, note.id)
+        XCTAssertEqual(token.formerFolderPath, ["Work"])
+        XCTAssertNil(token.audioFilename, "no recording, so no audio filename")
+        // Gone from the visible tree.
+        XCTAssertNil(store.load(id: note.id))
+        XCTAssertEqual(store.loadAll().count, 0)
+
+        let restored = try store.restore(token)
+        XCTAssertEqual(restored.folderPath, ["Work"])
+        XCTAssertFalse(restored.landedAtRoot)
+        let back = try XCTUnwrap(store.load(id: note.id))
+        XCTAssertEqual(back.folderPath, ["Work"])
+        XCTAssertEqual(back.paragraphs, ["Keep me around."])
+    }
+
+    /// The audio SIBLING is moved into the trash on soft-delete and moved back on restore, so an undo
+    /// fully recovers a recorded note.
+    func testSoftDeleteAndRestoreMovesAudioSibling() throws {
+        let id = UUID()
+        let note = Note(id: id, title: "Rec", paragraphs: ["Body."], createdAt: Date(),
+                        folderPath: ["Voice"])
+        try store.save(note)
+        try store.saveAudio(from: makeTempRecording(), for: id)
+        XCTAssertTrue(store.audioExists(for: id))
+
+        let token = try XCTUnwrap(try store.softDelete(id: id))
+        XCTAssertEqual(token.audioFilename, "\(id.uuidString).m4a")
+        XCTAssertFalse(store.audioExists(for: id), "audio moved to trash, not beside a live note")
+
+        _ = try store.restore(token)
+        XCTAssertNotNil(store.load(id: id))
+        let resolved = try XCTUnwrap(store.audioURL(for: id))
+        XCTAssertEqual(resolved.deletingLastPathComponent().lastPathComponent, "Voice")
+        XCTAssertTrue(store.audioExists(for: id), "audio restored beside the note")
+    }
+
+    /// Restoring a note whose original folder was deleted meanwhile lands it at ROOT (never a failure),
+    /// and the result records that it landed at root.
+    func testRestoreWhenOriginalFolderGoneLandsAtRoot() throws {
+        let note = Note(title: "Orphan", paragraphs: ["Body."], createdAt: Date(), folderPath: ["Temp"])
+        try store.save(note)
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+
+        // The folder is gone (empty after the note left, then removed by the user).
+        try store.deleteFolder(at: ["Temp"])
+        XCTAssertFalse(store.folders(at: []).contains("Temp"))
+
+        let restored = try store.restore(token)
+        XCTAssertTrue(restored.landedAtRoot)
+        XCTAssertEqual(restored.folderPath, [])
+        let back = try XCTUnwrap(store.load(id: note.id))
+        XCTAssertEqual(back.folderPath, [], "restored to root because the original folder was gone")
+    }
+
+    /// Purge permanently removes a trashed note: after purge, restore recovers nothing.
+    func testPurgeRemovesTrashedNotePermanently() throws {
+        let note = Note(title: "Doomed", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+
+        try store.purge(token)
+        _ = try store.restore(token) // no-op now: files are gone
+        XCTAssertNil(store.load(id: note.id))
+    }
+
+    /// purgeAllTrash empties every trashed note (the launch sweep), and never touches live notes.
+    func testPurgeAllTrashEmptiesTrashKeepingLiveNotes() throws {
+        let live = Note(title: "Alive", paragraphs: ["Here."], createdAt: Date())
+        let gone = Note(title: "Trashed", paragraphs: ["Bye."], createdAt: Date())
+        try store.save(live)
+        try store.save(gone)
+        let token = try XCTUnwrap(try store.softDelete(id: gone.id))
+
+        try store.purgeAllTrash()
+        _ = try store.restore(token) // nothing to bring back
+        XCTAssertNil(store.load(id: gone.id))
+        XCTAssertNotNil(store.load(id: live.id), "the live note is untouched by the trash sweep")
+    }
+
+    /// The trash NEVER escapes the store root: the trashed files sit under `.trash/` inside the store
+    /// directory, and a soft-deleted note is not visible to `loadAll` (which skips the hidden dir).
+    func testTrashStaysInsideStoreRoot() throws {
+        let note = Note(title: "x", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        _ = try XCTUnwrap(try store.softDelete(id: note.id))
+
+        // The trashed file lives under <root>/.trash/<id>/<id>.md - strictly inside the root.
+        let trashDir = tempDir.appendingPathComponent(".trash", isDirectory: true)
+            .appendingPathComponent(note.id.uuidString, isDirectory: true)
+        let trashedNote = trashDir.appendingPathComponent("\(note.id.uuidString).md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedNote.path),
+                      "trashed file must sit under <root>/.trash/, inside the store root")
+        XCTAssertTrue(trashedNote.standardizedFileURL.path.hasPrefix(tempDir.standardizedFileURL.path + "/"),
+                      "trash path must never escape the store root")
+        // Hidden trash is not surfaced as a note.
+        XCTAssertEqual(store.loadAll().count, 0)
+    }
+
+    /// Soft-deleting a missing note returns nil (nothing to trash), not a throw.
+    func testSoftDeleteMissingReturnsNil() throws {
+        XCTAssertNil(try store.softDelete(id: UUID()))
+    }
+
+    /// Purge removes EXACTLY the targeted note, leaving a second trashed note still restorable - so a
+    /// commit of one undo window never destroys another pending delete's trash.
+    func testPurgeRemovesOnlyTheTargetedTrashedNote() throws {
+        let keep = Note(title: "Keep trashed", paragraphs: ["Recoverable."], createdAt: Date())
+        let drop = Note(title: "Drop trashed", paragraphs: ["Doomed."], createdAt: Date())
+        try store.save(keep)
+        try store.save(drop)
+        let keepToken = try XCTUnwrap(try store.softDelete(id: keep.id))
+        let dropToken = try XCTUnwrap(try store.softDelete(id: drop.id))
+
+        try store.purge(dropToken)
+
+        // The other trashed note is untouched and still restorable.
+        let restored = try store.restore(keepToken)
+        XCTAssertFalse(restored.landedAtRoot)
+        XCTAssertNotNil(store.load(id: keep.id), "purging one note must not destroy another's trash")
+        // The purged one is gone for good.
+        _ = try store.restore(dropToken)
+        XCTAssertNil(store.load(id: drop.id))
+    }
+
+    /// A failing AUDIO move during soft-delete ROLLS BACK the note move: the note ends up fully in place
+    /// (still loadable, with its audio), the function throws, and NO token is returned - so the note is
+    /// never half-in-trash-with-no-undo where the launch sweep could destroy it.
+    func testSoftDeleteRollsBackNoteMoveWhenAudioMoveFails() throws {
+        let id = UUID()
+        let note = Note(id: id, title: "Atomic", paragraphs: ["Body."], createdAt: Date())
+        let noteURL = try store.save(note)
+        let audioURL = try store.saveAudio(from: makeTempRecording(), for: id)
+
+        // Make the audio file immutable so the store's move of it fails (EPERM), while the note file
+        // moves fine - exercising the partial-failure path.
+        try FileManager.default.setAttributes([.immutable: true], ofItemAtPath: audioURL.path)
+        defer { try? FileManager.default.setAttributes([.immutable: false], ofItemAtPath: audioURL.path) }
+
+        XCTAssertThrowsError(try store.softDelete(id: id), "a failed audio move must surface, not swallow")
+
+        // Rolled back: both files are back in place and the note still loads with its recording.
+        XCTAssertTrue(FileManager.default.fileExists(atPath: noteURL.path),
+                      "the note file must be rolled back into place, not left in trash")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
+        XCTAssertNotNil(store.load(id: id))
+        XCTAssertEqual(store.loadAll().count, 1, "the note is still listed after a rolled-back delete")
+        XCTAssertTrue(store.audioExists(for: id))
+    }
+
     /// Write a stand-in recording to a temp file the store will move into place.
     private func makeTempRecording(content: String = "audio-bytes") throws -> URL {
         let url = FileManager.default.temporaryDirectory

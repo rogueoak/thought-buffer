@@ -550,3 +550,53 @@ said it". Generalizes to any auto-applied rewrite (autocorrect, filler/dead-air 
 redaction): gate the default on "never wrong", offer the rest as opt-in, and never rewrite inside a
 verbatim/quoted span. Ship the pure core with negative tests for the exact real-word collisions ("20 mm",
 "Ah, finally!", quoted "um") so the boundary is pinned in CI, not just reasoned about.
+
+## Factor a repeated action surface before it forks, and tie its transient confirmation to the view (spec 0017)
+
+The Share + Copy menu, the copy-to-pasteboard-and-flash routine, and the "Copied to clipboard" chip
+were written twice - once in the note detail toolbar, once in the list-row context menu - because the
+second site was easy to reach by pasting the first. Two identical action surfaces are a drift trap: a
+later change (the queued Delete-in-this-menu work) has to be made in both, and one will be missed. The
+fix factors ONE `NoteActionsMenu(note:onCopied:)` that emits the shared items and accepts optional
+trailing content, so a caller appends its own item (Move, later Delete) without re-forking, plus one
+`NoteClipboard.copy` and one `CopiedConfirmation` chip. The rule: when the SAME interactive affordance
+appears on two screens, extract it at the first duplication - and design the shared piece to be
+EXTENDED (a trailing-content slot) rather than copied when a caller needs one extra item. The paired
+lesson is the confirmation's timer: a detached `DispatchQueue.asyncAfter` to hide a transient chip has
+no generation guard and no lifecycle tie, so a rapid second copy hides it early and a fired timer can
+mutate state after the view is gone. Drive the auto-hide from a `.task(id:)` keyed on a per-event
+counter instead - it re-arms on each event and cancels on teardown - the same lifecycle-tied shape the
+sibling error banners already used. Generalizes to any transient, self-dismissing UI (toasts, chips,
+"copied"/"saved" flashes): key the dismissal on the view's lifecycle and a monotonic trigger, never a
+free-floating timer.
+
+## Make a destructive action reversible by moving, not removing - and route every entry point through one seam (spec 0020)
+
+"Delete" that unlinks files immediately has no undo to offer, so the iOS Shake to Undo gesture and an
+in-app "Undo" both have nothing to restore. The fix models delete as a MOVE into a per-store trash
+directory plus a `restore`/`purge` pair, returning a lightweight token (id + former location +
+filenames) that is enough to put the files back OR commit their removal - the files are never gone
+until the undo window closes. Three shape choices made it safe and non-duplicative. First: the trash
+is a HIDDEN subdirectory inside the store root (`.trash/`), so the existing tree walks that already
+`skipsHiddenFiles` never surface a trashed note and nothing downstream changed; keeping it inside the
+root means the reused path-safety guard still holds (a soft-delete only ever moves within the tree).
+Second: restore needs its OWN destination guard, subtly different from the delete-time one - a
+top-level note legitimately restores to the ROOT, so the guard is "at or BELOW root" where the folder
+delete/rename guard is "strictly below root"; copying the strict guard verbatim would reject every
+top-level restore, and dropping the guard would let a crafted former-folder path escape the tree. When
+you reuse a safety check for a new operation, re-derive its exact predicate for that operation rather
+than pasting it. Third: a destructive action reachable from several places (a swipe, a list menu, a
+detail menu) must route through ONE coordinator, or the "make it undoable" wiring (register with the
+UndoManager, show the affordance, arm the purge timer) is duplicated and one site drifts - here a
+single `@MainActor` controller owned by the composition root serves every entry point, and a delete
+from a pushed detail screen pops back to the list FIRST so the shared affordance is visible where it
+lives. And tie the undo window's timer to the view lifecycle (a `.task(id:)` on a monotonic trigger),
+never a detached `asyncAfter`, so a rapid second delete re-arms it and teardown cancels it - the same
+rule the transient-confirmation chips already follow. Generalizes to any destructive operation that
+should be undoable: move to a quarantine inside the same trust boundary, hand back a restore token,
+funnel all triggers through one seam, and re-derive the path/permission guard for the restore
+direction rather than reusing the delete-direction one.
+
+## A move-to-quarantine delete must be atomic, and its coordinator must clear pending before awaiting (spec 0020, PR review)
+
+Two defects surfaced in review of the undoable delete, both about a multi-step operation observed mid-flight. First, DATA LOSS: `softDelete` moved the `.md` to trash, then the `.m4a`; if the second move threw, the note was already in trash but the function threw WITHOUT returning a token, so the note vanished from the list, had no undo, and the launch sweep destroyed it. A "move several files into quarantine" is only safe if it is all-or-nothing: on any failure, ROLL BACK the moves already done so the note ends up fully in place (throw, no token, still listed) - never half-quarantined-with-no-recovery-handle. Second, a REENTRANCY leak in the coordinator: `delete` read `pending`, then `await feed.purge(previous)`, then cleared `pending` - so a second delete arriving while the first was suspended read the same stale token and both raced to purge it, stranding the loser's trash. The fix is the same shape the sibling `undo()`/`commitWindow()` already used: capture-and-CLEAR the shared in-flight state SYNCHRONOUSLY before the first `await`, so no reentrant call sees it. The general rule for an async coordinator over shared mutable state: never leave a field readable across an await that will act on it - snapshot and null it out first. And keep the two undo channels (the system `UndoManager` stack and the in-app affordance) on ONE stack: route the in-app Undo through `undoManager.undo()` and drop settled actions with `removeAllActions(withTarget:)` on commit, or a later shake re-runs a closure for an already-settled delete. Generalizes to any quarantine-style destructive op (atomic move + rollback) and any async single-flight coordinator (clear-before-await).

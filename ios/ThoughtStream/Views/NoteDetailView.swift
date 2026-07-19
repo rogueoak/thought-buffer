@@ -29,6 +29,10 @@ struct NoteDetailView: View {
     /// composition root discards it (never persists it, or deletes it if it was provisionally saved)
     /// rather than leaving a blank note in the list. Nil for a normal saved note.
     private let onDiscardEmpty: (() -> Void)?
+    /// Called with this note's id when the user taps Delete in the "..." menu (spec 0020), so the
+    /// composition root soft-deletes it through the shared undoable path AND pops back to the list where
+    /// the undo affordance is visible. Nil at bare/preview call sites (no Delete shown).
+    private let onDelete: ((UUID) -> Void)?
     /// Whether this note is a brand-new, not-yet-persisted note opened straight into the editor
     /// (spec 0013). It stays true until the first non-empty commit persists real content; while true,
     /// leaving with no title and no body discards the note via `onDiscardEmpty`.
@@ -52,6 +56,12 @@ struct NoteDetailView: View {
     @State private var titleDraft = ""
     @FocusState private var titleFocused: Bool
 
+    /// Drives the shared "Copied to clipboard" confirmation (spec 0017): `copiedTrigger` is bumped by
+    /// Copy text so the lifecycle-tied `copiedConfirmation` modifier (re)arms its auto-hide, and
+    /// `showCopiedConfirmation` holds the chip's current visibility.
+    @State private var copiedTrigger = 0
+    @State private var showCopiedConfirmation = false
+
     /// Build the detail view. Prefers the ONE shared `NotePlaybackController` (so the phone and
     /// CarPlay drive the same media center and never race); when none is supplied - a preview, a
     /// screenshot build, or a bare call site - it falls back to a private controller over the given
@@ -68,6 +78,7 @@ struct NoteDetailView: View {
         onResume: ((Note) -> Void)? = nil,
         onCommitEdit: ((Note) -> Void)? = nil,
         onDiscardEmpty: (() -> Void)? = nil,
+        onDelete: ((UUID) -> Void)? = nil,
         startInEdit: Bool = false
     ) {
         self.note = note
@@ -76,6 +87,7 @@ struct NoteDetailView: View {
         self.onResume = onResume
         self.onCommitEdit = onCommitEdit
         self.onDiscardEmpty = onDiscardEmpty
+        self.onDelete = onDelete
         _paragraphs = State(initialValue: note.paragraphs)
         _hasCustomTitle = State(initialValue: note.hasCustomTitle)
         _customTitleText = State(initialValue: note.title)
@@ -93,26 +105,30 @@ struct NoteDetailView: View {
 
     var body: some View {
         ZStack {
+            // A background tap while editing the title resigns its focus, which commits it via the
+            // `titleFocused` observer below (feedback 0014): tapping the empty area around the note now
+            // saves the title just like Done. Gated on `isEditingTitle` so it is inert in the normal
+            // read/body-edit states, and `simultaneous` so it never steals a tap from the note text,
+            // its buttons, or the title field itself (those have their own gestures / begin body edit).
             CanopyColor.bg.ignoresSafeArea()
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        if isEditingTitle { titleFocused = false }
+                    },
+                    isEnabled: isEditingTitle
+                )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: CanopySpacing.x4) {
                     titleHeader
 
-                    HStack(spacing: CanopySpacing.x2) {
-                        Image(systemName: "clock")
-                        // Same live-reference fix as the note card (feedback 0011): without a
-                        // TimelineView this label freezes at render and only looked correct because the
-                        // detail page is rebuilt on each navigation - it would go stale if left open.
-                        TimelineView(.periodic(from: .now, by: 60)) { context in
-                            Text(RelativeTime.label(for: note.createdAt, relativeTo: context.date))
-                        }
-                        Text("-")
-                        // Recording duration for a recorded note, else word count (feedback 0010).
-                        Text(currentNote.metaStatLabel)
-                    }
-                    .font(.system(size: CanopyFont.sizeXs))
-                    .foregroundStyle(CanopyColor.textSubtle)
+                    // The metadata line is shared with the list card via `NoteMetaStats`: the duration
+                    // now uses the SAME timer glyph and tight `x1` spacing as the card instead of a dash
+                    // separator (feedback 0015), so the detail header and the card present it identically.
+                    NoteMetaStats(note: currentNote)
+                        .font(.system(size: CanopyFont.sizeXs))
+                        .foregroundStyle(CanopyColor.textSubtle)
 
                     if playback.canPlay {
                         playButton
@@ -141,11 +157,13 @@ struct NoteDetailView: View {
                             }
                         }
                         .contentShape(Rectangle())
-                        // Symmetric to the title gate: the body is only tappable-to-edit when not
-                        // already editing the title, so the two edit modes never overlap.
-                        .onTapGesture { if onCommitEdit != nil, !isEditingTitle { beginEdit() } }
-                        .accessibilityAddTraits(onCommitEdit != nil && !isEditingTitle ? .isButton : [])
-                        .accessibilityHint(onCommitEdit != nil && !isEditingTitle ? "Double tap to edit" : "")
+                        // Tapping the body from the title commits the title FIRST, then begins body
+                        // editing in the SAME tap (feedback 0014): the two edit modes never overlap
+                        // because `beginBodyEditFromTap` folds any in-flight title edit in before it
+                        // opens the body editor, so no second tap is needed.
+                        .onTapGesture { if onCommitEdit != nil { beginBodyEditFromTap() } }
+                        .accessibilityAddTraits(onCommitEdit != nil ? .isButton : [])
+                        .accessibilityHint(onCommitEdit != nil ? "Double tap to edit" : "")
                     }
                 }
                 .padding(CanopySpacing.x5)
@@ -159,6 +177,10 @@ struct NoteDetailView: View {
                 .padding(CanopySpacing.x4)
             }
         }
+        // The transient "Copied to clipboard" confirmation (spec 0017), from the shared, lifecycle-tied
+        // modifier so a rapid double-copy re-arms it and navigation cancels its timer. Pinned near the
+        // bottom so it clears the note text and the toolbar.
+        .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .bottom)
         // Resume sits centered at the bottom of the screen (feedback 0008), clear of the scrolling
         // note body. Hidden while editing text, and only when a call site can reopen a session.
         .safeAreaInset(edge: .bottom) {
@@ -204,6 +226,30 @@ struct NoteDetailView: View {
                         .accessibilityLabel("Settings")
                     }
                 }
+                // The "..." actions menu (spec 0017): Share + Copy text from the ONE shared
+                // `NoteActionsMenu`, on `currentNote` so both reflect any in-view edits already folded
+                // into it. Only shown in the normal (non-editing) state. `onCopied` bumps the trigger
+                // that flashes the shared confirmation chip.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        NoteActionsMenu(note: currentNote, onCopied: { copiedTrigger += 1 }) {
+                            // Delete (spec 0020) via the shared undoable path: the composition root
+                            // soft-deletes and pops back to the list where the undo affordance shows.
+                            // Only when a call site supplied `onDelete` (a bare/preview note has none).
+                            if let onDelete {
+                                Button(role: .destructive) {
+                                    onDelete(note.id)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .tint(CanopyColor.primary)
+                    .accessibilityLabel("Note actions")
+                }
             }
         }
         // A brand-new note (spec 0013) opens with the body editor focused so the user can type at once.
@@ -224,6 +270,15 @@ struct NoteDetailView: View {
         // `isUnsavedNewNote` before it acts, so a following back-navigation cannot persist/pop twice.
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active, isUnsavedNewNote { finalizeUnsavedNote() }
+        }
+        // Tapping out of the title field saves it - no Done required (feedback 0014). The title field
+        // loses focus whenever the user taps elsewhere (the background tap below, or into the body,
+        // which resigns the field). Committing on that focus loss makes "tap away" behave exactly like
+        // Done: `commitTitle` reads the LIVE `titleDraft` (never a stale `paragraphs`-derived value), so
+        // in-flight text is never dropped. Guarded on `isEditingTitle` so `commitTitle`'s own
+        // `titleFocused = false` cannot re-enter, and so losing body focus never triggers a title commit.
+        .onChange(of: titleFocused) { _, focused in
+            if !focused, isEditingTitle { commitTitle() }
         }
     }
 
@@ -320,6 +375,16 @@ struct NoteDetailView: View {
         draft = paragraphs.joined(separator: "\n\n")
         isEditing = true
         editorFocused = true
+    }
+
+    /// Begin body editing from a tap on the body (feedback 0014). If the title was being edited, commit
+    /// it FIRST so its typed text is saved and the two edit modes never overlap, then open the body
+    /// editor - all in the one tap, so no second tap is needed. `commitTitle` reads the live
+    /// `titleDraft` and folds it into `paragraphs`-independent title state, and `beginEdit` seeds the
+    /// body draft from the (unchanged) `paragraphs`, so nothing is lost across the handoff.
+    private func beginBodyEditFromTap() {
+        if isEditingTitle { commitTitle() }
+        beginEdit()
     }
 
     private func beginEditTitle() {

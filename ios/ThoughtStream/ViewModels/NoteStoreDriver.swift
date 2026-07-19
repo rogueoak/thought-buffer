@@ -63,26 +63,60 @@ final class NoteStoreDriver {
         observer?.stop()
     }
 
-    /// Delete a note through the store (which also removes its sibling audio recording), then reload
-    /// the feed so the list reflects the removal. The delete runs on a detached task like the load,
-    /// because the iCloud store coordinates the file removal. A failed delete is SURFACED (not
-    /// swallowed): `deleteFailed` is set so the projection can show a brief, non-blocking message,
-    /// and the reload re-reflects the true on-disk state (the note stays visible).
-    func delete(id: UUID) async {
-        let result: Result<Void, Error> = await Task.detached(priority: .userInitiated) { [store] in
+    /// Soft-delete a note (spec 0020): move its files into the store's trash rather than removing them,
+    /// then reload so the list reflects the removal. Returns a `DeletedNote` token the caller registers
+    /// with the UndoManager and the in-app undo affordance, or nil when the delete failed / the note had
+    /// no file. The delete runs on a detached task like the load, because the iCloud store coordinates
+    /// the file move. A failure is SURFACED (not swallowed): `deleteFailed` is set so the projection can
+    /// show a brief, non-blocking message, and the reload re-reflects the true on-disk state.
+    @discardableResult
+    func delete(id: UUID) async -> DeletedNote? {
+        let result: Result<DeletedNote?, Error> = await Task.detached(priority: .userInitiated) { [store] in
             do {
-                try store.delete(id: id)
-                return .success(())
+                return .success(try store.softDelete(id: id))
             } catch {
                 return .failure(error)
             }
         }.value
-        if case .failure = result {
-            deleteFailed = true
-        } else {
+        let token: DeletedNote?
+        switch result {
+        case let .success(deleted):
             deleteFailed = false
+            token = deleted
+        case .failure:
+            deleteFailed = true
+            token = nil
         }
         await reload()
+        return token
+    }
+
+    /// Restore a soft-deleted note (spec 0020): move its trashed files back (to root if the original
+    /// folder is gone), then reload so it reappears. Runs on a detached task like the delete. A failure
+    /// is swallowed (the reload re-reflects the true state); restore is best-effort undo.
+    func restore(_ token: DeletedNote) async {
+        await Task.detached(priority: .userInitiated) { [store] in
+            _ = try? store.restore(token)
+        }.value
+        await reload()
+    }
+
+    /// Permanently remove a soft-deleted note's trashed files (spec 0020): commit the delete once the
+    /// undo window closes. No reload needed - the note already left the list on delete. Detached because
+    /// the iCloud store coordinates the removal.
+    func purge(_ token: DeletedNote) async {
+        await Task.detached(priority: .userInitiated) { [store] in
+            try? store.purge(token)
+        }.value
+    }
+
+    /// Empty the whole trash (spec 0020): an opportunistic launch-time sweep of any tokens with no
+    /// pending undo (a delete committed before the app was killed, or trash left by a crash). Detached
+    /// because the iCloud store coordinates the removal. No reload - trashed files are not in the list.
+    func purgeAllTrash() async {
+        await Task.detached(priority: .userInitiated) { [store] in
+            try? store.purgeAllTrash()
+        }.value
     }
 
     /// Clear a surfaced delete-failure message once the consumer has shown it.

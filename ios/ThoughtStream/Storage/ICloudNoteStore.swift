@@ -265,6 +265,127 @@ struct ICloudNoteStore: NoteStoring {
         if let thrown { throw thrown }
     }
 
+    // MARK: - Recoverable delete (spec 0020)
+
+    /// The store's trash root: a hidden `.trash/` directory INSIDE the store root, so soft-deleted files
+    /// never leave the tree and are skipped by `loadAll` (which skips hidden files). Each deleted note
+    /// gets its own `<id>/` subdirectory holding its `<id>.md` (and `<id>.m4a`). Every move/delete here
+    /// is coordinated through `NSFileCoordinator` exactly like the rest of this store.
+    private var trashRoot: URL {
+        directory.appendingPathComponent(Self.trashDirectoryName, isDirectory: true)
+    }
+
+    /// The trash subdirectory for one note id: `.trash/<id>/`.
+    private func trashDirectory(for id: UUID) -> URL {
+        trashRoot.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    /// Resolve a folder path to a RESTORE destination at or below the store root, or nil when it
+    /// escapes. Empty path resolves to the root itself (a top-level restore); anything collapsing/
+    /// escaping above the root is rejected so a crafted former-folder path can never place a restored
+    /// file outside the tree. Distinct from `resolvedFolderDirectory` (which rejects the root) because
+    /// restoring a top-level note legitimately targets the root.
+    private func resolvedRestoreDirectory(for path: [String]) -> URL? {
+        let dir = directoryURL(for: path).standardizedFileURL
+        let root = directory.standardizedFileURL
+        guard dir == root || dir.path.hasPrefix(root.path + "/") else { return nil }
+        return dir
+    }
+
+    /// Soft-delete a note: MOVE its `<id>.md` (and sibling `<id>.m4a` if present) into `.trash/<id>/`
+    /// (coordinated), returning a `DeletedNote` token sufficient to `restore`. Returns nil when the note
+    /// has no `.md` to trash. The move only ever lands inside the store root.
+    @discardableResult
+    func softDelete(id: UUID) throws -> DeletedNote? {
+        guard let noteURL = locateFile(id: id) else { return nil }
+        let sourceDir = noteURL.deletingLastPathComponent()
+        let folderPath = NoteStore.relativeFolderPath(of: noteURL, under: directory)
+
+        let trashDir = trashDirectory(for: id)
+        // Clear a stale trash subdir for this id (a re-delete after a crash mid-purge) so the move never
+        // lands on an occupied destination.
+        if coordinatedExists(at: trashDir) { try coordinatedDelete(at: trashDir) }
+        try ensureDirectory(at: trashDir)
+
+        let noteName = noteURL.lastPathComponent
+        let trashedNote = trashDir.appendingPathComponent(noteName, isDirectory: false)
+        try coordinatedMoveIfExists(from: noteURL, to: trashedNote)
+
+        var audioName: String?
+        let audioSibling = sourceDir.appendingPathComponent(
+            "\(id.uuidString).\(Self.audioFileExtension)", isDirectory: false)
+        if coordinatedExists(at: audioSibling) {
+            let name = audioSibling.lastPathComponent
+            do {
+                try coordinatedMoveIfExists(from: audioSibling, to: trashDir.appendingPathComponent(name, isDirectory: false))
+            } catch {
+                // ROLL BACK the note move so a failed audio move never leaves the note half-in-trash with
+                // no token (which would drop it from the list, give it no undo, and let the launch sweep
+                // destroy it). Move the note back so it ends up FULLY in place, then rethrow.
+                try? coordinatedMoveIfExists(from: trashedNote, to: noteURL)
+                throw error
+            }
+            audioName = name
+        }
+
+        return DeletedNote(
+            id: id, formerFolderPath: folderPath, noteFilename: noteName, audioFilename: audioName)
+    }
+
+    /// Restore a soft-deleted note: move its trashed `.md` (and `.m4a`) back to its former folder path
+    /// (coordinated). If that folder no longer exists it lands at ROOT instead (never a failure). Removes
+    /// the now-empty `.trash/<id>/` directory afterward.
+    @discardableResult
+    func restore(_ token: DeletedNote) throws -> RestoredNote {
+        let trashDir = trashDirectory(for: token.id)
+
+        let landedAtRoot: Bool
+        let destinationDir: URL
+        if !token.formerFolderPath.isEmpty,
+           let resolved = resolvedRestoreDirectory(for: token.formerFolderPath),
+           coordinatedExists(at: resolved) {
+            destinationDir = resolved
+            landedAtRoot = false
+        } else {
+            destinationDir = directory
+            landedAtRoot = !token.formerFolderPath.isEmpty
+        }
+        try ensureDirectory(at: destinationDir)
+
+        // The restored filenames are derived from the VALIDATED UUID (`<id>.md` / `<id>.m4a`), not the
+        // token's stored filename, so the destination is structurally un-traversable regardless of the
+        // token's contents - the same id-keyed naming `softDelete`/`purge` use.
+        let noteDestName = "\(token.id.uuidString).md"
+        let audioDestName = "\(token.id.uuidString).\(Self.audioFileExtension)"
+
+        // Move the note file back FIRST so a partial failure never strands audio without its note.
+        let trashedNote = trashDir.appendingPathComponent(token.noteFilename, isDirectory: false)
+        try coordinatedMoveIfExists(
+            from: trashedNote,
+            to: destinationDir.appendingPathComponent(noteDestName, isDirectory: false))
+        if let audioName = token.audioFilename {
+            let trashedAudio = trashDir.appendingPathComponent(audioName, isDirectory: false)
+            try coordinatedMoveIfExists(
+                from: trashedAudio,
+                to: destinationDir.appendingPathComponent(audioDestName, isDirectory: false))
+        }
+
+        if coordinatedExists(at: trashDir) { try? coordinatedDelete(at: trashDir) }
+
+        let restoredPath = landedAtRoot ? [] : token.formerFolderPath
+        return RestoredNote(id: token.id, folderPath: restoredPath, landedAtRoot: landedAtRoot)
+    }
+
+    /// Permanently remove a soft-deleted note's trashed files (coordinated). No-op if already gone.
+    func purge(_ token: DeletedNote) throws {
+        try coordinatedDelete(at: trashDirectory(for: token.id))
+    }
+
+    /// Empty the whole trash directory (a launch-time sweep, coordinated). No-op when the trash is absent.
+    func purgeAllTrash() throws {
+        try coordinatedDelete(at: trashRoot)
+    }
+
     // MARK: - Audio recording (spec 0007)
 
     /// The sibling audio URL for a note id: `<id>.m4a` beside the note's `<id>.md`, wherever it lives.
