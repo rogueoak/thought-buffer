@@ -127,6 +127,21 @@ xcodebuild -project ios/ThoughtStream.xcodeproj -scheme ThoughtStream \
 
 After editing `ios/project.yml` or adding source files, run `xcodegen generate` again.
 
+#### Keep the project in sync automatically (recommended)
+
+Because the `.xcodeproj` is generated and not committed, pulling changes that add new
+source files leaves your local project stale - you get "Cannot find type" errors until
+you regenerate. Run the one-time bootstrap to point git at the versioned hooks in
+`.githooks/` and generate the project:
+
+```
+./scripts/bootstrap.sh
+```
+
+After that, `git pull` and branch switches regenerate `ios/ThoughtStream.xcodeproj`
+automatically (via `post-merge` / `post-checkout` hooks) whenever anything under `ios/`
+changed. You can also regenerate manually anytime with `./scripts/generate-project.sh`.
+
 ### First run: permissions and storage
 
 On the first Record, the app asks for microphone and speech recognition access. Grant both, or

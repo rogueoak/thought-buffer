@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# After a merge/pull, regenerate the Xcode project if anything under ios/ changed
+# (new/removed source files, or project.yml). Keeps the gitignored .xcodeproj in
+# sync so you never hit "Cannot find type" after pulling.
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+
+# Only regenerate when the merge actually touched ios/ (sources or project.yml).
+if git rev-parse --verify -q ORIG_HEAD >/dev/null; then
+  if git diff --quiet ORIG_HEAD HEAD -- ios/ 2>/dev/null; then
+    exit 0
+  fi
+fi
+
+"$root/scripts/generate-project.sh"
