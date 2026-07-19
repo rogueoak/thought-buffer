@@ -1,19 +1,17 @@
 import SwiftUI
 
 /// A single folder row in the Thoughts list (spec 0010), styled to match `NoteCard`: the same
-/// surface, border, radius, and padding, with a folder glyph, the folder name, an item count, and a
-/// trailing chevron (the row navigates into the folder, so a chevron is the right affordance here).
+/// surface, border, radius, and padding, with a folder glyph, the folder name, a descendant-note
+/// count, and a trailing chevron (the row navigates into the folder, so a chevron is the right
+/// affordance here).
 ///
-/// The item count is the number of direct children (notes + subfolders) at this folder, passed in by
-/// the view that already has the projected list for the folder's path - the row stays a pure render.
+/// The count label is an honest recursive descendant-note count (e.g. "3 notes"), computed and
+/// pluralized in `FolderListModel` by the view that already holds the notes - the row stays a pure
+/// render.
 struct FolderRow: View {
     let name: String
-    /// Direct child count (immediate notes + immediate subfolders), for the "3 items" subtitle.
-    let itemCount: Int
-
-    private var itemCountLabel: String {
-        "\(itemCount) " + (itemCount == 1 ? "item" : "items")
-    }
+    /// A pluralized descendant-note count label (e.g. "No notes", "1 note", "3 notes").
+    let countLabel: String
 
     var body: some View {
         HStack(spacing: CanopySpacing.x3) {
@@ -26,7 +24,7 @@ struct FolderRow: View {
                     .font(.system(size: CanopyFont.sizeLg, weight: .semibold))
                     .foregroundStyle(CanopyColor.text)
                     .lineLimit(1)
-                Text(itemCountLabel)
+                Text(countLabel)
                     .font(.system(size: CanopyFont.sizeXs))
                     .foregroundStyle(CanopyColor.textSubtle)
             }

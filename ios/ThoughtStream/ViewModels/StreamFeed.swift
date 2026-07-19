@@ -16,6 +16,10 @@ final class StreamFeed: ObservableObject {
     /// Set when a delete failed, so the view can show a brief, non-blocking message. Mirrors the
     /// driver; cleared via `clearDeleteFailure()` once the view has surfaced it.
     @Published private(set) var deleteFailed = false
+    /// Monotonic counter bumped every time the driver republishes its notes list. Mirrors the driver;
+    /// a view keys a refresh on it to catch republishes that leave the note count unchanged (a rename,
+    /// a move between two existing folders, or an iCloud-synced empty folder).
+    @Published private(set) var reloadGeneration = 0
 
     private let driver: NoteStoreDriver
 
@@ -68,5 +72,6 @@ final class StreamFeed: ObservableObject {
         notes = driver.notes
         didLoad = driver.didLoad
         deleteFailed = driver.deleteFailed
+        reloadGeneration = driver.reloadGeneration
     }
 }

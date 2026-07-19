@@ -58,6 +58,10 @@ enum FolderListModel {
         // shown when the user navigates into the folder that contains them.
         let notesHere = allNotes.filter { $0.folderPath == currentPath }
 
+        // Newest-descendant date for every folder in one pass over the notes (see `newestDates(...)`),
+        // keyed by full path, so we do not rescan the notes once per child folder.
+        let datesByPath = newestDates(in: allNotes)
+
         // A keyed row pairs an item with the SortKey the shared comparator orders by, so folders and
         // notes go through one comparison.
         struct Keyed {
@@ -65,39 +69,94 @@ enum FolderListModel {
             let key: NoteSortOrder.SortKey
         }
 
-        let folderRows: [Keyed] = childFolderNames.map { name in
+        // Partition child folders into non-empty (>=1 descendant note) and empty. Empty folders have no
+        // note to date them; rather than lean on a `.distantPast` sentinel - which sinks them under
+        // `.newest` but floats them under `.oldest` - we hold them out of the interleave entirely and
+        // append them at the bottom, name-ordered, so they are ALWAYS last regardless of sort order.
+        var nonEmptyFolderRows: [Keyed] = []
+        var emptyFolderNames: [String] = []
+        for name in childFolderNames {
             let childPath = currentPath + [name]
-            let date = newestDescendantDate(under: childPath, in: allNotes)
-            // A folder's title is its name and its tie-break is its name too (no id to fall back on),
-            // so two same-named folders (impossible under one parent) still compare deterministically.
-            let key = NoteSortOrder.SortKey(title: name, date: date, tieBreak: name)
-            return Keyed(item: .folder(name: name, path: childPath), key: key)
+            if let date = datesByPath[childPath] {
+                // A folder's title is its name and its tie-break is its name too (no id to fall back
+                // on), so two same-named folders (impossible under one parent) still compare
+                // deterministically.
+                let key = NoteSortOrder.SortKey(title: name, date: date, tieBreak: name)
+                nonEmptyFolderRows.append(Keyed(item: .folder(name: name, path: childPath), key: key))
+            } else {
+                emptyFolderNames.append(name)
+            }
         }
 
         let noteRows: [Keyed] = notesHere.map { note in
             Keyed(item: .note(note), key: NoteSortOrder.sortKey(for: note))
         }
 
-        let combined = folderRows + noteRows
-        return combined
+        let interleaved = (nonEmptyFolderRows + noteRows)
             .sorted { sortOrder.areInIncreasingOrder($0.key, $1.key) }
             .map(\.item)
+
+        // Empty folders last, name-ordered case-insensitively (A-Z), under every sort order.
+        let emptyRows: [FolderListItem] = emptyFolderNames
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { .folder(name: $0, path: currentPath + [$0]) }
+
+        return interleaved + emptyRows
+    }
+
+    /// The number of notes ANYWHERE under `folderPath` (the folder itself and every descendant folder):
+    /// an HONEST descendant-note count for a folder row's subtitle. Counts notes whose `folderPath` has
+    /// `folderPath` as a prefix, so an empty folder - or one holding only empty subfolders - reads 0,
+    /// unlike a subtitle inferred from note paths that would miss empty subfolders.
+    static func descendantNoteCount(of folderPath: [String], in notes: [Note]) -> Int {
+        notes.reduce(into: 0) { count, note in
+            if hasPrefix(note.folderPath, prefix: folderPath) { count += 1 }
+        }
+    }
+
+    /// A user-facing, correctly pluralized label for a descendant-note count: "No notes" / "1 note" /
+    /// "N notes". Kept in the model (not the row) so the pluralization boundaries are unit-testable.
+    static func noteCountLabel(_ count: Int) -> String {
+        switch count {
+        case 0: return "No notes"
+        case 1: return "1 note"
+        default: return "\(count) notes"
+        }
     }
 
     /// The newest `createdAt` of any note ANYWHERE under `folderPath` (the folder itself and every
-    /// descendant folder), or `.distantPast` when the folder holds no notes at all. Computed from the
-    /// flat notes list by checking whether each note's `folderPath` has `folderPath` as a prefix, so an
-    /// empty folder sorts to the far end of a date order rather than jumping to "now".
+    /// descendant folder), or `.distantPast` when the folder holds no notes at all. A convenience over
+    /// `newestDates(in:)` for callers that want a single folder's date.
     static func newestDescendantDate(under folderPath: [String], in allNotes: [Note]) -> Date {
-        var newest = Date.distantPast
-        for note in allNotes where hasPrefix(note.folderPath, prefix: folderPath) {
-            if note.createdAt > newest { newest = note.createdAt }
+        newestDates(in: allNotes)[folderPath] ?? .distantPast
+    }
+
+    /// Newest-descendant `createdAt` for every folder that holds at least one note, keyed by full path,
+    /// computed in ONE pass over the notes: each note updates the max date for every prefix of its
+    /// `folderPath` (each such prefix is an ancestor folder the note is a descendant of). A folder that
+    /// holds no note never appears as a key (its date is absent, not `.distantPast`), so callers can
+    /// tell "empty" from "dated `.distantPast`". Complexity is O(notes x path depth), not O(folders x
+    /// notes).
+    static func newestDates(in allNotes: [Note]) -> [[String]: Date] {
+        var newest: [[String]: Date] = [:]
+        for note in allNotes {
+            // Update every ancestor prefix (folderPath[0..<k] for k in 1...count). The empty prefix
+            // (root) is intentionally skipped: the root is not a folder row.
+            if note.folderPath.isEmpty { continue }
+            for depth in 1...note.folderPath.count {
+                let prefix = Array(note.folderPath.prefix(depth))
+                if let current = newest[prefix] {
+                    if note.createdAt > current { newest[prefix] = note.createdAt }
+                } else {
+                    newest[prefix] = note.createdAt
+                }
+            }
         }
         return newest
     }
 
     /// Whether `path` starts with `prefix` (so a note at `path` lives under the folder `prefix`). A
-    /// path is under itself, so a note directly in the folder counts as a descendant for the date.
+    /// path is under itself, so a note directly in the folder counts as a descendant.
     private static func hasPrefix(_ path: [String], prefix: [String]) -> Bool {
         guard path.count >= prefix.count else { return false }
         return Array(path.prefix(prefix.count)) == prefix

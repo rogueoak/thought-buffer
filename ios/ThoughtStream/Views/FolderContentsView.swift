@@ -117,9 +117,11 @@ struct FolderContentsView: View {
                 }
             )
         }
-        .task(id: feed.notes.count) {
-            // Reload this path's child folders whenever the feed reloads (a folder edit, a save, or an
-            // external iCloud change bumps the notes list). `feed.notes.count` is a cheap change token.
+        .task(id: feed.reloadGeneration) {
+            // Reload this path's child folders whenever the feed republishes (a folder edit, a save, or
+            // an external iCloud change). `reloadGeneration` bumps on EVERY republish, so it catches
+            // changes the note count would miss: a rename, a move between two existing folders, or a
+            // synced-in empty folder.
             await reloadFolders()
         }
     }
@@ -146,7 +148,12 @@ struct FolderContentsView: View {
         Button {
             onOpenFolder(folderPath)
         } label: {
-            FolderRow(name: name, itemCount: childItemCount(of: folderPath))
+            FolderRow(
+                name: name,
+                countLabel: FolderListModel.noteCountLabel(
+                    FolderListModel.descendantNoteCount(of: folderPath, in: feed.notes)
+                )
+            )
         }
         .buttonStyle(.plain)
         .rowInsets()
@@ -310,23 +317,6 @@ struct FolderContentsView: View {
         deleteTarget = nil
         await feed.deleteFolder(at: target)
         await reloadFolders()
-    }
-
-    /// The direct child count of a child folder (immediate notes + immediate subfolders), for its row
-    /// subtitle. Notes are counted from the feed's flat list; subfolders come from a synchronous fold
-    /// over notes' paths (an immediate subfolder is any note one level deeper, plus any known empty
-    /// child folder is not counted here - the count is "items you'll see", which the row still reads
-    /// as an at-a-glance hint rather than a precise inventory).
-    private func childItemCount(of folderPath: [String]) -> Int {
-        let notesDirectlyInside = feed.notes.filter { $0.folderPath == folderPath }.count
-        let subfolderNames = Set(
-            feed.notes.compactMap { note -> String? in
-                guard note.folderPath.count > folderPath.count,
-                      Array(note.folderPath.prefix(folderPath.count)) == folderPath else { return nil }
-                return note.folderPath[folderPath.count]
-            }
-        )
-        return notesDirectlyInside + subfolderNames.count
     }
 }
 

@@ -23,6 +23,11 @@ final class NoteStoreDriver {
     /// brief, non-blocking message. Cleared on the next successful delete or when the consumer
     /// dismisses it. The note stays visible (the reload re-reflects the true on-disk state).
     private(set) var deleteFailed = false
+    /// Monotonic counter bumped EVERY time the notes list is (re)published - on each `reload()` and on
+    /// the observer-driven refresh path. A change token that changes even when the note COUNT does not
+    /// (a rename, a move between two existing folders, or an iCloud-synced empty folder), so a consumer
+    /// that keys a refresh on it catches every republish, not just count changes.
+    private(set) var reloadGeneration = 0
 
     /// Called after any state change (a completed reload) so a projection can republish. Set by the
     /// owner; fires on the main actor.
@@ -148,6 +153,9 @@ final class NoteStoreDriver {
         }.value
         notes = loaded
         didLoad = true
+        // Bump on every republish so a count-insensitive change (rename, move between existing
+        // folders, synced-in empty folder) still advances the token the view refreshes on.
+        reloadGeneration &+= 1
         onStateChange?()
     }
 }
