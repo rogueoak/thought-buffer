@@ -595,8 +595,9 @@ by their whole text, not just the title.
   case-insensitive AND diacritic-insensitive, substring (not title-only). Search is GLOBAL across the
   whole folder tree, shown as a flat result list; tapping a result opens that thought, and clearing the
   field restores the normal folder view. It reuses the thoughts the store already loads (no separate
-  index). Searching from the thought-detail bar performs the same global search and routes to the results,
-  so search is reachable from anywhere. The match logic is the pure, unit-tested `ThoughtSearch`.
+  index). The match logic is the pure, unit-tested `ThoughtSearch`. (Superseded by spec 0025: on the
+  thought-detail screen the search field now performs IN-THOUGHT find, not global routing - see below. The
+  list / folder screens stay GLOBAL.)
 - **Empty state.** A list or folder with no thoughts shows a centered call to action instead of an empty
   list: the RECORD button in the middle WITH its text label and a NEW-THOUGHT button directly below it
   (the one place these keep labels). A non-empty store filtered to zero matches shows a "no matches"
@@ -678,3 +679,28 @@ device / a paired simulator (the watch simulator has no mic and WatchConnectivit
 pure cores - the wire codecs, the file-transcription mapping, the recent-thoughts projection, and the
 ingest/audio-only-fallback logic - are proven by unit tests. Complications and Siri on the watch are out
 (a possible follow-up).
+
+## In-thought find (spec 0025)
+
+Searching WITHIN a thought finds the text, seeks to it, highlights it, and skips between matches -
+contextual search that supersedes spec 0021's "the detail search field routes to the global results".
+
+- **Contextual search field.** On a thought's detail screen the bottom-bar search field now finds within
+  THAT thought, not the whole store. On the list / folder screens the field stays the GLOBAL finder from
+  spec 0021, unchanged. (In the iPad split view the detail column has no field of its own - it defers to
+  the always-visible lifted GLOBAL bar, so there are never two competing search surfaces.)
+- **Seek + highlight.** Typing highlights every match in the thought's title and body (a Canopy highlight
+  background), with the CURRENT match emphasized more strongly (a stronger background, bold), and scrolls
+  the current match into view. Matching is case- and diacritic-insensitive substring, the same folding the
+  global search uses.
+- **Skip between matches.** Previous / next chevrons and an "N of M" count sit beside the field while a
+  find is active. Next past the last match WRAPS to the first, previous before the first wraps to the last.
+  Clearing the query removes all highlights and the prev/next/count affordance.
+- **Find and edit are mutually exclusive.** Tapping the title or body to edit clears the find (no
+  highlights or find bar under the editor); the bottom bar is hidden entirely while editing. Find state
+  resets when the thought is left.
+- **Pure, tested core.** The match locations (region = title or paragraph index, plus the character range),
+  their ordering, next/previous navigation (wrapping), the "N of M" count, and the match -> scroll-anchor
+  mapping are the pure, unit-tested `ThoughtFind` + `ThoughtFindNavigator` - the per-thought counterpart to
+  `ThoughtSearch`. The AttributedString highlight rendering and the actual scroll-into-view are
+  device-verifiable.

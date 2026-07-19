@@ -147,23 +147,6 @@ struct StreamListView: View {
         thought.hasAudio || settingsStore.audioRetention.recordsAudio
     }
 
-    /// Route a search started on the thought-detail page back to the list results (spec 0021): land on the
-    /// ROOT folder screen showing the SAME flat global results the folder screens do (search is global). In
-    /// the COMPACT stack this pops the whole stack; in the SPLIT view it points the content column at the
-    /// root and closes the detail column, so the shared results replace the detail. Only the compact
-    /// thought-detail bar carries its own search field - the split detail column defers to the always-visible
-    /// lifted bar (spec 0022) - so this is reached from compact today, and stays correct for both.
-    private func routeSearch(_ query: String) {
-        switch StreamContainer.decide(horizontalSizeClass: horizontalSizeClass) {
-        case .stack:
-            path = []
-        case .split:
-            selectSidebarFolder([])
-            selectedRoute = nil
-        }
-        searchQuery = query
-    }
-
     /// Start a new dictation session filed into `folderPath` (feedback: the record action is contextual):
     /// capture the folder the user is browsing NOW so the dictation cover - presented at the root - files
     /// the resulting thought there, then request the session through the shared route (the same seam
@@ -529,12 +512,13 @@ struct StreamListView: View {
         onPopThought: @escaping () -> Void,
         onPopNewThought: @escaping () -> Void
     ) -> some View {
-        // Whether THIS detail carries its own search field (spec 0022): the COMPACT stack does (its
-        // one-screen-at-a-time bottom bar is the only search surface on the thought page). The SPLIT detail
-        // column does NOT - the lifted bottom bar is always visible above all columns, so a second search
-        // field would be the two-competing-fields bug. Passing nil `onSearch` drops the detail search field
-        // via the pure `ThoughtDetailBottomBar` decision while keeping the resume icon.
-        let onSearch: ((String) -> Void)? = showsDetailSearch ? { query in routeSearch(query) } : nil
+        // Whether THIS detail carries its own search field, which now performs IN-THOUGHT find (spec 0025,
+        // superseding spec 0021's global routing): the COMPACT stack does (its one-screen-at-a-time bottom
+        // bar is the find surface on the thought page). The SPLIT detail column does NOT - the lifted bottom
+        // bar is always visible above all columns and performs the GLOBAL search, so a second field on the
+        // detail would be the two-competing-fields bug. `enablesFind: false` drops the detail field via the
+        // pure `ThoughtDetailBottomBar` decision while keeping the resume icon.
+        let enablesFind = showsDetailSearch
         switch route {
         case let .thought(thought):
             ThoughtDetailView(
@@ -556,8 +540,9 @@ struct StreamListView: View {
                     onPopThought()
                     Task { await deletion.delete(id: id) }
                 },
-                // Search from the thought page routes to the SAME global results the list shows (spec 0021).
-                onSearch: onSearch,
+                // Search from the thought page performs IN-THOUGHT find (spec 0025): seek + highlight + skip
+                // within THIS thought, not the global list search.
+                enablesFind: enablesFind,
                 resumeApplies: resumeApplies(for: thought)
             )
         case let .newThought(thought):
@@ -582,7 +567,7 @@ struct StreamListView: View {
                     }
                     onPopNewThought()
                 },
-                onSearch: onSearch,
+                enablesFind: enablesFind,
                 startInEdit: true
             )
         case .folder:

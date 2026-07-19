@@ -53,7 +53,7 @@ enum FolderScreenState: Equatable {
 struct ThoughtDetailBottomBar: Equatable {
     /// Whether to show the bar at all. False while editing (the Done flow owns the screen).
     let isVisible: Bool
-    /// Whether the search field is shown (a call site that can route a search).
+    /// Whether the search field is shown (a call site that enables in-thought find, spec 0025).
     let showsSearch: Bool
     /// Whether the resume icon is shown (a call site that can reopen a session, resuming applies per the
     /// audio-retention setting, and the thought is not a still-empty brand-new draft).
@@ -61,7 +61,7 @@ struct ThoughtDetailBottomBar: Equatable {
 
     /// Decide what the thought-detail bottom bar shows.
     ///
-    /// - `canSearch`: a call site supplied `onSearch` (else no field).
+    /// - `canSearch`: the call site enables the in-thought find field (else no field, spec 0025).
     /// - `canResume`: a call site supplied `onResume` (else no resume icon).
     /// - `resumeApplies`: the audio-retention setting makes resuming meaningful for this thought.
     /// - `isEditing`: the title OR body editor is active - the bar is hidden entirely while true.

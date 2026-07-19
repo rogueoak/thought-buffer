@@ -70,6 +70,23 @@ How the system is built and why.
   via `.folding(options: [.caseInsensitive, .diacriticInsensitive])`); `results(in:query:)` returns the
   flat, order-preserving GLOBAL list across all folders; `isActive(_:)` gates results-vs-normal on a
   non-whitespace query. No SwiftUI import - the folder and thought-detail views are thin callers.
+- `Models/` - `ThoughtFind` + `ThoughtFindNavigator` (spec 0025) are the pure, unit-testable IN-THOUGHT
+  find - the per-thought counterpart to `ThoughtSearch` (which decides WHICH thoughts match, globally).
+  `ThoughtFind.matches(title:paragraphs:query:)` returns the ordered `Match` locations within ONE thought
+  (a `Region` = `.title` or `.paragraph(Int)`, plus the character `Range<String.Index>` into that region's
+  ORIGINAL text), reusing `ThoughtSearch`'s case- and diacritic-insensitive folding but folding PER
+  CHARACTER so each range maps back to the original string (a length-changing fold would misplace the
+  highlight); an empty/whitespace query yields no matches, matches within a region are left-to-right and
+  non-overlapping, and the order is title-then-paragraphs-in-order. `ThoughtFindNavigator` holds the
+  current-match index (starts on the first match), steps next/previous WRAPPING, and formats the "N of M"
+  `countLabel`; `Region.scrollID` is the stable `ScrollViewReader` anchor. `ThoughtDetailView` is a thin
+  caller: its bottom-bar search field drives this find (superseding spec 0021's "detail search routes to
+  the global results"; the list / folder screens stay GLOBAL), mapping a match to an AttributedString
+  highlight (Canopy `warning` background, the CURRENT match emphasized bold + `warningForeground`) and
+  scrolling the current match's region into view. Find and edit are mutually exclusive (entering an editor
+  clears the find; the bar hides while editing), and find state resets when the thought is left (the query
+  is local `@State`). The AttributedString rendering and the scroll are device-verified; the
+  match/nav/count/anchor logic is unit-tested (`ThoughtFindTests`).
 - `Models/` - `Thought` (id, title, paragraphs, createdAt, derived snippet + paragraph count) with
   Markdown (de)serialization, plus `MockThoughts` (sample data, used only by previews now). The
   value type stays small and tolerant of unknown frontmatter keys so later fields do not break
@@ -551,8 +568,14 @@ verified manually, not in tests. Plus the full-text search + bottom-bar redesign
 `ThoughtSearch` (title match, body-paragraph match, substring, case- and diacritic-insensitivity, no-match,
 empty/whitespace query returns all, GLOBAL multi-folder results in preserved order) and `FolderScreenState`
 (empty-store-regardless-of-search, normal, results, no-matches selection, plus search-field visibility).
-The bottom-bar/now-playing/undo composition, the live search field, the empty-state CTA, and the
-thought-page search routing are UI-only and verified on device. Plus the feedback-0018 fixes:
+The bottom-bar/now-playing/undo composition, the live search field, and the empty-state CTA are UI-only and
+verified on device. Plus the in-thought find (spec 0025): `ThoughtFindTests` cover `ThoughtFind` (title
+match, body-paragraph match, ordering title-then-paragraphs-then-left-to-right, case/diacritic
+insensitivity with the highlighted range covering the ORIGINAL accented text, substring, no-match, empty/
+whitespace query, outer-whitespace trim) and `ThoughtFindNavigator` (starts on the first match, next/
+previous walk + WRAP, "N of M" count, empty-list no-current/empty-count/no-op nav, and the region ->
+scroll-anchor id mapping). The AttributedString highlight rendering and the scroll-into-view are UI-only
+and verified on device. Plus the feedback-0018 fixes:
 `FolderRenameDriverTests` (rename through `StreamFeed` renames on disk, moves thoughts, returns the name,
 republishes; conflict + invalid-name rejection), the injected-UndoManager registration
 (`ThoughtDeletionControllerTests` - a delete registers "Undo Delete" on the injected manager; the shake
