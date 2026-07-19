@@ -5,10 +5,11 @@ import Foundation
 /// older note can still have a single sentence split across paragraphs. `reflow` merges the obvious
 /// continuation cases and nothing else.
 ///
-/// It is applied only when the refine setting is on AND a note is saved after an EDIT (see
-/// `NoteDetailView.commitEdit`), never on load - so an untouched old note is not silently rewritten
-/// until the user edits it. Kept pure (a `[String] -> [String]` on paragraphs) so the merge rule is
-/// unit-tested without the view.
+/// It is applied only when the refine setting is on AND a note is saved after an EDIT (wired at the
+/// composition root in `StreamListView.refined(_:)` on the `onCommitEdit` save path; `NoteDetailView`
+/// only emits the intent and stays presentational), never on load - so an untouched old note is not
+/// silently rewritten until the user edits it. Kept pure (a `[String] -> [String]` on paragraphs) so
+/// the merge rule is unit-tested without the view.
 enum TranscriptCleanup {
     /// Merge obvious continuation lines: a paragraph that does NOT end in terminal punctuation, followed
     /// by a paragraph that BEGINS with a lowercase letter, is joined with a single space. Conservative:

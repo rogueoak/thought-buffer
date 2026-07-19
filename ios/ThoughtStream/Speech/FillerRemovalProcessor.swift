@@ -85,18 +85,27 @@ struct FillerRemovalProcessor: TextProcessor {
     static func tidy(_ text: String, recapitalizeLeading: Bool) -> String {
         var s = text
 
-        // Drop a space that now sits directly before punctuation ("So , yeah" -> "So, yeah").
+        // Collapse any run of horizontal whitespace to a single space FIRST (leave newlines alone so a
+        // deliberate paragraph break survives). Doing this before the punctuation passes below keeps
+        // those patterns matching a bounded single space rather than an unbounded `\s+` run - a long
+        // whitespace run through `\s+([,.;:!?])` backtracks quadratically (security review), and there
+        // is nothing to gain from letting it.
         s = s.replacingOccurrences(
-            of: "\\s+([,.;:!?])", with: "$1", options: .regularExpression
+            of: "[ \\t]+", with: " ", options: .regularExpression
+        )
+        // Drop the (now single) space that sits directly before punctuation ("So , yeah" -> "So, yeah").
+        s = s.replacingOccurrences(
+            of: " ([,.;:!?])", with: "$1", options: .regularExpression
         )
         // Collapse a run of duplicated separators a removal produced (", ," -> ",") into the first.
         s = s.replacingOccurrences(
-            of: "([,;:])(\\s*[,;:])+", with: "$1", options: .regularExpression
+            of: "([,;:])( ?[,;:])+", with: "$1", options: .regularExpression
         )
-        // Collapse any run of horizontal whitespace to a single space (leave newlines alone so a
-        // deliberate paragraph break survives).
+        // A comma/semicolon/colon left ABUTTING a terminal mark ("So, um. yeah" -> "So,. yeah")
+        // collapses to just the terminal mark ("So. yeah"). The `[,;:]` collapse above misses this
+        // because a terminal mark is not in that class.
         s = s.replacingOccurrences(
-            of: "[ \\t]+", with: " ", options: .regularExpression
+            of: "[,;:]+([.!?])", with: "$1", options: .regularExpression
         )
         // Drop leading punctuation/space a stripped leading filler left ("  , the plan" -> "the plan").
         s = s.replacingOccurrences(
@@ -113,8 +122,14 @@ struct FillerRemovalProcessor: TextProcessor {
     /// removed ("um the plan" -> "the plan" -> "The plan") reads as a proper sentence again. Only the
     /// FIRST letter is touched; the rest of the casing (including proper nouns downstream) is left as
     /// the user said it.
+    ///
+    /// A promoted first WORD that already carries an interior capital ("iPhone", "eBay", "iOS") is left
+    /// untouched: re-casing it ("IPhone") would corrupt an intentionally-cased brand, exactly the kind
+    /// of silent content change the conservative posture avoids. Only an all-lowercase lead is fixed.
     private static func capitalizeLeading(_ text: String) -> String {
         guard let first = text.firstIndex(where: { $0.isLetter }) else { return text }
+        let word = text[first...].prefix { !$0.isWhitespace }
+        guard !word.dropFirst().contains(where: { $0.isUppercase }) else { return text }
         let upper = text[first].uppercased()
         return text.replacingCharacters(in: first...first, with: upper)
     }

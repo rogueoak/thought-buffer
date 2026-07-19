@@ -91,6 +91,22 @@ final class FillerRemovalProcessorTests: XCTestCase {
         XCTAssertEqual(text("first, um, um, second"), "first, second")
     }
 
+    func testCollapsesSeparatorAbuttingTerminalMark() {
+        // A filler between a comma and a terminal period must not leave a ",." artifact (engineer
+        // review): "So, um. yeah" -> "So. yeah", not "So,. yeah".
+        XCTAssertEqual(text("So, um. yeah"), "So. yeah")
+    }
+
+    // MARK: - Leading recapitalization does not corrupt an intentionally-cased brand
+
+    func testLeadingRecapitalizationLeavesBrandCasingAlone() {
+        // A promoted brand word ("iPhone") keeps its interior capital rather than becoming "IPhone".
+        XCTAssertEqual(text("um iPhone stuff"), "iPhone stuff")
+        XCTAssertEqual(text("uh eBay listing"), "eBay listing")
+        // An ordinary all-lowercase lead is still fixed.
+        XCTAssertEqual(text("um the plan"), "The plan")
+    }
+
     // MARK: - Passthrough when nothing to remove
 
     func testLeavesCleanTextUnchanged() {
