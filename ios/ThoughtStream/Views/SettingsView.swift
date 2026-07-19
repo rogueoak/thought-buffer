@@ -26,6 +26,8 @@ struct SettingsView: View {
     @State private var autoDeleteDays: Int
     /// The chosen lock-screen title mode (note title vs a fixed generic label).
     @State private var lockScreenTitle: LockScreenTitle
+    /// Whether transcript refinement is on (spec 0016): filler removal live, reflow on edit-save.
+    @State private var refineTranscript: Bool
 
     init(settings: SettingsStoring, storeKind: NoteStoreKind = .local) {
         self.settings = settings
@@ -36,6 +38,7 @@ struct SettingsView: View {
         _retentionMode = State(initialValue: RetentionMode(retention))
         _autoDeleteDays = State(initialValue: retention.autoDeleteDays ?? SettingsView.defaultAutoDeleteDays)
         _lockScreenTitle = State(initialValue: settings.lockScreenTitle)
+        _refineTranscript = State(initialValue: settings.refineTranscript)
     }
 
     var body: some View {
@@ -45,6 +48,7 @@ struct SettingsView: View {
 
                 List {
                     assistantSection
+                    refineSection
                     overridesSection
                     recordingSection
                     lockScreenSection
@@ -96,6 +100,27 @@ struct SettingsView: View {
     /// depending on any concrete store.
     private var effectiveControlPhrase: String {
         ControlPhrase.validated(controlPhrase)
+    }
+
+    // MARK: - Refine transcript (spec 0016)
+
+    private var refineSection: some View {
+        Section {
+            Toggle("Refine transcript", isOn: $refineTranscript)
+                .foregroundStyle(CanopyColor.text)
+                .tint(CanopyColor.primary)
+                .onChange(of: refineTranscript) { _, newValue in
+                    settings.refineTranscript = newValue
+                }
+        } header: {
+            Text("Transcript")
+                .foregroundStyle(CanopyColor.textMuted)
+        } footer: {
+            Text("Removes filler words (\"um\", \"uh\") and tidies sentences when you save an edit. "
+                + "Your audio is never changed. Changes apply to your next session.")
+                .font(.system(size: CanopyFont.sizeXs))
+                .foregroundStyle(CanopyColor.textSubtle)
+        }
     }
 
     // MARK: - Spelling overrides

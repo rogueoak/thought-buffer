@@ -132,6 +132,7 @@ private final class ScreenshotSettings: SettingsStoring {
     var audioRetention: AudioRetention = .keep
     var lockScreenTitle: LockScreenTitle = .noteTitle
     var noteSortOrder: NoteSortOrder = .newest
+    var refineTranscript: Bool = true
 }
 
 /// Sample notes for screenshot mode.

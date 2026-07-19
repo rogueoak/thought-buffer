@@ -32,6 +32,34 @@ final class MiraCommandParserTests: XCTestCase {
         assertCommand("Mira, please remove the last sentence.", preText: "", .removeLastSentence)
     }
 
+    // MARK: - "delete the last line" / "scratch that" reuse removeLastSentence (spec 0016)
+
+    func testDeleteLastLineFiresRemoveLastSentence() {
+        assertCommand("Mira delete the last line", preText: "", .removeLastSentence)
+        assertCommand("Mira delete last line", preText: "", .removeLastSentence)
+        assertCommand("Mira remove last line", preText: "", .removeLastSentence)
+        assertCommand("mira, please delete the last line.", preText: "", .removeLastSentence)
+    }
+
+    func testScratchThatFiresRemoveLastSentence() {
+        assertCommand("Mira scratch that", preText: "", .removeLastSentence)
+        assertCommand("mira, scratch that.", preText: "", .removeLastSentence)
+        // "scratch" reduces the same way once trailing/inner filler drops "that".
+        assertCommand("Mira scratch", preText: "", .removeLastSentence)
+    }
+
+    func testRealClauseAfterLineDoesNotMisfire() {
+        // A real clause following the noun is not filler, so it does not match a known command and is
+        // dropped as an unrecognized command (never mis-fires removeLastSentence, never transcribed).
+        XCTAssertEqual(
+            parser.parse("Mira delete the last line of the poem"),
+            .split(preText: "", command: .unrecognizedCommand)
+        )
+        // Plain dictation containing "line" or "scratch" with no control word commits as text.
+        XCTAssertEqual(parser.parse("Draw a line under the total."), .text)
+        XCTAssertEqual(parser.parse("The cat left a scratch on the door."), .text)
+    }
+
     // MARK: - Remove last paragraph
 
     func testRemoveLastParagraph() {

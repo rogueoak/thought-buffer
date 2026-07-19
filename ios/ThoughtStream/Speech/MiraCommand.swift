@@ -39,7 +39,7 @@ extension MiraCommand {
     /// A one-line description of what the command does, for the cheat sheet.
     var cheatSheetDetail: String {
         switch self {
-        case .removeLastSentence: return "Delete the last sentence you spoke."
+        case .removeLastSentence: return "Delete the last sentence you spoke. Also \"delete the last line\" or \"scratch that\"."
         case .removeLastParagraph: return "Delete the whole last paragraph."
         case .newNote: return "Save this note and start a fresh one."
         case .readThatBack: return "Read your last paragraph aloud."

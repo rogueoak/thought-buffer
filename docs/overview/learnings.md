@@ -495,3 +495,20 @@ on the constant itself and record it as a learning, so a later change to either 
 reconsider the merge rather than silently break the mapping. Generalizes to any pair of thresholds
 where one governs "what we combine" and the other "what we remove", and the combine is only reversible
 while the remove never reaches inside a combined unit.
+
+## Gate a cosmetic transform on the condition that justifies it, not on every pass (spec 0016)
+
+`FillerRemovalProcessor` was to "re-capitalize a sentence whose leading filler was removed", but the
+first implementation capitalized the leading letter of EVERY segment it processed - including ones with
+no filler removed at all. On the happy path (a filler-only or filler-led segment) it looked correct;
+the over-reach only showed when a clean segment with a deliberately lowercase lead ("second thought", a
+grouped continuation) flowed through and got silently title-cased to "Second thought". The tell: a
+cleanup step whose JUSTIFICATION is a specific event (a leading token was stripped) applied
+UNCONDITIONALLY on every input, so it mutated inputs the event never happened to. The fix threads the
+condition (`removedLeadingFiller`) into the tidy step and only capitalizes when it holds. Two supports
+made the miss cheap to catch: the transform is a pure function with a boolean gate that is unit-tested
+both ways, and a view-model test drove a REAL grouped continuation through it (not just isolated filler
+strings), which is exactly the input that exposed the over-reach. Generalizes to any "clean up the mess
+X left behind" step - re-capitalization, re-spacing, re-punctuation, trimming - which must fire only
+when X actually happened on this input, or it becomes a silent content change on the inputs where it did
+not; and test it against a realistic no-op input, not only the input that triggers it.

@@ -410,6 +410,38 @@ folder of them - with one gesture, and see what is playing without leaving the l
   shared controller and the same single system Now Playing item (spec 0008) - a queue only changes
   which note is current, never opening a second player or a second Now Playing writer.
 
+## Transcript refinement (spec 0016)
+
+Spoken notes carry disfluencies and the recognizer splits sentences on short pauses. Refinement makes
+the saved text read like written notes without changing what you said in substance, and adds a
+hands-free way to drop the last thing said. It is on by default (a Settings toggle turns it off) and is
+NON-DESTRUCTIVE to audio - only the transcript text is refined; playback still plays the original
+recording.
+
+- **Filler-word removal (live).** A conservative, whole-token, case-insensitive `FillerRemovalProcessor`
+  strips standalone hesitations - `um, umm, uh, uhh, erm, hmm, mm, mmm, er, ah, uh-huh` - from committed
+  dictation, tidies the spacing / dangling punctuation left behind, and re-capitalizes a sentence whose
+  leading filler was removed ("um so, uh, the plan" -> "So, the plan"). It NEVER touches a filler that is
+  part of a real word ("I am hungry", "a hummingbird" are untouched), and deliberately EXCLUDES risky,
+  often-meaningful words ("like", "so", "you know", "yeah", "right") because a false positive there
+  silently changes meaning - worse than leaving a filler in. A segment that was nothing but fillers is
+  dropped (no empty paragraph, and the pause-based paragraph grouper's anchor is not advanced, so it
+  cannot shift the next paragraph boundary). The stage runs AFTER the Mira command split and spelling
+  overrides, so it only ever touches dictation text, never a command.
+- **"Delete the last line" and "scratch that" commands.** After the control word, "delete/remove the
+  last line" and "scratch that" both reuse the existing remove-last-sentence action (a spoken "line"
+  maps to the last thing said); "delete the last paragraph" still drops a whole block. The cheat sheet
+  lists the new phrasings.
+- **Sentence-merge cleanup on edit.** A pure `TranscriptCleanup.reflow` merges obvious continuation
+  lines in edited or imported text - a paragraph with no terminal punctuation followed by one that
+  begins lowercase is joined with a space. It never merges across a deliberate break and never splits.
+  It runs only when refine is on AND a note is saved after an edit, so an untouched old note is never
+  silently rewritten.
+- **Settings.** A "Refine transcript" toggle (default on) persists in `UserDefaults` and gates both the
+  filler stage (built into the per-session text processor, so it takes effect next session) and the
+  edit-save reflow. When off, text is committed verbatim (the pre-0016 behavior). The subtitle notes
+  that audio is never changed. All refinement is local, deterministic, and rule-based - no cloud / LLM.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires

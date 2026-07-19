@@ -33,6 +33,14 @@ protocol SettingsStoring: AnyObject {
     /// live; the choice is persisted globally so it survives a launch. Persisted as a small string
     /// tag so an unknown value falls back to `.newest`.
     var noteSortOrder: NoteSortOrder { get set }
+
+    /// Whether to refine the transcript (spec 0016): remove filler words live during dictation, and
+    /// reflow continuation lines when an edited note is saved. Defaults to `true`. It NEVER changes the
+    /// recorded audio - only the transcript text. When off, dictation commits verbatim (the pre-0016
+    /// behavior) and no reflow runs on save. The filler stage is built into the per-session text
+    /// processor from this value, so a change takes effect on the next dictation session, like the
+    /// control phrase.
+    var refineTranscript: Bool { get set }
 }
 
 /// A `UserDefaults`-backed `SettingsStoring`. Persists the control phrase as a string and the
@@ -45,6 +53,7 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         static let audioRetention = "settings.audioRetention"
         static let lockScreenTitle = "settings.lockScreenTitle"
         static let noteSortOrder = "settings.noteSortOrder"
+        static let refineTranscript = "settings.refineTranscript"
     }
 
     /// Bounds on the persisted overrides so a stuck field or a paste cannot grow `UserDefaults`
@@ -115,6 +124,17 @@ final class UserDefaultsSettingsStore: SettingsStoring {
             return NoteSortOrder(tag: tag)
         }
         set { defaults.set(newValue.storageTag, forKey: Key.noteSortOrder) }
+    }
+
+    var refineTranscript: Bool {
+        // Defaults to `true`. `bool(forKey:)` returns false for a MISSING key, which would flip the
+        // default the wrong way on a fresh install, so presence is checked explicitly: an absent key
+        // reads as the `true` default, and only an explicitly stored value overrides it.
+        get {
+            guard defaults.object(forKey: Key.refineTranscript) != nil else { return true }
+            return defaults.bool(forKey: Key.refineTranscript)
+        }
+        set { defaults.set(newValue, forKey: Key.refineTranscript) }
     }
 
     /// Cap the row count and per-field length so persistence and the per-segment rescan stay
