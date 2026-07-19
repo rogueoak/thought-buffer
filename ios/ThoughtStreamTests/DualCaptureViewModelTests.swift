@@ -155,8 +155,8 @@ final class DualCaptureViewModelTests: XCTestCase {
 
     /// In-session read-back always speaks via TTS, even when the session is recording: the live
     /// `.m4a` is still open for writing (finalized only at Stop), so there is no finalized file to
-    /// play. Recorded-range playback of the actual voice is a SAVED-thought feature (`ThoughtPlaybackModel`,
-    /// covered in `ThoughtPlaybackModelTests`).
+    /// play. Recorded playback of the actual voice is a SAVED-thought feature through the shared
+    /// `ThoughtPlaybackController` (covered in `ThoughtPlaybackControllerTests`).
     func testInSessionReadThatBackSpeaksViaTTSEvenWhenRecording() async throws {
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()

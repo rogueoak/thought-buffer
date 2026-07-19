@@ -1,22 +1,23 @@
 import Foundation
 
-/// The one headless audio playback path for a saved thought's recording (spec 0008).
+/// The one headless audio playback path for a saved thought's recording (spec 0008, extended 0027).
 ///
-/// Both the phone detail view (through `ThoughtPlaybackModel`) and the CarPlay scene drive THIS type, so
-/// there is exactly one place that talks to the `AudioThoughtPlayer` and one writer of
-/// `MPNowPlayingInfoCenter`. It owns:
+/// The bottom player (`BottomPlayer`, spec 0027), the thought detail's "Play recording" button, and the
+/// CarPlay scene all drive THIS type, so there is exactly one place that talks to the `AudioThoughtPlayer`
+/// and one writer of `MPNowPlayingInfoCenter`. It owns:
 ///
 /// - lazy, off-main URL resolution via `AudioURLResolving` (a recording can be swept or synced away
 ///   between navigation and play, and the iCloud presence check can block, so it is resolved at play
 ///   time on a detached task, exactly as spec 0007's model did);
-/// - play / pause / resume / stop / relative-skip over the whole recording via `AudioThoughtPlayer`;
+/// - play / pause / resume / stop / seek / relative-skip over the whole recording via `AudioThoughtPlayer`,
+///   with a live-progress ticker publishing `elapsed` / `duration` for the bottom player (spec 0027);
 /// - the system Now Playing metadata (`NowPlayingInfoWriting`) and remote transport commands
-///   (`RemoteCommandRegistering`), so the lock screen, Control Center, and a CarPlay head unit all
-///   drive the same controller code the in-app buttons do.
+///   (`RemoteCommandRegistering`, including the scrubber), so the lock screen, Control Center, the Dynamic
+///   Island, and a CarPlay head unit all drive the same controller code the in-app buttons do.
 ///
-/// `@MainActor` because it is UI-facing state (the detail button and the CarPlay Now Playing template
+/// `@MainActor` because it is UI-facing state (the bottom player and the CarPlay Now Playing template
 /// both observe it) and the media-center seams are main-actor. An `ObservableObject` so SwiftUI can
-/// bind to `isPlaying`.
+/// bind to `isPlaying` / `elapsed` / `duration`.
 @MainActor
 final class ThoughtPlaybackController: ObservableObject {
     /// True while a recording is playing (not paused, not stopped). The detail button toggles on it.
@@ -69,10 +70,10 @@ final class ThoughtPlaybackController: ObservableObject {
     }
 
     /// The registered transport-change observers, keyed by token. MULTICAST by design: this ONE
-    /// controller is shared across surfaces (the phone `ThoughtPlaybackModel` projection and the CarPlay
-    /// scene both drive and observe it), so more than one headless observer is live at once. A single
-    /// slot would let one surface clobber the other's callback - so each registers/unregisters its own
-    /// entry here and every entry is fanned out on a transport change.
+    /// controller is shared across surfaces (the phone bottom player and the CarPlay scene both drive and
+    /// observe it), so more than one headless observer can be live at once. A single slot would let one
+    /// surface clobber the other's callback - so each registers/unregisters its own entry here and every
+    /// entry is fanned out on a transport change.
     private var transportObservers: [TransportObserverToken: () -> Void] = [:]
     /// Monotonic source for observer tokens, so each registration gets a distinct, non-reused key.
     private var nextObserverToken: UInt64 = 0
@@ -84,8 +85,15 @@ final class ThoughtPlaybackController: ObservableObject {
     /// The user's lock-screen title preference, read at publish time so a Settings toggle applies to
     /// the very next Now Playing update. `.generic` hides a sensitive first line behind a fixed label.
     private let lockScreenTitle: () -> LockScreenTitle
-    /// Relative skip step in seconds, matching the interval advertised to the system.
+    /// Relative skip step in seconds, matching the interval advertised to the system. Exposed read-only
+    /// (`skipStep`) so the bottom player's +/-15 buttons skip the SAME amount as the system / CarPlay skip
+    /// commands - one source of truth across the in-app buttons and the remote commands (spec 0027).
     private let skipInterval: Double
+
+    /// The relative skip step in seconds used by both the in-app player buttons and the system / CarPlay
+    /// skip commands. Read-only so a surface (the bottom player) cannot drift from the controller's own
+    /// skip amount.
+    var skipStep: Double { skipInterval }
 
     /// The in-flight resolve+play, tracked so a rapid re-play cancels the first rather than racing.
     private var pendingPlay: Task<Void, Never>?
@@ -368,7 +376,11 @@ final class ThoughtPlaybackController: ObservableObject {
         nowPlaying.update(NowPlayingInfo(
             title: lockScreenTitle().nowPlayingTitle(for: thought.title),
             duration: thought.recordingDuration,
-            elapsed: player.currentTime,
+            // The published `elapsed` (kept synced by the ticker, seek/skip, and the finish-fill) is the
+            // single source of the position, so Now Playing and the in-app bar never disagree - including
+            // the natural-finish fill to the full duration, which the raw `player.currentTime` (a sample
+            // short) would undo.
+            elapsed: elapsed,
             rate: isPlaying ? 1 : 0
         ))
     }
@@ -380,7 +392,12 @@ final class ThoughtPlaybackController: ObservableObject {
     private func handleFinish() {
         guard !suppressFinish else { return }
         // Only a NATURAL end reaches here - a user stop sets `suppressFinish` (via `clearPlayback`) and
-        // returned above - so this is exactly "the current recording ended on its own".
+        // returned above - so this is exactly "the current recording ended on its own". The ticker stops
+        // a sample short of the end, so pin elapsed to the full duration (and refresh Now Playing) so a
+        // played-to-completion bar visually FILLS before it hides (spec 0027). A queue advance re-seeds
+        // elapsed to 0 in `loadAndPlay`, so this is harmless there and only shows on the last entry.
+        elapsed = duration
+        publishNowPlaying()
         advanceOrFinish()
     }
 

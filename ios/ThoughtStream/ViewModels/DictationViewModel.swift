@@ -1111,8 +1111,9 @@ final class DictationViewModel: ObservableObject {
         // In-session read-back speaks via text-to-speech. The session's recording is a LIVE `.m4a`
         // still open for writing - the writer is finalized only at `stop()`, never on the `pause()`
         // this path uses - so it has no finalized container `AVAudioPlayer` could open. Recorded
-        // playback of the ACTUAL voice happens from a SAVED thought's detail view (`ThoughtPlaybackModel`),
-        // where the file is finalized. `speaker.onFinish` and `audioPlayer.onFinish` share
+        // playback of the ACTUAL voice happens for a SAVED thought through the shared
+        // `ThoughtPlaybackController` (the bottom player), where the file is finalized.
+        // `speaker.onFinish` and `audioPlayer.onFinish` share
         // `readBackDidFinish`, so the resume handshake is identical whichever plays.
         speaker.speak(last)
         return true

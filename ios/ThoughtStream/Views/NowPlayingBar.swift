@@ -122,7 +122,7 @@ struct BottomPlayer: View {
                 systemImage: "gobackward.15",
                 label: "Skip back 15 seconds",
                 color: CanopyColor.primary
-            ) { controller.skip(by: -defaultSkipInterval) }
+            ) { controller.skip(by: -controller.skipStep) }
 
             transportButton(
                 systemImage: controller.isPlaying ? "pause.fill" : "play.fill",
@@ -135,7 +135,7 @@ struct BottomPlayer: View {
                 systemImage: "goforward.15",
                 label: "Skip forward 15 seconds",
                 color: CanopyColor.primary
-            ) { controller.skip(by: defaultSkipInterval) }
+            ) { controller.skip(by: controller.skipStep) }
 
             if controller.hasNext {
                 transportButton(

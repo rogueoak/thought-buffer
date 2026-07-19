@@ -450,6 +450,49 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         XCTAssertEqual(controller.elapsed, 25)
     }
 
+    /// The live-progress ticker samples the player's position into `elapsed` while playing, and stops the
+    /// moment playback is paused - so the bar advances during playback and freezes on pause. Polled with a
+    /// generous try budget since a tick is ~250ms (longer than the default `eventually` window).
+    func testProgressTickerSamplesElapsedWhilePlayingAndStopsOnPause() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        controller.play(thought: recordedThought(length: 120))
+        await settle()
+
+        // The player advances; the ticker must pick the new position up into the published elapsed.
+        player.currentTimeValue = 7
+        await eventually({ controller.elapsed == 7 }, tries: 100)
+        XCTAssertEqual(controller.elapsed, 7, "the ticker samples player.currentTime into elapsed while playing")
+
+        // Pause stops the ticker: a later player advance must NOT move the published elapsed.
+        controller.pause()
+        player.currentTimeValue = 42
+        // Give any lingering ticker a few 250ms intervals to (wrongly) fire; elapsed must stay put.
+        for _ in 0..<4 { await Task.yield(); try? await Task.sleep(nanoseconds: 300_000_000) }
+        XCTAssertEqual(controller.elapsed, 7, "a paused ticker does not keep sampling the player")
+    }
+
+    /// A natural end-of-track fills the bar before teardown: the Now Playing item's elapsed is pinned to
+    /// the full duration on finish (the ticker stops a sample short), so a played-to-completion recording
+    /// shows a completed progress bar on the lock screen / Dynamic Island rather than one frozen just shy
+    /// of the end. (The in-app `elapsed` then resets as the controller tears down and the bar hides.)
+    func testNaturalFinishFillsNowPlayingElapsedToDuration() async {
+        let player = SpyPlayer()
+        let nowPlaying = SpyNowPlaying()
+        let controller = makeController(player: player, nowPlaying: nowPlaying)
+        controller.play(thought: recordedThought(length: 30))
+        await settle()
+
+        // The player ends a sample short of the full length, then finishes on its own.
+        player.currentTimeValue = 29
+        player.finish()
+
+        // The LAST non-nil Now Playing update before the clear pinned elapsed to the full duration.
+        let filled = nowPlaying.updates.compactMap { $0 }.last
+        XCTAssertEqual(filled?.elapsed, 30, "the finish fills the Now Playing bar to the full duration")
+        XCTAssertNil(nowPlaying.last ?? nil, "the item is then cleared as playback tears down")
+    }
+
     /// Stopping clears the published progress so the bar (were it to briefly linger) shows no stale
     /// elapsed/duration.
     func testStopClearsProgress() async {

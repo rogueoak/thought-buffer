@@ -357,10 +357,11 @@ How the system is built and why.
   concatenation described above that joins the new segment onto the original and re-saves with the new
   paragraphs' offset timings (feedback 0022, superseding the pre-0022 text-only append). In-session read-back
   speaks via the `Speaker` (the live recording is not yet finalized); it pauses capture and resumes
-  on `readBackDidFinish`, so the spoken audio never feeds back into recognition. `ThoughtPlaybackModel`
-  drives the detail view's simple play / stop of a SAVED thought's recording via `AudioThoughtPlayer` -
-  where the file is finalized - and hides the affordance (through `ThoughtStoring.audioExists`) when a
-  thought has no readable recording. `ThoughtStoreDriver` (headless, `@MainActor`, no SwiftUI) owns
+  on `readBackDidFinish`, so the spoken audio never feeds back into recognition. Playback of a SAVED
+  thought's recording runs through the shared `ThoughtPlaybackController` and the bottom player (spec 0027,
+  which removed the old detail-view `ThoughtPlaybackModel` projection); the detail's "Play recording"
+  button just starts the thought on that controller, and it is shown only when `thought.hasAudio`.
+  `ThoughtStoreDriver` (headless, `@MainActor`, no SwiftUI) owns
   the thoughts list: it loads through the store on a detached task (the iCloud store's `loadAll()` can
   block on coordinated IO, so it must not run on the main actor) and, on iCloud, wires the
   `UbiquitousThoughtObserving` observer once (`start`/`stop`, `onChange` -> reload) so the list

@@ -190,9 +190,9 @@ Apple's CarPlay **Audio** entitlement.
   the phone shows on the lock screen and in Control Center and keeps playing in the background - a
   real Audio-app trait that needs no entitlement.
 - **One shared playback path.** A single headless `ThoughtPlaybackController` owns the player, the lazy
-  off-main URL resolution, and the Now Playing / remote-command wiring; both the phone detail view
-  (through `ThoughtPlaybackModel`) and the CarPlay scene drive it, so there is one audio path and one
-  writer of `MPNowPlayingInfoCenter`. `AVAudioSession` `.playback` coexists with the record session
+  off-main URL resolution, and the Now Playing / remote-command wiring; the phone surfaces (the bottom
+  player and the thought detail's Play button, spec 0027) and the CarPlay scene all drive it, so there is
+  one audio path and one writer of `MPNowPlayingInfoCenter`. `AVAudioSession` `.playback` coexists with the record session
   used during dictation (dictation deactivates playback before recording, as spec 0007 established).
 - **Entitlement gating.** The CarPlay scene stays dormant without the CarPlay Audio entitlement,
   exactly like the 0005 scaffold: the unsigned Simulator build and the App Store build stay green
