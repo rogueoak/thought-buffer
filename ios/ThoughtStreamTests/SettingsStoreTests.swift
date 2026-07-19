@@ -201,4 +201,33 @@ final class SettingsStoreTests: XCTestCase {
         let store = UserDefaultsSettingsStore(defaults: defaults)
         XCTAssertEqual(store.spellingOverrides, [])
     }
+
+    // MARK: - Note sort order persistence (spec 0010)
+
+    func testNoteSortOrderDefaultsToNewest() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.noteSortOrder, .newest)
+    }
+
+    func testNoteSortOrderPersistsAcrossInstances() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.noteSortOrder = .titleAZ
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(reopened.noteSortOrder, .titleAZ)
+    }
+
+    func testNoteSortOrderUnknownTagFallsBackToDefault() {
+        defaults.set("someFutureOrder", forKey: "settings.noteSortOrder")
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertEqual(store.noteSortOrder, .newest)
+    }
+
+    func testNoteSortOrderRoundTripsEveryCase() {
+        for order in NoteSortOrder.allCases {
+            let store = UserDefaultsSettingsStore(defaults: defaults)
+            store.noteSortOrder = order
+            let reopened = UserDefaultsSettingsStore(defaults: defaults)
+            XCTAssertEqual(reopened.noteSortOrder, order, "\(order) should round-trip")
+        }
+    }
 }

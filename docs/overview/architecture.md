@@ -208,6 +208,18 @@ How the system is built and why.
   SwiftUI. `StreamFeed` (`@MainActor ObservableObject`) is a thin projection over the driver,
   republishing its `notes`/`didLoad` so a view can bind. `NoteStoring: Sendable`, so the detached
   load is sound under strict concurrency.
+  - **Folder navigation model (spec 0010, PR B).** The driver/feed also expose the folder seams -
+    `childFolders(at:)`, `createFolder`/`renameFolder`/`deleteFolder`, and `move(_:to:)` (a re-save with
+    a new `folderPath`) - each on a detached task then a reload, so the whole notes list stays the one
+    source. The list PROJECTION is pure and testable in `FolderListModel` (`@MainActor`): it takes the
+    driver's flat `notes`, the child folder names the store reported at a path, the current path, and the
+    chosen `NoteSortOrder`, and returns an ordered `[FolderListItem]` (`.folder(name:path:)` or
+    `.note`). Notes are filtered to those whose `folderPath` EQUALS the current path; each folder gets a
+    `SortKey` whose date is its newest descendant note (recursively, `.distantPast` when empty) and whose
+    title is its name, so folders and notes interleave through the SAME `NoteSortOrder.areInIncreasingOrder`
+    comparator - no second copy of the ordering. `FolderMoveTargets` is a second pure builder: driven by a
+    `children` closure (`store.folders(at:)`), it flattens the tree pre-order with depth for the
+    move-to-folder picker, so an empty folder (never in any note's `folderPath`) is still offered.
   - **Shared playback + CarPlay browser (spec 0008).** `NotePlaybackController` (`@MainActor
     ObservableObject`) is the ONE audio path: it owns an `AudioNotePlayer`, an `AudioURLResolving`
     (lazy off-main resolution at play time, as 0007's model did), and the Now Playing / remote-command
@@ -218,11 +230,18 @@ How the system is built and why.
     projects `NoteStoreDriver.notes` to only notes with a recording, newest first, each with a
     formatted duration (`recordingDuration` = the tail of the last-ending timing range), and refreshes
     on driver change; its duration formatting is a pure, unit-tested static.
-- `Views/` - SwiftUI screens. `StreamListView` drives a `StreamFeed` from a single `.task` and
-  stays presentational; `DictationView` binds to `DictationViewModel`; `NoteCard`,
+- `Views/` - SwiftUI screens. `StreamListView` is the ROOT of the Thoughts `NavigationStack` whose
+  path is an enum route `StreamRoute { case folder([String]); case note(Note) }`: it owns the shared
+  session/settings/playback wiring and the sort-order state, and renders `FolderContentsView(path: [])`
+  as the root with a `navigationDestination` for both routes. `FolderContentsView` renders the same
+  folder-list screen at ANY path (so a pushed `.folder` recurses into another instance), projecting its
+  rows through `FolderListModel`; it owns the folder-CRUD alerts, the sort menu, swipe/context actions,
+  the `MoveToFolderSheet`, and the empty states. `FolderRow` mirrors `NoteCard`'s surface with a folder
+  glyph, item count, and chevron. `DictationView` binds to `DictationViewModel`; `NoteCard`,
   `NoteDetailView` stay presentational. `SettingsView` edits the injected `SettingsStoring`
   instance directly (control-phrase field with validation hint, add/edit/delete override rows, a
-  read-only storage-status row from `NoteStoreKind`).
+  read-only storage-status row from `NoteStoreKind`). The chosen `NoteSortOrder` persists through
+  `SettingsStoring.noteSortOrder` (a stable string tag; unknown -> `.newest`).
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.
 
@@ -245,7 +264,11 @@ control word changes matching; a normal segment gets overrides), plus the CarPla
 player, `MPNowPlayingInfoCenter` populated via a spy, remote-command handlers calling back into the
 controller via a spy), the `RecordingsListModel` (audio-only filter, newest-first order, duration
 formatting, and driver-change -> list refresh via a stub store + observer), and the CarPlay Start row
-routing through the shared `SessionStarter`.
+routing through the shared `SessionStarter`, plus the folder UI models (spec 0010, PR B):
+`FolderListModel` (filter-by-path, folder/note interleave for each sort order, folder date = newest
+descendant recursively, empty-folder-to-the-end), `FolderMoveTargets` (pre-order + depth flatten,
+empty folder still offered, sibling A-Z, subtree exclusion), and `noteSortOrder` persistence /
+unknown-tag fallback in `UserDefaultsSettingsStore`.
 The generated scheme runs them.
 
 ## Design tokens

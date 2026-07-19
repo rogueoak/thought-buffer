@@ -85,6 +85,61 @@ final class NoteStoreDriver {
         deleteFailed = false
     }
 
+    // MARK: - Folders (spec 0010)
+
+    /// The child folder names directly under `path` (empty `path` = the top level), sorted A-Z by the
+    /// store. Read off a detached task like the load, because the iCloud store coordinates the
+    /// directory walk. Used by the view to build the current folder screen's rows.
+    func childFolders(at path: [String]) async -> [String] {
+        await Task.detached(priority: .userInitiated) { [store] in
+            store.folders(at: path)
+        }.value
+    }
+
+    /// Create a folder under `path`, returning the sanitized name used, or nil when the name sanitizes
+    /// to empty (the caller shows a "name rejected" message). Reloads so a new empty folder that holds
+    /// notes-to-be is reflected; a fresh empty folder itself is picked up by the view's own
+    /// `childFolders(at:)` refresh. A throw surfaces as `deleteFailed` is NOT reused here - folder
+    /// failures are rare and the caller can re-try; we return the result so the caller decides.
+    @discardableResult
+    func createFolder(named name: String, at path: [String]) async -> String? {
+        let result = await Task.detached(priority: .userInitiated) { [store] in
+            try? store.createFolder(named: name, at: path)
+        }.value
+        await reload()
+        return result ?? nil
+    }
+
+    /// Rename the folder at `path` to `newName`, returning the sanitized new name, or nil when the name
+    /// sanitizes to empty OR conflicts with an existing sibling (the store returns nil for both, and
+    /// the caller surfaces a conflict/rejected message). Reloads so foldered notes reflect the new
+    /// location.
+    @discardableResult
+    func renameFolder(at path: [String], to newName: String) async -> String? {
+        let result = await Task.detached(priority: .userInitiated) { [store] in
+            try? store.renameFolder(at: path, to: newName)
+        }.value
+        await reload()
+        return result ?? nil
+    }
+
+    /// Delete the folder at `path` and everything inside it (a destructive cascade), then reload.
+    func deleteFolder(at path: [String]) async {
+        await Task.detached(priority: .userInitiated) { [store] in
+            try? store.deleteFolder(at: path)
+        }.value
+        await reload()
+    }
+
+    /// Move a note to `folderPath` by re-saving it there. The store relocates the note's `.md` and its
+    /// sibling `.m4a`, so a recorded note keeps its recording. Reloads so the list reflects the move.
+    func move(_ note: Note, to folderPath: [String]) async {
+        await Task.detached(priority: .userInitiated) { [store] in
+            try? store.save(note.withFolderPath(folderPath))
+        }.value
+        await reload()
+    }
+
     /// Reload the list. `loadAll()` runs on a detached task (it can block on iCloud coordination);
     /// only the assignment touches this main-actor state, then `onStateChange` fires.
     func reload() async {

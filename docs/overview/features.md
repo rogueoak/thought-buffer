@@ -329,6 +329,37 @@ The icon art is a `LaunchIcon` image set (a copy of the 1024 app-icon PNG), beca
 `Image("AppIcon")` cannot load the app-icon asset directly. Nothing about storage, capture, or
 navigation changes.
 
+## Folders and sorting (spec 0010)
+
+The flat, newest-first Thoughts stream becomes a browsable tree with a chosen sort order. Folders are
+real directories on disk (visible in Files / iCloud Drive), not tags - a note in a folder lives at
+`Documents/ThoughtStream/<folder>/.../<id>.md` with its `<id>.m4a` beside it.
+
+- **Nested folders.** Create a folder from the Thoughts toolbar (the folder-plus button); open it to
+  see its notes and subfolders; create a folder inside a folder. The Thoughts screen is a navigation
+  stack: tapping a folder pushes into it (the same folder-list screen at a deeper path), tapping a note
+  opens its detail page, and Back walks the tree.
+- **Interleaved, sorted list.** At any folder path the screen shows that folder's child folders AND the
+  notes that live directly there, INTERLEAVED into one list ordered by the chosen sort. A folder sorts
+  among notes by the same key: its "date" is its newest note anywhere underneath (recursively) and its
+  "title" is its name, so an active folder rises to the top under newest-first and an empty folder sinks
+  to the bottom.
+- **Sort control.** A toolbar menu (the up/down arrows) offers newest-first (default), oldest-first,
+  title A-Z, and title Z-A. The choice is global, persisted across launches, and the list re-sorts live
+  when changed.
+- **Move a note.** A note's leading swipe or context menu offers "Move to folder", opening a picker with
+  "New folder...", "Top level", and every existing folder indented by depth. Picking one re-saves the
+  note there; a recorded note keeps its recording (the store relocates the `.m4a` with the `.md`). Notes
+  are always created at the top level and filed afterward.
+- **Folder create / rename / delete.** A new folder is named in an alert (an unusable name - empty,
+  `.`/`..`, hidden, or containing a separator - is rejected with a brief message). A folder row's
+  context menu / swipe offers Rename (reports a name conflict) and Delete. Delete is a confirming,
+  destructive cascade: it removes the folder, its notes, their recordings, and its subfolders.
+- **Empty states.** The empty root reads "No notes yet - tap Record"; an empty folder reads "This folder
+  is empty - move a note here, or create a folder inside it".
+- **CarPlay unaffected.** The CarPlay recordings browser still lists every recorded note regardless of
+  which folder it lives in.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires

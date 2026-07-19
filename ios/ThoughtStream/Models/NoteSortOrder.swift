@@ -19,6 +19,20 @@ enum NoteSortOrder: String, CaseIterable, Codable, Sendable {
     /// The default order (newest first), matching the app's original flat stream.
     static var `default`: NoteSortOrder { .newest }
 
+    // MARK: - String tag persistence (PR B)
+
+    /// A stable string tag for `SettingsStoring` persistence. This is deliberately its own name (not
+    /// just `rawValue`) so the persisted contract is explicit and matches the other settings types
+    /// (`AudioRetention`, `LockScreenTitle`): the tag is the identity we promise to keep stable across
+    /// builds, and decoding an unknown tag falls back to `.default` rather than crashing.
+    var storageTag: String { rawValue }
+
+    /// Decode a stored tag. An unknown or absent tag falls back to `.default` (newest first), so a
+    /// value written by a newer build (or a corrupt default) never fails to decode.
+    init(tag: String) {
+        self = NoteSortOrder(rawValue: tag) ?? .default
+    }
+
     /// A short, user-facing label for the sort menu (PR B).
     var label: String {
         switch self {
