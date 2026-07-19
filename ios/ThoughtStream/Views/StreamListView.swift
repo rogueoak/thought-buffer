@@ -123,17 +123,12 @@ struct StreamListView: View {
         TranscriptCleanup.refinedForSave(thought, refine: settingsStore.refineTranscript)
     }
 
-    private func makeAudioTrimmer() -> AudioTrimming? {
-        settingsStore.trimSilence ? AudioTrimmer() : nil
-    }
-
     private func makeAudioConcatenator(for thought: Thought) -> AudioConcatenating? {
         (thought.hasAudio && settingsStore.audioRetention.recordsAudio) ? AudioConcatenator() : nil
     }
 
     private func makeDictationModel(
         recordsAudio: Bool,
-        audioTrimmer: AudioTrimming?,
         audioConcatenator: AudioConcatenating? = nil,
         folderPath: [String] = [],
         resuming: Thought? = nil
@@ -142,7 +137,6 @@ struct StreamListView: View {
             store: store,
             processor: makeTextProcessor(),
             recordsAudio: recordsAudio,
-            audioTrimmer: audioTrimmer,
             audioConcatenator: audioConcatenator,
             folderPath: folderPath,
             resuming: resuming
@@ -165,7 +159,6 @@ struct StreamListView: View {
             DictationView(
                 model: makeDictationModel(
                     recordsAudio: settingsStore.audioRetention.recordsAudio,
-                    audioTrimmer: makeAudioTrimmer(),
                     // File the new thought per the placement captured in `startNewThought` (spec 0026):
                     // inside a user folder -> that folder; from top level / All / Recents -> uncategorized.
                     folderPath: newThoughtFolderPath
@@ -181,7 +174,6 @@ struct StreamListView: View {
             DictationView(
                 model: makeDictationModel(
                     recordsAudio: settingsStore.audioRetention.recordsAudio,
-                    audioTrimmer: makeAudioTrimmer(),
                     audioConcatenator: makeAudioConcatenator(for: thought),
                     resuming: thought
                 )

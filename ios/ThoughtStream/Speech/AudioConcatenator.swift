@@ -3,8 +3,7 @@ import AVFoundation
 
 /// The seam a caller uses to JOIN a newly-recorded segment onto a thought's existing recording when a
 /// thought that already has audio is resumed with recording on (feedback 0022). A protocol so the view
-/// model is testable with a stub and so the AVFoundation glue stays thin and swappable, exactly like
-/// `AudioTrimming`.
+/// model is testable with a stub and so the AVFoundation glue stays thin and swappable.
 protocol AudioConcatenating: Sendable {
     /// Read the `existing` `.m4a` and the `new` segment `.m4a` and PRODUCE a combined copy at a temp URL
     /// containing the existing audio followed by the new segment - WITHOUT touching either input. Runs
@@ -40,8 +39,8 @@ enum AudioConcatenationResult: Equatable {
 ///
 /// All AVFoundation work happens here so `RecordingTiming.offsetResumedTimings` (the timing math) stays
 /// pure. The type is `Sendable` and its one method is designed to run inside a detached task off the main
-/// actor. The frame read/write plumbing mirrors `AudioTrimmer` (chunked copy, protected temp, defer
-/// cleanup, output validation) so raw voice is never orphaned unprotected on a mid-write failure.
+/// actor. The frame read/write plumbing (chunked copy, protected temp, defer cleanup, output validation)
+/// keeps raw voice from being orphaned unprotected on a mid-write failure.
 struct AudioConcatenator: AudioConcatenating {
     /// The output-validity check run on the combined temp file before it is returned to the caller.
     /// Injectable so a test can force it to fail and exercise the SAFETY branch (the temp is discarded and
@@ -99,7 +98,7 @@ struct AudioConcatenator: AudioConcatenating {
     /// Write a combined `.m4a` to a temp URL: the whole of `existing` followed by the whole of `new`, by
     /// READING each source `AVAudioFile` in chunks and WRITING into a fresh AAC file. Deterministic and
     /// self-contained (no `AVAsset` track loading or `AVAssetExportSession`, which are async / load-gated
-    /// on modern iOS), so the join is a straight-line off-main read/write, matching `AudioTrimmer`.
+    /// on modern iOS), so the join is a straight-line off-main read/write.
     private func writeCombined(existing: AVAudioFile, new: AVAudioFile, format: AVAudioFormat) throws -> URL {
         let fm = FileManager.default
         let tempURL = fm.temporaryDirectory
@@ -107,8 +106,8 @@ struct AudioConcatenator: AudioConcatenating {
         try? fm.removeItem(at: tempURL)
 
         // Create the temp file PROTECTED (`completeUnlessOpen`) before `AVAudioFile` writes any audio into
-        // it, mirroring `RecordingWriter` / `AudioTrimmer`: raw audio is sensitive, so there must be no
-        // window where the combined `.m4a` exists on disk unprotected.
+        // it, mirroring `RecordingWriter`: raw audio is sensitive, so there must be no window where the
+        // combined `.m4a` exists on disk unprotected.
         fm.createFile(
             atPath: tempURL.path,
             contents: nil,

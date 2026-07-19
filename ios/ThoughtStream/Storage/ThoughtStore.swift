@@ -362,9 +362,10 @@ struct ThoughtStore: ThoughtStoring {
         return destination
     }
 
-    /// Atomically replace a thought's EXISTING recording with a rewritten one (spec 0019 dead-air trim).
-    /// Uses `replaceItemAt` so there is never a window where the thought has no recording; on any failure
-    /// the original is left in place (`replaceItemAt` is atomic). Re-asserts audio file protection.
+    /// Atomically replace a thought's EXISTING recording with a rewritten one (feedback 0022 resume-audio
+    /// concatenation). Uses `replaceItemAt` so there is never a window where the thought has no recording;
+    /// on any failure the original is left in place (`replaceItemAt` is atomic). Re-asserts audio file
+    /// protection.
     ///
     /// It NEVER creates a recording: when the destination is absent (the thought was soft-deleted, moved,
     /// or never had audio) it DELETES the temp and returns nil, rather than materializing an orphan

@@ -24,20 +24,18 @@ struct ParagraphGrouper {
     /// the segment flows into the current paragraph. Default 1.5s: long enough to ride through a
     /// mid-thought breath, short enough that a deliberate pause between distinct thoughts still breaks.
     ///
-    /// DEVICE-TUNABLE: this is the single lever for how eagerly dictation breaks paragraphs. The
-    /// feedback doc defers final tuning to a device pass, so it lives here as one named constant that a
-    /// later device session can adjust in one place.
+    /// DEVICE-TUNABLE: this is the single lever for how eagerly dictation breaks paragraphs. Final
+    /// tuning is a device pass (the Simulator does not run real recognition), so it lives here as one
+    /// named constant a later device session can adjust in one place. Now that the transcriber's output
+    /// is punctuated (capture-pipeline feedback 0026), 1.5s continues to read like the native Notes app:
+    /// a sentence-ending pause carries a period, and a longer gap between distinct thoughts breaks the
+    /// paragraph.
     ///
-    /// LOAD-BEARING COUPLING (architect review, PR #24): this threshold MUST stay strictly BELOW any
-    /// future dead-air / silence-trim minimum-pause threshold (the transcript-refinement work, spec
-    /// 0016 onward, targets a ~2.0s trim floor). The reason merging segment ranges into one paragraph
-    /// timing is safe: any silence long enough to be trimmed (>= the trim floor) is necessarily >= this
-    /// group threshold, so it is always a PARAGRAPH BOUNDARY, never an interior sub-threshold silence
-    /// INSIDE a merged paragraph. Therefore trimming only ever removes time BETWEEN paragraphs, and a
-    /// merged paragraph's [start, duration] stays remappable by shifting paragraph starts. If a later
-    /// change lifts this threshold to or above the trim floor, an interior silence could be trimmed out
-    /// of a merged paragraph and its stored range would no longer map to the recording - keep them
-    /// coupled (group threshold < trim threshold), or revisit range merging.
+    /// HISTORICAL NOTE: earlier this threshold was LOAD-BEARING-coupled to the dead-air / silence-trim
+    /// minimum-pause floor (it had to stay strictly below ~2.0s so a trimmable silence was always a
+    /// paragraph boundary, never interior to a merged paragraph). The dead-air trim feature was REMOVED
+    /// (capture-pipeline feedback 0026 - it edited playback poorly and was not worth keeping), so that
+    /// coupling no longer exists and this value is free to be tuned on its own merits.
     static let defaultGapThreshold: Double = 1.5
 
     private let gapThreshold: Double

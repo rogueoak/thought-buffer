@@ -145,33 +145,6 @@ final class RecordingWriterTests: XCTestCase {
             timings)
     }
 
-    // MARK: - DictationViewModel.remapNewParagraphsOntoSegment (feedback 0022, engineer review)
-
-    func testRemapNewParagraphsRemapsOnlyTheNewSliceByTheSegmentRemovedRanges() {
-        // One pre-existing paragraph (into the original recording) + two new (into the new segment). The
-        // trim removed [1.0, 3.0) (2s) from the NEW segment. Only the new paragraphs after that silence
-        // shift left; the pre-existing paragraph's range into the original recording is NOT touched.
-        let timings = [
-            ParagraphTiming(start: 0.0, duration: 4.0),  // existing (into original recording)
-            ParagraphTiming(start: 0.5, duration: 0.5),  // new, before the cut -> unshifted
-            ParagraphTiming(start: 5.0, duration: 1.0),  // new, after the 2s cut -> shifts left 2s
-        ]
-        let out = DictationViewModel.remapNewParagraphsOntoSegment(
-            timings, existingParagraphCount: 1,
-            removedRanges: [SilenceTrimmer.KeepRange(start: 1.0, end: 3.0)])
-
-        XCTAssertEqual(out[0], ParagraphTiming(start: 0.0, duration: 4.0), "existing NOT remapped")
-        XCTAssertEqual(out[1], ParagraphTiming(start: 0.5, duration: 0.5), "new before the cut unshifted")
-        XCTAssertEqual(out[2], ParagraphTiming(start: 3.0, duration: 1.0), "new after the cut shifts left 2s")
-    }
-
-    func testRemapNewParagraphsIsNoOpWhenNothingRemoved() {
-        let timings = [ParagraphTiming(start: 0.0, duration: 2.0), ParagraphTiming(start: 3.0, duration: 1.0)]
-        XCTAssertEqual(
-            DictationViewModel.remapNewParagraphsOntoSegment(timings, existingParagraphCount: 1, removedRanges: []),
-            timings)
-    }
-
     /// Build a buffer of `seconds` of silence at the writer's expected format.
     private func makeBuffer(seconds: Double) throws -> AVAudioPCMBuffer {
         let format = try XCTUnwrap(AVAudioFormat(

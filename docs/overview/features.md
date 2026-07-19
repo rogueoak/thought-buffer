@@ -467,28 +467,34 @@ recording.
   edit-save reflow. When off, text is committed verbatim (the pre-0016 behavior). The subtitle thoughts
   that audio is never changed. All refinement is local, deterministic, and rule-based - no cloud / LLM.
 
-## Automatic dead-air removal (spec 0019)
+## Automatic dead-air removal (spec 0019) - REMOVED (feedback 0026)
 
-Spoken thoughts collect long thinking pauses. When a recording finishes, Thought Stream trims the long
-silences so playback is tighter and the file smaller, WITHOUT changing a word of the transcript. It
-is on by default and applies only to NEW recordings on save.
+This feature (trimming long silences from a finished recording and remapping paragraph timings) was
+REMOVED in capture-pipeline feedback 0026. On device the trimmed playback was poor and it was not worth
+the complexity, so it was cut at the user's request. There is no "Trim silences" setting and no code
+path touches recording audio after capture. Recordings are the byte-for-byte capture. (The coordinated
+`replaceAudio` store seam it once used remains, reused by the resume-continues-audio concatenation,
+feedback 0022.)
 
-- **Trim long pauses, keep a breath.** Silences longer than 2.0s (a device-tunable min-pause floor)
-  are cut, but never to a hard splice: about 0.6s of natural gap (a named "breath" constant) is kept
-  so the result still sounds like speech. A pause at or under the floor is left exactly as recorded.
-- **Replace the recording, safely.** The trim is non-reversible (the removed silence is not kept), so
-  the rewrite is atomic-safe: the trimmed audio is written to a temp file, verified to be a valid
-  non-empty recording, and only THEN does it atomically replace the original. ANY failure (unreadable
-  file, nothing to trim, a write/verify slip) leaves the original recording untouched and the thought
-  still saves. Runs off the main actor, so a slow trim never freezes the UI.
-- **Timings stay accurate.** Paragraph time ranges reference absolute recording time, so after
-  trimming each paragraph's start is remapped left by the removed silence before it. This is exact
-  because of a load-bearing invariant: the 2.0s trim floor stays strictly ABOVE the 1.5s paragraph-gap
-  threshold, so a trimmable silence is always a paragraph BOUNDARY, never inside a paragraph - trimming
-  only ever removes time between paragraphs, so durations are unchanged and only starts shift.
-- **Settings.** A "Trim silences" toggle (default on) persists in `UserDefaults`; the subtitle thoughts
-  the text is unaffected and a natural gap is kept. When OFF, NO code path touches the audio - the
-  recording is the byte-for-byte untrimmed capture (the pre-0019 behavior). Fully on-device; no cloud.
+## Capture pipeline: transcription quality (feedback 0026)
+
+On-device dictation quality was tuned after a device report that it read poorly.
+
+- **Dictation-tuned audio session.** The record session mode is `.spokenAudio` (Apple's dictation
+  mode), not `.measurement`. `.measurement` disabled the input signal conditioning (gain / noise / echo
+  processing) the recognizer relies on; `.spokenAudio` keeps it on, so the recognizer hears clean input.
+- **Native formatting, verbatim words.** The iOS 26 `SpeechTranscriber` punctuates and formats natively
+  from its language model - there is no punctuation "option" to set on it (verified against the SDK). Its
+  one available transcription option, `etiquetteReplacements`, REDACTS words, so it is deliberately NOT
+  set; the transcriber runs with empty `transcriptionOptions` for a faithful, unredacted transcript.
+- **Conservative refinement, pinned.** The default-on filler removal and pause-based paragraph grouping
+  are non-destructive: filler removal strikes only genuine whole-token hesitations (never a real word,
+  unit, interjection, or quoted span), and grouping breaks paragraphs on a real silence gap (1.5s).
+  Representative realistic transcripts (fillers, numbers, punctuation, a natural pause) are unit-tested
+  so "good, faithful output" cannot silently regress.
+
+Real on-device transcription quality is device-verifiable only (the Simulator does not run real
+recognition); the refinement layer is proven by tests.
 
 ## Modern on-device speech engine (spec 0002)
 
