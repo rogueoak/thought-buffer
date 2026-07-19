@@ -119,3 +119,31 @@ final class ParagraphGrouperTests: XCTestCase {
         XCTAssertEqual(decision, .newParagraph)
     }
 }
+
+/// Feedback 0012 (PR #24 review): the pure timing-merge helper used when segments merge into one
+/// paragraph. All four (existing, incoming) combinations, so an append never silently degrades a real
+/// range to text-only.
+final class ParagraphTimingMergeTests: XCTestCase {
+    func testBothNilMergesToNil() {
+        XCTAssertNil(ParagraphTiming.merged(nil, nil))
+    }
+
+    func testExistingNilAdoptsIncoming() {
+        let incoming = ParagraphTiming(start: 2.5, duration: 1.0)
+        // The load-bearing case the first implementation dropped: a text-only paragraph that gains a
+        // real recorded tail must ADOPT that tail's range, not stay text-only.
+        XCTAssertEqual(ParagraphTiming.merged(nil, incoming), incoming)
+    }
+
+    func testIncomingNilKeepsExisting() {
+        let existing = ParagraphTiming(start: 0.0, duration: 2.0)
+        XCTAssertEqual(ParagraphTiming.merged(existing, nil), existing)
+    }
+
+    func testBothPresentSpanFirstStartThroughLastEnd() {
+        let existing = ParagraphTiming(start: 0.0, duration: 2.0) // ends at 2.0
+        let incoming = ParagraphTiming(start: 2.5, duration: 1.0) // ends at 3.5
+        // One contiguous range: existing start (0.0) through incoming end (3.5).
+        XCTAssertEqual(ParagraphTiming.merged(existing, incoming), ParagraphTiming(start: 0.0, duration: 3.5))
+    }
+}

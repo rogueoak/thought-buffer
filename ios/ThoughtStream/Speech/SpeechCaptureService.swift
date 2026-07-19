@@ -56,6 +56,12 @@ enum SpeechCaptureEvent {
     /// recording range and the RAW analysis-relative timing the view model needs to decide paragraph
     /// grouping (feedback 0012).
     ///
+    /// NOTE: this one segment carries its timing in TWO coordinate systems, both describing the SAME
+    /// segment: `range` is ABSOLUTE recording time (offset-anchored, for playback seek), while
+    /// `startSeconds` / `durationSeconds` are ANALYSIS-RELATIVE (reset to ~0 at each analysis, for the
+    /// grouper's gap math). They are not interchangeable - use `range` for playback and the raw seconds
+    /// for grouping.
+    ///
     /// - `range`: the paragraph's absolute range in the recording, nil when nothing was recorded
     ///   (recording disabled, or the recognizer reported no segment timings), so a text-only session's
     ///   playback is unaffected.

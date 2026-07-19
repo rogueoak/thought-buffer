@@ -780,4 +780,57 @@ final class ParagraphGroupingViewModelTests: XCTestCase {
         XCTAssertEqual(saved.paragraphs, ["One two"])
         XCTAssertNil(saved.audioFileName, "no recording means the merged paragraph stays text-only")
     }
+
+    /// PR #24 review (tester major): a whitespace-only finalized segment arriving MID-FLOW at a small
+    /// gap must (a) create no blank paragraph, and (b) NOT corrupt the grouping of the next real
+    /// segment - because blank segments no longer advance the grouper's anchor, the next real segment's
+    /// gap is measured against the LAST REAL segment, so a small gap still flows.
+    func testWhitespaceMidFlowCreatesNoParagraphAndDoesNotCorruptGrouping() {
+        let model = makeModel()
+        // A real first segment ending at 1.0.
+        service.emitFinalized(
+            "One", range: nil,
+            startSeconds: 0.0, durationSeconds: 1.0, isAnalysisStart: true)
+        // A whitespace-only segment lands at a small gap (would-be end 1.4). It must be dropped and must
+        // NOT advance the anchor.
+        service.emitFinalized(
+            "   ", range: nil,
+            startSeconds: 1.2, durationSeconds: 0.2, isAnalysisStart: false)
+        XCTAssertEqual(model.paragraphs, ["One"], "a whitespace-only segment creates no blank paragraph")
+        // The next real segment starts at 1.4: a 0.4s gap from the LAST REAL segment's end (1.0), below
+        // threshold -> flow into the same paragraph. This measures against "One"'s end (1.0), proving
+        // the ignored blank segment did not advance the anchor to ~1.4 and corrupt the decision.
+        service.emitFinalized(
+            "two", range: nil,
+            startSeconds: 1.4, durationSeconds: 1.0, isAnalysisStart: false)
+        XCTAssertEqual(model.paragraphs, ["One two"],
+                       "the next real segment groups against the last REAL segment, not the blank one")
+    }
+
+    /// PR #24 review (engineer minor): "Mira new note" resets the grouper, so the FIRST committed
+    /// segment of the fresh note is its own paragraph even if its raw start would be a small gap from
+    /// the previous note's last segment end. Without the reset the carried-over anchor could merge the
+    /// new note's opener into... nothing (empty paragraphs) or mis-group it.
+    func testNewNoteResetsGrouperSoFreshNoteFirstSegmentIsItsOwnParagraph() throws {
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor())
+        // First note: one paragraph ending (raw) at 2.0.
+        service.emitFinalized(
+            "First note body", range: nil,
+            startSeconds: 0.0, durationSeconds: 2.0, isAnalysisStart: false)
+        // "Mira new note" saves and resets. It is a pure-command split (empty pre-text), so it does not
+        // advance the grouper; and startNewNote resets it regardless.
+        service.emitFinalized(
+            "Mira new note", range: nil,
+            startSeconds: 2.1, durationSeconds: 1.0, isAnalysisStart: false)
+        XCTAssertTrue(model.paragraphs.isEmpty, "a fresh note starts empty after new note")
+        // The fresh note's first real segment lands at raw start 2.3 (a 0.3s gap from the OLD note's 2.0
+        // end - a small gap that, if the grouper had carried over, would try to append). It must be its
+        // OWN paragraph in the fresh note.
+        service.emitFinalized(
+            "Fresh note opener", range: nil,
+            startSeconds: 2.3, durationSeconds: 1.0, isAnalysisStart: false)
+        XCTAssertEqual(model.paragraphs, ["Fresh note opener"],
+                       "the reset grouper makes the fresh note's first segment its own paragraph")
+    }
 }

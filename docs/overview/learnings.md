@@ -477,3 +477,21 @@ each emit and leave the tap buffer as a NAMED constant - so a later device pass 
 and a single tuning lever - rather than blindly shrinking the buffer and calling it fixed. Generalizes:
 when a report mixes a fixable defect with a device-only tuning concern, ship the fixable part behind
 a seam and hand the tuning part a measurement + a lever, do not guess-tune what you cannot measure.
+
+## Merging ranges into one timing is only safe while coupled thresholds keep the merge remappable (feedback 0012)
+
+Pause-based grouping merges several segments' recorded ranges into ONE paragraph timing (first start
+through last end). That merge is only sound because of a load-bearing coupling to a SEPARATE constant:
+the paragraph group threshold (`ParagraphGrouper.defaultGapThreshold`, 1.5s) must stay strictly BELOW
+any dead-air / silence-trim minimum-pause threshold (the transcript-refinement work targets ~2.0s).
+The reasoning: any silence long enough to be trimmed (>= the trim floor) is necessarily >= the group
+threshold, so it is always a PARAGRAPH BOUNDARY, never an interior sub-threshold silence inside a
+merged paragraph. Therefore trimming only ever removes time BETWEEN paragraphs, and a merged
+paragraph's `[start, duration]` stays remappable by shifting paragraph starts. Lift the group threshold
+to or above the trim floor and an interior silence could be trimmed out of a merged paragraph, and its
+stored range would no longer map to the recording. The rule: when a merge (of ranges, offsets, spans)
+is only correct because two constants sit on a particular side of each other, DOCUMENT that coupling
+on the constant itself and record it as a learning, so a later change to either constant is forced to
+reconsider the merge rather than silently break the mapping. Generalizes to any pair of thresholds
+where one governs "what we combine" and the other "what we remove", and the combine is only reversible
+while the remove never reaches inside a combined unit.

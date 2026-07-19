@@ -82,6 +82,30 @@ final class DualCaptureViewModelTests: XCTestCase {
         XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 3.5)
     }
 
+    /// Feedback 0012 (PR #24 engineer-major review): a paragraph that began text-only (its first
+    /// segment had no range) but gains a real recorded tail at a small gap ADOPTS the tail's range,
+    /// instead of silently staying text-only and degrading to text-to-speech on playback.
+    func testMergeAdoptsIncomingRangeWhenExistingTimingWasNil() throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let model = DictationViewModel(service: service, store: store, recordsAudio: true)
+
+        // First segment has no range; a small-gap tail WITH a real range merges in and is adopted.
+        service.emitFinalized(
+            "One", range: nil,
+            startSeconds: 0.0, durationSeconds: 1.0, isAnalysisStart: true)
+        service.emitFinalized(
+            "two", range: ParagraphTiming(start: 1.2, duration: 1.0),
+            startSeconds: 1.2, durationSeconds: 1.0, isAnalysisStart: false)
+
+        let note = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(note.paragraphs, ["One two"])
+        XCTAssertTrue(note.hasAudio, "the merged paragraph adopts the recorded tail, not text-only")
+        XCTAssertEqual(note.timings.count, 1)
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 1.2, "adopts the incoming tail's start")
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 1.0, "adopts the incoming tail's duration")
+    }
+
     func testSaveAdoptsRecordingIntoStore() throws {
         let service = RecordingStubCaptureService()
         let tempURL = try makeTempRecordingURL()
