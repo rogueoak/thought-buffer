@@ -195,6 +195,40 @@ How the system is built and why.
     relative-skip. IN-SESSION "read that back" stays on the text-to-speech `Speaker`: the live `.m4a`
     is still open for writing (finalized only at `stop()`), so there is no finalized file to play
     mid-session; both share the `readBackDidFinish` resume handshake.
+  - **Dead-air removal (spec 0019).** Three pieces, two pure. `SilenceTrimmer` (pure, no AVFoundation)
+    turns a sequence of windowed RMS levels plus a window duration into the KEEP time-ranges: the
+    complement of every silence run longer than `minPauseSeconds` (2.0s), each trimmed to leave a
+    `breathGapSeconds` (~0.6s) natural gap, above a `silenceFloor` RMS. Named constants; an all-silent
+    clip is kept whole (nothing to tighten). `TimingRemapper` (pure) shifts each paragraph's start left
+    by the removed silence preceding it, durations unchanged - sound only because the trim floor stays
+    strictly ABOVE `ParagraphGrouper.defaultGapThreshold` (a guard test asserts it), so a trimmable
+    silence is always a paragraph boundary and never lies inside a paragraph. `AudioTrimmer` (the
+    `AudioTrimming` seam, AVFoundation) reads the finished `.m4a` via `AVAudioFile`, computes windowed
+    RMS, feeds `SilenceTrimmer`, writes only the kept frame ranges to a PROTECTED temp `.m4a` by
+    `AVAudioFile` read/write (concatenation - no `AVAssetExportSession`, which is load-gated on modern
+    iOS; the temp is created `completeUnlessOpen` before any audio is written, like `RecordingWriter`),
+    and VERIFIES the temp is a valid non-empty audio file - but it NEVER touches the original. It hands
+    the verified temp + the removed original-timeline ranges back; ANY failure returns `.notTrimmed` and
+    writes nothing (the trim is non-reversible, so it never loses the recording); the temp is removed on
+    every non-success exit via a `defer` so a mid-write failure never orphans a partial voice copy. The
+    COORDINATED atomic swap is a store seam (`NoteStoring.replaceAudio(from:for:) -> URL?`): `NoteStore`
+    uses `replaceItemAt`; `ICloudNoteStore` does the `replaceItemAt` INSIDE an `NSFileCoordinator`
+    `.forReplacing` block so the swap never races the sync daemon (a bare replace on a ubiquity-container
+    file would). Both re-assert audio protection, and both REFUSE to create a file when the slot is
+    absent - they delete the temp and return nil ("nothing to replace") rather than materialize an orphan
+    `.m4a` that `loadAll`/`purgeAllTrash` would never see. `DictationViewModel` runs the trim OFF the main
+    actor in a detached task after `finish()` returns the (untrimmed) note - only for a note that just
+    adopted a NEW recording - then RE-READS the note fresh from disk by id and confirms it still EXISTS
+    before adopting the trimmed audio via `replaceAudio` (so a note soft-deleted during the trim window
+    leaves no orphan recording and stays deleted - belt-and-suspenders with the primitive's no-create
+    rule; a concurrent edit/move is likewise preserved, not clobbered by the stale finish()-time
+    snapshot), applies only the timings remap via `Note.withTimings`, re-saves, and calls back `onTrimmed`
+    on the main actor so the host reloads the feed (dropping the stale un-remapped in-memory note; an
+    already-open detail view keeps its snapshot, harmless while playback is whole-file - a future
+    per-paragraph seek must revisit it). A nil `AudioTrimming` (the "Trim silences" setting OFF) means NO
+    code path touches the audio.
+    `StreamListView.makeAudioTrimmer()` builds the trimmer only when the setting
+    is on and only for a session capturing new audio (a resumed note keeps its original recording).
   - **System Now Playing (spec 0008).** `NowPlayingCenter.swift` holds the media-center seam:
     `NowPlayingInfo` (title / duration / elapsed / rate value), `NowPlayingInfoWriting` (production
     `SystemNowPlayingInfoWriter` over `MPNowPlayingInfoCenter`), and `RemoteCommandRegistering`
@@ -234,7 +268,9 @@ How the system is built and why.
   keep / transcript-only / auto-delete after N days, persisted as a small string tag so an unknown
   value falls back to `.keep`), and `refineTranscript` (spec 0016: a `Bool` defaulting to `true` -
   presence-checked on read so a fresh install reads ON, not the `bool(forKey:)` false default - gating
-  the filler stage and the edit-save reflow). Local only - no cloud sync, no per-note settings.
+  the filler stage and the edit-save reflow), and `trimSilence` (spec 0019: a `Bool` defaulting to
+  `true`, presence-checked the same way - gating dead-air removal on a new recording at save; OFF means
+  no code path touches the audio). Local only - no cloud sync, no per-note settings.
 - `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
   logic: it drives `DictationView` from the speech service, routes finalized segments through the
   `TextProcessor`, executes `MiraCommand`s (note mutations, new note save+reset, read-back), and

@@ -456,6 +456,29 @@ recording.
   edit-save reflow. When off, text is committed verbatim (the pre-0016 behavior). The subtitle notes
   that audio is never changed. All refinement is local, deterministic, and rule-based - no cloud / LLM.
 
+## Automatic dead-air removal (spec 0019)
+
+Spoken notes collect long thinking pauses. When a recording finishes, Thought Stream trims the long
+silences so playback is tighter and the file smaller, WITHOUT changing a word of the transcript. It
+is on by default and applies only to NEW recordings on save.
+
+- **Trim long pauses, keep a breath.** Silences longer than 2.0s (a device-tunable min-pause floor)
+  are cut, but never to a hard splice: about 0.6s of natural gap (a named "breath" constant) is kept
+  so the result still sounds like speech. A pause at or under the floor is left exactly as recorded.
+- **Replace the recording, safely.** The trim is non-reversible (the removed silence is not kept), so
+  the rewrite is atomic-safe: the trimmed audio is written to a temp file, verified to be a valid
+  non-empty recording, and only THEN does it atomically replace the original. ANY failure (unreadable
+  file, nothing to trim, a write/verify slip) leaves the original recording untouched and the note
+  still saves. Runs off the main actor, so a slow trim never freezes the UI.
+- **Timings stay accurate.** Paragraph time ranges reference absolute recording time, so after
+  trimming each paragraph's start is remapped left by the removed silence before it. This is exact
+  because of a load-bearing invariant: the 2.0s trim floor stays strictly ABOVE the 1.5s paragraph-gap
+  threshold, so a trimmable silence is always a paragraph BOUNDARY, never inside a paragraph - trimming
+  only ever removes time between paragraphs, so durations are unchanged and only starts shift.
+- **Settings.** A "Trim silences" toggle (default on) persists in `UserDefaults`; the subtitle notes
+  the text is unaffected and a natural gap is kept. When OFF, NO code path touches the audio - the
+  recording is the byte-for-byte untrimmed capture (the pre-0019 behavior). Fully on-device; no cloud.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires

@@ -56,6 +56,21 @@ protocol NoteStoring: Sendable {
     @discardableResult
     func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL
 
+    /// Atomically REPLACE a note's EXISTING recording with a rewritten one from `temporaryURL` (spec
+    /// 0019 dead-air trim), coordinated (on iCloud) so the swap never races the sync daemon and
+    /// protected to match the note file. Distinct from `saveAudio`: it ONLY swaps in a processed
+    /// version of an already-adopted recording, done as an ATOMIC replace so there is never a window
+    /// where the note has no recording.
+    ///
+    /// It NEVER creates a new recording. When no recording exists at the note's slot - the note was
+    /// soft-deleted (its `.md` is hidden in trash, so the slot resolves to a non-existent root file),
+    /// moved, or never had audio - it does NOT materialize a file (which would be an orphan raw-voice
+    /// `.m4a`, invisible to `loadAll` and never purged, defeating the delete). Instead it DELETES the
+    /// caller's temp file and returns nil ("nothing to replace"). On success returns the final URL.
+    /// Throws on failure, leaving the original in place. Returns nil for a store that keeps no audio.
+    @discardableResult
+    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL?
+
     /// Delete a note's sibling audio recording. No-op if it does not exist. `delete(id:)` calls this
     /// too, so deleting a note never leaves an orphaned recording behind.
     func deleteAudio(for id: UUID) throws
@@ -132,6 +147,14 @@ extension NoteStoring {
     /// Default no-op for stores without on-disk audio. The file-backed stores override this.
     @discardableResult
     func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL { temporaryURL }
+
+    /// Default for stores without on-disk audio: nothing to replace, and no orphan is left behind.
+    /// The file-backed stores override this.
+    @discardableResult
+    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL? {
+        try? FileManager.default.removeItem(at: temporaryURL)
+        return nil
+    }
 
     /// Default no-op for stores without on-disk audio. The file-backed stores override this.
     func deleteAudio(for id: UUID) throws {}

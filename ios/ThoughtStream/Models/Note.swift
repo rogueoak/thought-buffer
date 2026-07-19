@@ -303,6 +303,23 @@ extension Note {
         return name
     }
 
+    /// A copy of this note with its per-paragraph `timings` replaced (spec 0019 dead-air remap). Only
+    /// the timings change - title, body, recording filename, and folder are preserved - so re-saving
+    /// the copy after a background trim never clobbers a concurrent edit to those fields. Pure so the
+    /// timings-only update is unit-testable and keeps `timings` a `let`.
+    func withTimings(_ timings: [ParagraphTiming]) -> Note {
+        Note(
+            id: id,
+            title: title,
+            paragraphs: paragraphs,
+            createdAt: createdAt,
+            hasCustomTitle: hasCustomTitle,
+            audioFileName: audioFileName,
+            timings: timings,
+            folderPath: folderPath
+        )
+    }
+
     /// A copy of this note relocated to `folderPath`. The store uses it on load to tag a note with
     /// the folder its file was found in; keeping this a pure copy keeps `folderPath` a `let`.
     func withFolderPath(_ folderPath: [String]) -> Note {

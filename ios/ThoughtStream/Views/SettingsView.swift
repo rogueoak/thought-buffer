@@ -31,6 +31,8 @@ struct SettingsView: View {
     @State private var lockScreenTitle: LockScreenTitle
     /// Whether transcript refinement is on (spec 0016): filler removal live, reflow on edit-save.
     @State private var refineTranscript: Bool
+    /// Whether dead-air removal is on (spec 0019): trim long pauses from a new recording on save.
+    @State private var trimSilence: Bool
 
     init(settings: SettingsStoring, storeKind: NoteStoreKind = .local) {
         self.settings = settings
@@ -43,6 +45,7 @@ struct SettingsView: View {
         _autoDeleteDays = State(initialValue: retention.autoDeleteDays ?? SettingsView.defaultAutoDeleteDays)
         _lockScreenTitle = State(initialValue: settings.lockScreenTitle)
         _refineTranscript = State(initialValue: settings.refineTranscript)
+        _trimSilence = State(initialValue: settings.trimSilence)
     }
 
     var body: some View {
@@ -56,6 +59,7 @@ struct SettingsView: View {
                     refineSection
                     overridesSection
                     recordingSection
+                    trimSilenceSection
                     lockScreenSection
                     storageSection
                 }
@@ -301,6 +305,27 @@ struct SettingsView: View {
             settings.audioRetention = .transcriptOnly
         case .autoDelete:
             settings.audioRetention = .autoDeleteDays(autoDeleteDays)
+        }
+    }
+
+    // MARK: - Trim silences (spec 0019)
+
+    private var trimSilenceSection: some View {
+        Section {
+            Toggle("Trim silences", isOn: $trimSilence)
+                .foregroundStyle(CanopyColor.text)
+                .tint(CanopyColor.primary)
+                .onChange(of: trimSilence) { _, newValue in
+                    settings.trimSilence = newValue
+                }
+        } header: {
+            Text("Recording cleanup")
+                .foregroundStyle(CanopyColor.textMuted)
+        } footer: {
+            Text("Cuts long pauses from new recordings so playback is tighter. Your text is "
+                + "unaffected, and a short natural gap is always kept. Applies to your next recording.")
+                .font(.system(size: CanopyFont.sizeXs))
+                .foregroundStyle(CanopyColor.textSubtle)
         }
     }
 

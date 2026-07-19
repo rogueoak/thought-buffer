@@ -52,6 +52,15 @@ protocol SettingsStoring: AnyObject {
     /// processor from this value, so a change takes effect on the next dictation session, like the
     /// control phrase.
     var refineTranscript: Bool { get set }
+
+    /// Whether to trim dead air from a NEW recording on save (spec 0019). Defaults to `true`. When on,
+    /// silences longer than `SilenceTrimmer.minPauseSeconds` are cut to a short breath gap and the
+    /// recording is REPLACED atomically (the removed silence is not retained); paragraph timings are
+    /// remapped so playback still seeks correctly. It only ever changes the AUDIO of a new recording -
+    /// the transcript text is untouched. When OFF, NO code path touches the audio: recordings are the
+    /// byte-for-byte untrimmed capture (the pre-0019 behavior). Applies at save time, so a change takes
+    /// effect on the next recording, not one already saved.
+    var trimSilence: Bool { get set }
 }
 
 /// A `UserDefaults`-backed `SettingsStoring`. Persists the control phrase as a string and the
@@ -66,6 +75,7 @@ final class UserDefaultsSettingsStore: SettingsStoring {
         static let lockScreenTitle = "settings.lockScreenTitle"
         static let noteSortOrder = "settings.noteSortOrder"
         static let refineTranscript = "settings.refineTranscript"
+        static let trimSilence = "settings.trimSilence"
     }
 
     /// Bounds on the persisted overrides so a stuck field or a paste cannot grow `UserDefaults`
@@ -169,6 +179,17 @@ final class UserDefaultsSettingsStore: SettingsStoring {
             return defaults.bool(forKey: Key.refineTranscript)
         }
         set { defaults.set(newValue, forKey: Key.refineTranscript) }
+    }
+
+    var trimSilence: Bool {
+        // Defaults to `true` (spec 0019). Presence-checked like `refineTranscript` so a fresh install
+        // reads ON rather than the `bool(forKey:)` false default, and only an explicitly stored value
+        // (the user turning it off) overrides it.
+        get {
+            guard defaults.object(forKey: Key.trimSilence) != nil else { return true }
+            return defaults.bool(forKey: Key.trimSilence)
+        }
+        set { defaults.set(newValue, forKey: Key.trimSilence) }
     }
 
     /// Cap the row count and per-field length so persistence and the per-segment rescan stay

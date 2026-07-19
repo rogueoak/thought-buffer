@@ -134,6 +134,7 @@ private final class ScreenshotSettings: SettingsStoring {
     var lockScreenTitle: LockScreenTitle = .noteTitle
     var noteSortOrder: NoteSortOrder = .newest
     var refineTranscript: Bool = true
+    var trimSilence: Bool = true
 }
 
 /// Sample notes for screenshot mode.

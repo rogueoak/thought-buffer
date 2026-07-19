@@ -130,6 +130,13 @@ final class DictationViewModel: ObservableObject {
     /// Whether to record the session's audio (spec 0007). Read from settings at construction so it
     /// applies to this session; `transcriptOnly` never opens the file writer.
     private let recordsAudio: Bool
+    /// The dead-air trimmer, or nil when trimming is OFF (spec 0019). When nil, NO code path touches
+    /// the saved recording - it is the byte-for-byte untrimmed capture. When present, a freshly saved
+    /// recording is trimmed off the main actor after `finish()`, its silences cut and the note's
+    /// timings remapped onto the shortened timeline, then the note is re-saved. Injected from the
+    /// composition root only for a session that RECORDS new audio; a resumed/text append never trims
+    /// (it keeps the original recording).
+    private let audioTrimmer: AudioTrimming?
     /// The active control word, used to assemble the command chip label (e.g. "Mira - new note") and
     /// shown on the cheat sheet (feedback 0008). Injected so it stays in sync with the processor's
     /// control word once Settings makes it configurable, keeping the chip prefix out of the view.
@@ -185,6 +192,7 @@ final class DictationViewModel: ObservableObject {
         processor: TextProcessor = PassthroughTextProcessor(),
         speaker: Speaker? = nil,
         recordsAudio: Bool = false,
+        audioTrimmer: AudioTrimming? = nil,
         controlWord: String = MiraTextProcessor.defaultControlWord,
         resuming: Note? = nil
     ) {
@@ -195,6 +203,7 @@ final class DictationViewModel: ObservableObject {
         self.processor = processor
         self.speaker = speaker ?? SystemSpeaker()
         self.recordsAudio = recordsAudio
+        self.audioTrimmer = audioTrimmer
         self.controlWord = controlWord
         // Resuming an existing note (feedback 0008): keep its id, creation time, and text so the
         // session continues that note (saving overwrites the same file) rather than starting a new
@@ -309,12 +318,96 @@ final class DictationViewModel: ObservableObject {
         }
 
         // The session's recording (finalized by `service.stop()` above) belongs to this final note.
+        didAdoptNewRecording = false
         let note = try saveCurrentNote(adoptingRecording: true)
         // A successful adopt MOVES the temp file into storage; if adopting was skipped or failed, a
         // temp file may linger. Clean it up so no orphan recording is left on disk.
         discardPendingRecording()
         phase = .saved
+        // Dead-air removal (spec 0019): only for a note that just adopted a NEW recording, and only
+        // when trimming is on (a nil trimmer means OFF - no code path touches the audio). Runs OFF the
+        // main actor so a slow trim never freezes the UI; on success it remaps timings and re-saves.
+        // `finish()` returns immediately with the untrimmed note; the trim re-saves in the background.
+        if didAdoptNewRecording {
+            scheduleTrim(for: note)
+        }
         return note
+    }
+
+    /// Whether the most recent `saveCurrentNote` adopted a freshly captured recording (as opposed to
+    /// a resumed note keeping its existing one, or a text-only save). Gates the post-save trim so a
+    /// resumed note's original recording is never re-trimmed.
+    private var didAdoptNewRecording = false
+
+    /// Called on the main actor after a background dead-air trim finishes and the note's timings were
+    /// re-saved (spec 0019), so the host can reload its feed and drop the stale (un-remapped) in-memory
+    /// note. Nil when no host wired it (tests, screenshot tooling). Set by the view.
+    ///
+    /// KNOWN LIMITATION (feedback 0017): this reloads the LIST feed, but an ALREADY-OPEN `NoteDetailView`
+    /// pushed on the stack keeps its own un-remapped note snapshot until it is popped and reopened.
+    /// Harmless today because detail playback is whole-file (the total duration is unchanged by trimming
+    /// only interior silence), so a stale per-paragraph timing is never consulted. A future PER-PARAGRAPH
+    /// SEEK feature MUST revisit this - it would seek against timings that no longer match the shorter
+    /// audio - by refreshing the open detail's note here (or re-reading it at seek time).
+    var onTrimmed: (() -> Void)?
+
+    /// Trim dead air from a just-saved note's recording OFF the main actor, then adopt the trimmed
+    /// audio and remap the note's timings (spec 0019). Non-blocking: `finish()` has already returned
+    /// the untrimmed note. On any trim failure the original recording and timings are left in place, so
+    /// the note is never lost. The task is detached so it outlives the view dismissed after `finish()`.
+    ///
+    /// Three review-driven safeguards. First, the swap is done through the store's COORDINATED
+    /// `replaceAudio` (not a bare `replaceItemAt`), so an iCloud recording is not raced against the sync
+    /// daemon. Second, the note is re-read FRESH from disk by id and CONFIRMED to still exist BEFORE the
+    /// audio is swapped: the user may soft-delete (spec 0020 trash) the note between `finish()` and this
+    /// trim landing, and after a delete the note's `.md` is hidden in trash so its audio slot resolves to
+    /// a non-existent root path - adopting the trimmed temp there would leave an orphan raw-voice `.m4a`,
+    /// invisible to `loadAll` and never purged, defeating the delete. If the note is gone we delete the
+    /// trimmed temp and bail. (`replaceAudio` also refuses to create a file when the slot is absent, so
+    /// this is belt-and-suspenders.) Third, the timings re-save only replaces the fresh note's timings -
+    /// it does NOT re-save the stale snapshot captured at `finish()` - so a concurrent rename/move is
+    /// preserved.
+    private func scheduleTrim(for note: Note) {
+        guard let audioTrimmer, note.hasAudio,
+              let audioURL = store.audioURL(for: note.id) else { return }
+        let store = self.store
+        let noteID = note.id
+        Task.detached { [weak self] in
+            let result = await audioTrimmer.trim(fileAt: audioURL)
+            guard case .trimmed(let trimmedFileURL, let removedRanges) = result else { return }
+
+            // Re-read the note FRESH and confirm it still exists BEFORE touching any audio. If it was
+            // soft-deleted/moved during the trim, discard the trimmed temp and bail - never adopt it
+            // (which would orphan a copy of the just-deleted recording).
+            guard let current = store.loadAll().first(where: { $0.id == noteID }) else {
+                try? FileManager.default.removeItem(at: trimmedFileURL)
+                return
+            }
+
+            // Adopt the verified trimmed file through the coordinated atomic-replace seam. On failure,
+            // clean up the temp and leave the original recording + timings untouched (never lost). A nil
+            // return means the recording slot vanished in the tiny window since the re-read (a delete
+            // that raced the swap): `replaceAudio` created NO orphan and consumed the temp, so bail
+            // without re-saving the timings (which would resurrect the just-deleted note).
+            let replaced: URL?
+            do {
+                replaced = try store.replaceAudio(from: trimmedFileURL, for: noteID)
+            } catch {
+                try? FileManager.default.removeItem(at: trimmedFileURL)
+                return
+            }
+            guard replaced != nil else { return }
+
+            // Remap only the fresh note's timings (its edits are preserved). A save failure leaves the
+            // note with its original timings against the shorter recording - a seek slip, not data loss.
+            let remappedNote = current.withTimings(
+                TimingRemapper.remap(timings: current.timings, removedRanges: removedRanges)
+            )
+            try? store.save(remappedNote)
+
+            // Hop back to the main actor so the host reloads and drops the stale in-memory note.
+            await MainActor.run { self?.onTrimmed?() }
+        }
     }
 
     /// Build and save the current note, optionally adopting the session's recording into storage.
@@ -361,6 +454,9 @@ final class DictationViewModel: ObservableObject {
            let attached = try? attachRecording(recordingURL) {
             audioFileName = attached.fileName
             timings = attached.timings
+            // Mark this as a freshly captured recording so `finish()` schedules the dead-air trim for
+            // it (spec 0019). A resumed note that keeps its existing recording is never re-trimmed.
+            didAdoptNewRecording = true
         } else if let existingAudioFileName {
             // Resumed note (feedback 0008): keep the original recording and its per-paragraph timings.
             // Appended paragraphs have no recorded range, so `resolvedTimings` pads them and they play

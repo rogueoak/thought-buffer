@@ -102,6 +102,34 @@ struct StreamListView: View {
         TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)
     }
 
+    /// The dead-air trimmer for a new recording (spec 0019), or nil when the "Trim silences" setting is
+    /// OFF. A nil trimmer means the view model touches no code path over the audio, so the recording is
+    /// the byte-for-byte untrimmed capture. Read at build time so a Settings change applies to the next
+    /// recording.
+    private func makeAudioTrimmer() -> AudioTrimming? {
+        settingsStore.trimSilence ? AudioTrimmer() : nil
+    }
+
+    /// Build a dictation view model for this session and wire its `onTrimmed` callback to reload the
+    /// feed (spec 0019): a background dead-air trim re-saves the note's remapped timings off-main, so
+    /// after it lands the feed must reload to drop the stale (un-remapped) in-memory note - otherwise
+    /// playing the just-saved note would seek against timings that no longer match the shorter audio.
+    private func makeDictationModel(
+        recordsAudio: Bool,
+        audioTrimmer: AudioTrimming?,
+        resuming: Note? = nil
+    ) -> DictationViewModel {
+        let model = DictationViewModel(
+            store: store,
+            processor: makeTextProcessor(),
+            recordsAudio: recordsAudio,
+            audioTrimmer: audioTrimmer,
+            resuming: resuming
+        )
+        model.onTrimmed = { Task { await feed.reload() } }
+        return model
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             FolderContentsView(
@@ -191,10 +219,13 @@ struct StreamListView: View {
             }
             .fullScreenCover(isPresented: showDictation) {
                 DictationView(
-                    model: DictationViewModel(
-                        store: store,
-                        processor: makeTextProcessor(),
-                        recordsAudio: settingsStore.audioRetention.recordsAudio
+                    model: makeDictationModel(
+                        recordsAudio: settingsStore.audioRetention.recordsAudio,
+                        // Dead-air trimming (spec 0019): a trimmer only when the setting is on, so OFF
+                        // leaves the recording byte-for-byte the untrimmed capture (nil trimmer = no
+                        // code path touches the audio). Read at build time, so a Settings change applies
+                        // to the next recording, like the other per-session settings.
+                        audioTrimmer: makeAudioTrimmer()
                     )
                 ) { savedNote in
                     // A fresh recording saves at top level (folderPath []); land on it by resetting the
@@ -208,13 +239,15 @@ struct StreamListView: View {
             }
             .fullScreenCover(item: $resumeNote) { note in
                 DictationView(
-                    model: DictationViewModel(
-                        store: store,
-                        processor: makeTextProcessor(),
+                    model: makeDictationModel(
                         // A note with NO recording captures real audio when the user records into it
                         // (spec 0013), subject to the transcript-only retention setting; a note that
                         // already has audio stays text-only append so its original recording is intact.
                         recordsAudio: !note.hasAudio && settingsStore.audioRetention.recordsAudio,
+                        // Only a note capturing a NEW recording (a text-only note recorded into) trims;
+                        // a note that already has audio keeps its original recording untouched, and the
+                        // view model only trims a freshly adopted recording anyway (spec 0019).
+                        audioTrimmer: note.hasAudio ? nil : makeAudioTrimmer(),
                         resuming: note
                     )
                 ) { savedNote in
