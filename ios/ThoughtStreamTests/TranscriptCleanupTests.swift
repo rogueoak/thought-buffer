@@ -63,4 +63,45 @@ final class TranscriptCleanupTests: XCTestCase {
     func testEmptyInput() {
         XCTAssertEqual(TranscriptCleanup.reflow([]), [])
     }
+
+    // MARK: - refinedForSave gating (the single enforcement of "on edit-save when on, not on load")
+
+    /// A note whose paragraphs WOULD reflow (lowercase continuation), so the gating is observable.
+    private func reflowableNote() -> Note {
+        Note(
+            title: "My title",
+            paragraphs: ["the plan is", "ready to go"],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            hasCustomTitle: true
+        )
+    }
+
+    func testRefinedForSaveOffReturnsNoteVerbatim() {
+        // refine OFF: the note is returned unchanged even though it WOULD reflow.
+        let note = reflowableNote()
+        let result = TranscriptCleanup.refinedForSave(note, refine: false)
+        XCTAssertEqual(result.paragraphs, ["the plan is", "ready to go"])
+        XCTAssertEqual(result.id, note.id)
+    }
+
+    func testRefinedForSaveOnMergesReflowableNote() {
+        // refine ON, commit-edit path: the reflowable note is saved MERGED, preserving id/title/custom.
+        let note = reflowableNote()
+        let result = TranscriptCleanup.refinedForSave(note, refine: true)
+        XCTAssertEqual(result.paragraphs, ["the plan is ready to go"])
+        XCTAssertEqual(result.id, note.id)
+        XCTAssertEqual(result.title, "My title")
+        XCTAssertTrue(result.hasCustomTitle)
+    }
+
+    func testRefinedForSaveOnLeavesNonReflowableNoteUnchanged() {
+        // refine ON but nothing to merge (terminated sentences): the note is returned as-is.
+        let note = Note(
+            title: "T",
+            paragraphs: ["A finished thought.", "Another finished thought."],
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let result = TranscriptCleanup.refinedForSave(note, refine: true)
+        XCTAssertEqual(result.paragraphs, ["A finished thought.", "Another finished thought."])
+    }
 }

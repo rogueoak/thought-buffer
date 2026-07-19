@@ -78,21 +78,12 @@ struct StreamListView: View {
         Note(title: "", paragraphs: [], createdAt: Date(), folderPath: folderPath)
     }
 
-    /// Apply the transcript reflow pass (spec 0016) to a note being SAVED AFTER AN EDIT, when the
-    /// refine setting is on. Merges obvious continuation lines (a paragraph with no terminal
-    /// punctuation followed by one that begins lowercase). Runs ONLY here, on the commit-edit path, so
-    /// an untouched loaded note is never silently rewritten - the user must edit and save to trigger
-    /// it. `editedCopy` preserves the title, recording, timings, and folder while swapping paragraphs.
-    /// When refine is off, the note is returned unchanged (verbatim save).
+    /// Apply the transcript reflow pass (spec 0016) to a note being SAVED AFTER AN EDIT. The gating -
+    /// reflow only when `refineTranscript` is on, and only on this commit-edit path (never on load) -
+    /// lives in the pure, tested `TranscriptCleanup.refinedForSave(_:refine:)`; this reads the current
+    /// setting and delegates, so a load path can never reach it and an untouched note is never rewritten.
     private func refined(_ note: Note) -> Note {
-        guard settingsStore.refineTranscript else { return note }
-        let reflowed = TranscriptCleanup.reflow(note.paragraphs)
-        guard reflowed != note.paragraphs else { return note }
-        return note.editedCopy(
-            paragraphs: reflowed,
-            hasCustomTitle: note.hasCustomTitle,
-            customTitle: note.title
-        )
+        TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)
     }
 
     var body: some View {

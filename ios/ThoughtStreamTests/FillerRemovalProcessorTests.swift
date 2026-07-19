@@ -62,12 +62,12 @@ final class FillerRemovalProcessorTests: XCTestCase {
     // MARK: - NEVER strip a filler inside a real word (false-positive guard)
 
     func testNeverAltersIAmHungry() {
-        // "am" is not a filler; "ah" is, but only as a WHOLE token - neither appears standalone here.
+        // "am" is not a filler and never a standalone default token, so the sentence is untouched.
         XCTAssertEqual(text("I am hungry"), "I am hungry")
     }
 
     func testNeverAltersAHummingbird() {
-        // "um"/"hmm"/"mm" are substrings of "hummingbird" but never a whole token in it. No filler was
+        // "um"/"hmm" are substrings of "hummingbird" but never a whole token in it. No filler was
         // removed, so the user's own casing (including the lowercase lead) is left verbatim.
         XCTAssertEqual(text("a hummingbird hummed"), "a hummingbird hummed")
     }
@@ -81,6 +81,43 @@ final class FillerRemovalProcessorTests: XCTestCase {
     func testDoesNotStripRiskyWords() {
         // The conservative default set excludes "like", "so", "you know", "yeah", "right".
         XCTAssertEqual(text("I like it, so yeah, right"), "I like it, so yeah, right")
+    }
+
+    // MARK: - Default set must never change factual content (engineer review)
+
+    func testDoesNotStripMillimetreUnit() {
+        // "mm"/"mmm" are removed from the DEFAULT set: "mm" is the millimetre unit, so stripping it
+        // would turn "20 mm of rain" into "20 of rain" - a factual change. The default must leave it.
+        XCTAssertEqual(text("20 mm of rain"), "20 mm of rain")
+        XCTAssertEqual(text("5 mm"), "5 mm")
+        XCTAssertEqual(text("the mmm setting"), "the mmm setting")
+    }
+
+    func testDoesNotStripErOrAhInterjections() {
+        // "er"/"ah" are removed from the DEFAULT set: "Ah, finally!" is a genuine interjection and "er"
+        // collides with real words, so the default leaves both. (Candidates for a future opt-in list.)
+        XCTAssertEqual(text("Ah, finally!"), "Ah, finally!")
+        XCTAssertEqual(text("er, maybe later"), "er, maybe later")
+    }
+
+    // MARK: - Quoted speech is left verbatim, and no removal leaves a broken artifact
+
+    func testDoesNotStripFillerInsideQuotes() {
+        // The user is transcribing someone's literal words: a filler inside a quoted span stays, and no
+        // dangling comma is left hugging the open quote ("he said \"um, no\"" preserved verbatim).
+        XCTAssertEqual(text("he said \"um, no\""), "he said \"um, no\"")
+    }
+
+    func testStripsFillerOutsideQuotesButNotInside() {
+        // A leading (unquoted) filler is removed and the quoted content is untouched.
+        XCTAssertEqual(text("um he said \"uh, sure\""), "He said \"uh, sure\"")
+    }
+
+    func testFillerRightAfterOpeningQuoteLeavesNoDanglingComma() {
+        // Even in a MIXED case where a filler is removed adjacent to an opening quote, no stray comma is
+        // left abutting the quote. Here the quote is unmatched (protects to end), so the inner "um" is
+        // kept; the pass must still never produce a `", ` artifact hugging the quote.
+        XCTAssertEqual(text("she quoted \"um, later"), "she quoted \"um, later")
     }
 
     // MARK: - Spacing / punctuation tidying

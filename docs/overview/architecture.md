@@ -150,9 +150,11 @@ How the system is built and why.
   `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST control word found anywhere),
   `MiraTextProcessor` (the `TextProcessor` that splits at commands), `SentenceTokenizer`
   (`NLTokenizer`-backed, for "remove the last sentence"), `FillerRemovalProcessor` (spec 0016: a pure
-  `TextProcessor` that strips standalone hesitation tokens from a conservative default set and drops a
-  filler-only segment to `.drop`), `TranscriptCleanup` (spec 0016: pure `reflow` that merges obvious
-  continuation lines in an edited/imported transcript), and `Speaker`/`SystemSpeaker`
+  `TextProcessor` that strips standalone hesitation tokens from a conservative default set - only
+  unambiguous hesitations, since it is on by default, so no unit/word/interjection is ever removed and a
+  filler inside a quoted span is kept - and drops a filler-only segment to `.drop`), `TranscriptCleanup`
+  (spec 0016: pure `reflow` that merges obvious continuation lines, plus `refinedForSave(note, refine:)`
+  - the single gate for reflow-on-edit-save), and `Speaker`/`SystemSpeaker`
   (`AVSpeechSynthesizer` text to speech for "read that back"). `SystemSpeaker` sets each utterance's
   voice to the best installed one for the user's language (spec 0014) via the pure `VoiceSelector`
   (`bestVoiceIdentifier(from:languageCode:)`, premium > enhanced > default, exact-region preferred,
@@ -295,10 +297,12 @@ How the system is built and why.
   route seeded with a fresh `Note(title: "", paragraphs: [], folderPath: currentPath)`. `FolderRow` mirrors `NoteCard`'s surface with a folder
   glyph, item count, and chevron. `DictationView` binds to `DictationViewModel`; `NoteCard`,
   `NoteDetailView` stay presentational. On a committed edit, `StreamListView`'s `onCommitEdit` runs
-  the note through `refined(...)` before saving (spec 0016): when `refineTranscript` is on it applies
-  `TranscriptCleanup.reflow` to merge continuation lines, rebuilding via `Note.editedCopy` so the title,
-  recording, timings, and folder are preserved. Reflow runs ONLY on this edit-save path, never on load,
-  so an untouched loaded note is never silently rewritten. `SettingsView` edits the injected
+  the note through the pure `TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)`
+  before saving (spec 0016): when the flag is on it reflows continuation lines, rebuilding via
+  `Note.editedCopy` so the title, recording, timings, and folder are preserved, and returns the note
+  unchanged when off or when nothing merges. That pure gate is the SINGLE enforcement of "reflow on
+  edit-save when refine is on, never on load" - no load path calls it, so an untouched loaded note is
+  never silently rewritten (unit-tested off/on/no-op). `SettingsView` edits the injected
   `SettingsStoring` instance directly (control-phrase field with validation hint, a "Refine transcript"
   toggle, add/edit/delete override rows, a read-only storage-status row from `NoteStoreKind`). The chosen `NoteSortOrder` persists through
   `SettingsStoring.noteSortOrder` (a stable string tag; unknown -> `.newest`).

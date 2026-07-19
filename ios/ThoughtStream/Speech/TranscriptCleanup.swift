@@ -5,12 +5,34 @@ import Foundation
 /// older note can still have a single sentence split across paragraphs. `reflow` merges the obvious
 /// continuation cases and nothing else.
 ///
-/// It is applied only when the refine setting is on AND a note is saved after an EDIT (wired at the
-/// composition root in `StreamListView.refined(_:)` on the `onCommitEdit` save path; `NoteDetailView`
-/// only emits the intent and stays presentational), never on load - so an untouched old note is not
-/// silently rewritten until the user edits it. Kept pure (a `[String] -> [String]` on paragraphs) so
-/// the merge rule is unit-tested without the view.
+/// It is applied only when the refine setting is on AND a note is saved after an EDIT (the composition
+/// root's `StreamListView` calls `refinedForSave(_:refine:)` on the `onCommitEdit` save path;
+/// `NoteDetailView` only emits the intent and stays presentational), never on load - so an untouched
+/// old note is not silently rewritten until the user edits it. Both the merge rule (`reflow`) and the
+/// on-save gating (`refinedForSave`) are pure so they are unit-tested without the view.
 enum TranscriptCleanup {
+    /// The Note to persist on an edit-save (spec 0016), gated by the refine flag. This is the SINGLE
+    /// enforcement point for "reflow on edit-save when refine is on, and NEVER on load": callers hand
+    /// it the edited note plus the current `refineTranscript` setting.
+    ///
+    /// - `refine == false` -> the note is returned VERBATIM (no reflow), preserving today's behavior.
+    /// - `refine == true` -> paragraphs are `reflow`-merged; if reflow changed nothing the SAME note is
+    ///   returned unchanged (a note with no continuations is byte-identical, so a re-save is a no-op),
+    ///   otherwise a rebuilt copy via `Note.editedCopy` preserving title, recording, timings, and folder.
+    ///
+    /// Load paths never call this, so a note is refined only when the user edits and saves it - an
+    /// untouched loaded note is never silently rewritten.
+    static func refinedForSave(_ note: Note, refine: Bool) -> Note {
+        guard refine else { return note }
+        let reflowed = reflow(note.paragraphs)
+        guard reflowed != note.paragraphs else { return note }
+        return note.editedCopy(
+            paragraphs: reflowed,
+            hasCustomTitle: note.hasCustomTitle,
+            customTitle: note.title
+        )
+    }
+
     /// Merge obvious continuation lines: a paragraph that does NOT end in terminal punctuation, followed
     /// by a paragraph that BEGINS with a lowercase letter, is joined with a single space. Conservative:
     ///
@@ -24,6 +46,14 @@ enum TranscriptCleanup {
     /// - It is idempotent: running it on its own output changes nothing, because a merged paragraph
     ///   ends with whatever its last fragment ended with, and the merge test is re-evaluated left to
     ///   right against the growing result.
+    ///
+    /// KNOWN TRADE-OFF (engineer review): a dictated list whose items are adjacent lowercase paragraphs
+    /// with no terminal punctuation ("Buy milk" / "eggs and bread") MERGES into one line by design -
+    /// that is exactly the continuation rule, and the transcript layer cannot tell a run-on sentence
+    /// from an intended list. The escape hatch is the same signal a user already has: a DELIBERATE blank
+    /// line between items survives (it makes them separate paragraphs the rule leaves alone), and a
+    /// capitalized or terminated item is never merged. Adjacent lowercase continuations merging is the
+    /// accepted behavior, not a bug.
     static func reflow(_ paragraphs: [String]) -> [String] {
         var result: [String] = []
         for raw in paragraphs {

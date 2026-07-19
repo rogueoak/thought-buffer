@@ -419,24 +419,29 @@ NON-DESTRUCTIVE to audio - only the transcript text is refined; playback still p
 recording.
 
 - **Filler-word removal (live).** A conservative, whole-token, case-insensitive `FillerRemovalProcessor`
-  strips standalone hesitations - `um, umm, uh, uhh, erm, hmm, mm, mmm, er, ah, uh-huh` - from committed
-  dictation, tidies the spacing / dangling punctuation left behind, and re-capitalizes a sentence whose
-  leading filler was removed ("um so, uh, the plan" -> "So, the plan"). It NEVER touches a filler that is
-  part of a real word ("I am hungry", "a hummingbird" are untouched), and deliberately EXCLUDES risky,
-  often-meaningful words ("like", "so", "you know", "yeah", "right") because a false positive there
-  silently changes meaning - worse than leaving a filler in. A segment that was nothing but fillers is
-  dropped (no empty paragraph, and the pause-based paragraph grouper's anchor is not advanced, so it
-  cannot shift the next paragraph boundary). The stage runs AFTER the Mira command split and spelling
-  overrides, so it only ever touches dictation text, never a command.
+  strips standalone hesitations - `um, umm, uh, uhh, erm, hmm, uh-huh` - from committed dictation, tidies
+  the spacing / dangling punctuation left behind, and re-capitalizes a sentence whose leading filler was
+  removed ("um so, uh, the plan" -> "So, the plan"). Because it is on by default, the default set holds
+  only unambiguous hesitations that can never be a real word or unit: it NEVER touches a filler inside a
+  real word ("I am hungry", "a hummingbird"), a quoted span (`he said "um, no"` is kept verbatim), a
+  unit ("20 mm of rain" - `mm`/`mmm` are excluded), or a real interjection ("Ah, finally!" - `er`/`ah`
+  are excluded), and it excludes the often-meaningful connectives ("like", "so", "you know", "yeah",
+  "right"). A false positive silently changes meaning, which is worse than leaving a filler in;
+  `mm`/`mmm`/`er`/`ah` are candidates for a future opt-in "aggressive" list, not the default. A segment
+  that was nothing but fillers is dropped (no empty paragraph, and the pause-based paragraph grouper's
+  anchor is not advanced, so it cannot shift the next paragraph boundary). The stage runs AFTER the Mira
+  command split and spelling overrides, so it only ever touches dictation text, never a command.
 - **"Delete the last line" and "scratch that" commands.** After the control word, "delete/remove the
   last line" and "scratch that" both reuse the existing remove-last-sentence action (a spoken "line"
   maps to the last thing said); "delete the last paragraph" still drops a whole block. The cheat sheet
   lists the new phrasings.
 - **Sentence-merge cleanup on edit.** A pure `TranscriptCleanup.reflow` merges obvious continuation
   lines in edited or imported text - a paragraph with no terminal punctuation followed by one that
-  begins lowercase is joined with a space. It never merges across a deliberate break and never splits.
-  It runs only when refine is on AND a note is saved after an edit, so an untouched old note is never
-  silently rewritten.
+  begins lowercase is joined with a space. It never merges across a deliberate break and never splits (a
+  dictated list of adjacent lowercase items does merge by design - the escape hatch is a deliberate blank
+  line between them). The pure `TranscriptCleanup.refinedForSave(note, refine:)` is the single gate: it
+  runs the merge only when refine is on AND on the edit-save path (never on load), so an untouched old
+  note is never silently rewritten.
 - **Settings.** A "Refine transcript" toggle (default on) persists in `UserDefaults` and gates both the
   filler stage (built into the per-session text processor, so it takes effect next session) and the
   edit-save reflow. When off, text is committed verbatim (the pre-0016 behavior). The subtitle notes

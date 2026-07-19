@@ -530,3 +530,23 @@ over user-controlled length that is not anchored on both sides by a required lit
 risk; either bound it or eliminate the run before it is reached. Generalizes to any multi-pass regex
 cleanup (sanitizers, formatters, tokenizers) where an early normalization would make later patterns both
 cheaper and simpler.
+
+## A default-on transform must set its threshold at "can never change meaning", not "usually fine" (spec 0016)
+
+The filler-removal default set first included `mm`/`mmm`/`er`/`ah`. Each is a plausible hesitation, but
+`mm` is the millimetre UNIT ("20 mm of rain" -> "20 of rain", a factual change) and `ah`/`er` are real
+interjections/words ("Ah, finally!" -> "Finally!"). The trap: the feature ships ON BY DEFAULT, so every
+user's notes pass through it silently - a token that is "usually a filler" is not good enough, because
+the rare real-word case is a silent content edit the user never opted into and may not notice. The bar
+for a default-on, content-mutating transform is therefore "can this token EVER be a real word, unit, or
+name in normal use" - if yes, it is out of the default, no matter how often it is a filler. The same
+review surfaced a second class of the same bug: stripping a filler INSIDE quoted speech (`he said
+"um, no"`) edits a quotation the user is transcribing verbatim. Two rules generalize. First: split the
+policy into a safe-by-default set (only tokens that can never be meaningful) and an explicit opt-in
+"aggressive" set for the ambiguous ones - never let convenience push an ambiguous token into the default.
+Second: a content transform must respect the user's framing markers (quotes, code spans, verbatim
+blocks) and skip protected regions, because inside them the user's INTENT is "leave this exactly as I
+said it". Generalizes to any auto-applied rewrite (autocorrect, filler/dead-air removal, summarization,
+redaction): gate the default on "never wrong", offer the rest as opt-in, and never rewrite inside a
+verbatim/quoted span. Ship the pure core with negative tests for the exact real-word collisions ("20 mm",
+"Ah, finally!", quoted "um") so the boundary is pinned in CI, not just reasoned about.
