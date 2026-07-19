@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="design/branding/wordmark.svg" alt="Thought Stream" width="440" />
+</p>
+
 # Thought Stream
 
 **Hands-free, on-device dictation thoughts for iPhone and CarPlay.**

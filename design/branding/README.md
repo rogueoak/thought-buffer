@@ -25,3 +25,12 @@ done
 ```
 
 The icon uses no transparency and no rounded corners; iOS applies the rounded-square mask.
+
+## Wordmark
+
+`wordmark.svg` is the horizontal logo: the app-icon soundwave in an 84 x 84 product tile, next to
+the "Thought Stream" wordmark and a one-line descriptor. It is drawn in the shared Rogue Oak logo
+language (520 x 150 canvas, monoline mark, accent underline) so it sits in the same family as the
+Spectra, Trellis, and Canopy wordmarks. Use it wherever the name needs to read as a logo - the top
+of this README, the rogueoak.com Coming Soon section, docs. For a square badge (app stores, avatars)
+use `app-icon.svg` instead.
