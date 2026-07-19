@@ -753,3 +753,20 @@ stops CREATING new nesting (create-folder and move-to-folder target the top leve
 old nesting flattened. Generalizes: when a redesign narrows what the app produces but must keep old data
 visible, prefer a read-time projection over a write-time migration - it is reversible, crash-safe, and keeps
 the on-disk format a stable contract, at the cost of a slightly smarter query.
+
+## Consolidating a clamp to one rule exposes fixtures that leaned on the old, looser one (spec 0027)
+
+Adding drag-to-seek and skip +/-15 to the shared player, the clamp to `[0, duration]` was made ONE pure
+rule (`PlaybackProgress.clamp`) and `skip(by:)` was routed through `seek(to:)` so both clamp against the
+controller's known `duration` rather than trusting the player's own undocumented `currentTime` clamp. That
+tightening immediately failed three PRE-EXISTING skip tests - not because the new code was wrong, but
+because their fixtures set `currentTime` to 30 or 60 on a 12-second recording and asserted the raw
+relative math (`45`, `75`), values only reachable when nothing clamps to the real duration. The looser old
+path (no controller-side duration clamp) had quietly made those impossible positions "work" in the test.
+Two rules generalize. First: when you promote a scattered/implicit clamp to a single explicit rule,
+re-audit every test that exercised the old path - a green test can be green only because it relied on the
+absent constraint, and it flips the moment the constraint is real (fix the fixture to a valid state, do
+not weaken the new clamp back). Second: prefer expressing a bound ONCE, at the layer that owns the
+authoritative value (here the controller owns `duration`), and have relative operations compose through
+the absolute one (`skip` -> `seek` -> clamp), so there is a single definition of "in range" that the
+in-app slider, the system scrubber, and both skip directions all share and cannot drift.

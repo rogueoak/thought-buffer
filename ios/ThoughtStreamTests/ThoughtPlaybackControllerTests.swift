@@ -124,7 +124,9 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         let player = SpyPlayer()
         player.currentTimeValue = 30
         let controller = makeController(player: player)
-        controller.play(thought: recordedThought())
+        // A recording long enough that the relative skip stays in range (spec 0027: skip clamps to the
+        // recording's duration, so a short fixture would clamp the +/- math being asserted here).
+        controller.play(thought: recordedThought(length: 120))
         await settle()
 
         controller.skip(by: 15)
@@ -158,7 +160,7 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         player.currentTimeValue = 60
         let remote = SpyRemote()
         let controller = makeController(player: player, remote: remote)
-        controller.play(thought: recordedThought())
+        controller.play(thought: recordedThought(length: 120))
         await settle()
 
         remote.fireSkipForward()
@@ -207,7 +209,7 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         player.currentTimeValue = 60
         let remote = SpyRemote()
         let controller = makeController(player: player, remote: remote)
-        controller.play(thought: recordedThought())
+        controller.play(thought: recordedThought(length: 120))
         await settle()
 
         remote.fireSkipBackward()
@@ -380,6 +382,86 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         // Exactly at the boundaries -> unchanged (the on/off edge where an off-by-one would live).
         XCTAssertEqual(SystemAudioThoughtPlayer.clampedSeekTime(0, duration: duration), 0)
         XCTAssertEqual(SystemAudioThoughtPlayer.clampedSeekTime(duration, duration: duration), duration)
+    }
+
+    // MARK: - Transport progress + scrub (spec 0027)
+
+    /// Playing publishes the recording's total duration and resets elapsed, so the bottom player's slider
+    /// spans the full recording from the top.
+    func testPlayPublishesDurationAndResetsElapsed() async {
+        let controller = makeController()
+        controller.play(thought: recordedThought(length: 24))
+        await settle()
+
+        XCTAssertEqual(controller.duration, 24, "duration comes from the thought's recording length")
+        XCTAssertEqual(controller.elapsed, 0, "a fresh play starts elapsed at 0")
+    }
+
+    /// Seeking to an absolute position updates the published elapsed and seeks the player there, so the
+    /// bar's slider and the player agree after a drag.
+    func testSeekUpdatesElapsedAndSeeksPlayer() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        controller.play(thought: recordedThought(length: 30))
+        await settle()
+
+        controller.seek(to: 12)
+        XCTAssertEqual(player.seeks.last, 12, "the player is sought to the absolute target")
+        XCTAssertEqual(controller.elapsed, 12, "elapsed reflects the new position immediately")
+    }
+
+    /// A seek past either end clamps into `[0, duration]` (the same rule the player applies), so a drag
+    /// to the far edge or a scrub past the end lands in range rather than out of bounds.
+    func testSeekClampsToDuration() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        controller.play(thought: recordedThought(length: 20))
+        await settle()
+
+        controller.seek(to: 999)
+        XCTAssertEqual(controller.elapsed, 20, "a seek past the end pins to the duration")
+        controller.seek(to: -5)
+        XCTAssertEqual(controller.elapsed, 0, "a seek before the start pins to 0")
+    }
+
+    /// A skip forward past the end clamps to the duration rather than seeking out of range.
+    func testSkipForwardClampsToDuration() async {
+        let player = SpyPlayer()
+        player.currentTimeValue = 18
+        let controller = makeController(player: player)
+        controller.play(thought: recordedThought(length: 20))
+        await settle()
+
+        controller.skip(by: 15)
+        XCTAssertEqual(controller.elapsed, 20, "skip forward past the end clamps to the duration")
+    }
+
+    /// The system UI's scrubber (lock screen / Control Center / Dynamic Island) fires the registered
+    /// change-position handler with an absolute target; it must seek the shared controller there.
+    func testRemoteScrubCommandSeeksController() async {
+        let player = SpyPlayer()
+        let remote = SpyRemote()
+        let controller = makeController(player: player, remote: remote)
+        controller.play(thought: recordedThought(length: 40))
+        await settle()
+
+        remote.fireScrub(to: 25)
+        XCTAssertEqual(player.seeks.last, 25, "the scrubber seeks the recording to the dragged position")
+        XCTAssertEqual(controller.elapsed, 25)
+    }
+
+    /// Stopping clears the published progress so the bar (were it to briefly linger) shows no stale
+    /// elapsed/duration.
+    func testStopClearsProgress() async {
+        let controller = makeController()
+        controller.play(thought: recordedThought(length: 30))
+        await settle()
+        controller.seek(to: 10)
+        XCTAssertEqual(controller.elapsed, 10)
+
+        controller.stop()
+        XCTAssertEqual(controller.elapsed, 0, "stop clears elapsed")
+        XCTAssertEqual(controller.duration, 0, "stop clears duration")
     }
 
     // MARK: - Queue (spec 0015)
@@ -700,6 +782,7 @@ private final class SpyRemote: RemoteCommandRegistering {
     private var stop: (() -> Void)?
     private var skipForward: (() -> Void)?
     private var skipBackward: (() -> Void)?
+    private var scrub: ((Double) -> Void)?
 
     func register(
         play: @escaping () -> Void,
@@ -707,16 +790,19 @@ private final class SpyRemote: RemoteCommandRegistering {
         toggle: @escaping () -> Void,
         stop: @escaping () -> Void,
         skipForward: @escaping () -> Void,
-        skipBackward: @escaping () -> Void
+        skipBackward: @escaping () -> Void,
+        scrub: @escaping (Double) -> Void
     ) {
         isRegistered = true
         self.play = play; self.pause = pause; self.toggle = toggle
         self.stop = stop; self.skipForward = skipForward; self.skipBackward = skipBackward
+        self.scrub = scrub
     }
 
     func unregisterAll() {
         isRegistered = false
         play = nil; pause = nil; toggle = nil; stop = nil; skipForward = nil; skipBackward = nil
+        scrub = nil
     }
 
     func firePlay() { play?() }
@@ -725,4 +811,5 @@ private final class SpyRemote: RemoteCommandRegistering {
     func fireStop() { stop?() }
     func fireSkipForward() { skipForward?() }
     func fireSkipBackward() { skipBackward?() }
+    func fireScrub(to position: Double) { scrub?(position) }
 }

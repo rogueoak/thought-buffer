@@ -286,14 +286,17 @@ How the system is built and why.
     new segment - which must not corrupt the original, incompatible format, verify failure, a delete racing
     the swap) leaves the fallback standing, so the original recording is never lost. A resume onto a
     text-only thought (spec 0013) still adopts a fresh recording, and retention OFF stays a text-only append.
-  - **System Now Playing (spec 0008).** `NowPlayingCenter.swift` holds the media-center seam:
+  - **System Now Playing (spec 0008, extended 0027).** `NowPlayingCenter.swift` holds the media-center seam:
     `NowPlayingInfo` (title / duration / elapsed / rate value), `NowPlayingInfoWriting` (production
     `SystemNowPlayingInfoWriter` over `MPNowPlayingInfoCenter`), and `RemoteCommandRegistering`
     (production `SystemRemoteCommandRegistrar` over `MPRemoteCommandCenter`, wiring
-    play / pause / toggle / stop / skip-forward / skip-back at a 15s interval). Both are protocols so
-    the playback controller is unit-testable with spies and no real media center. Adding `audio` to
-    `UIBackgroundModes` (Info.plist) makes background playback + lock-screen Now Playing work; it needs
-    no entitlement.
+    play / pause / toggle / stop / skip-forward / skip-back at a 15s interval, PLUS spec 0027's
+    `changePlaybackPositionCommand` - the `scrub:` handler receives the system scrubber's absolute
+    `positionTime` and seeks the controller, so the lock screen / Control Center / Dynamic Island scrubber
+    drives the same recording the in-app slider does). Both are protocols so the playback controller is
+    unit-testable with spies and no real media center. Adding `audio` to `UIBackgroundModes` (Info.plist)
+    makes background playback + lock-screen Now Playing work and lights up the Dynamic Island for the
+    active audio session; it needs no entitlement (no custom ActivityKit Live Activity).
 - `TextProcessor` seam - a finalized segment runs through `process`, which returns a
   `ProcessedSegment`: `.text` to commit, `.split(preText:command:)` (feedback 0006: the dictation
   before the control word plus a command outcome - `.command` to execute or `.unrecognizedCommand` to
@@ -400,12 +403,20 @@ How the system is built and why.
     sidebar (an alias always survives). Storage is unchanged; `createFolder` and move-to-folder target the top
     level only, and deeper legacy dirs keep loading (their thoughts surface flattened). The seams are
     unit-tested (`TopLevelFoldersTests`, `NewThoughtPlacementTests`, `SplitDetailReconcileTests`).
-  - **Shared playback + CarPlay browser (spec 0008).** `ThoughtPlaybackController` (`@MainActor
+  - **Shared playback + CarPlay browser (spec 0008, extended 0027).** `ThoughtPlaybackController` (`@MainActor
     ObservableObject`) is the ONE audio path: it owns an `AudioThoughtPlayer`, an `AudioURLResolving`
-    (lazy off-main resolution at play time, as 0007's model did), and the Now Playing / remote-command
+    (lazy off-main resolution at play time, as 0007's model did; the `AudioURLResolving` protocol +
+    `StoreAudioURLResolver` now live in their own `ViewModels/AudioURLResolving.swift` after spec 0027
+    removed the `ThoughtPlaybackModel` they used to share a file with), and the Now Playing / remote-command
     seams, exposing play / pause / resume / stop / skip and one writer of `MPNowPlayingInfoCenter`.
-    Both the phone detail view (through `ThoughtPlaybackModel`, now a thin projection over the controller
-    that keeps the simple play / stop button) and the CarPlay scene drive it. **Queue (spec 0015):** the
+    **Transport (spec 0027):** it also publishes `elapsed` / `duration` and owns a live-progress ticker (a
+    ~250ms `Task` loop that samples `player.currentTime` into `elapsed` and refreshes Now Playing while
+    playing, started on play/resume and cancelled on pause/stop/finish), plus `seek(to:)` (absolute,
+    clamped to `[0, duration]` via the pure `PlaybackProgress.clamp`) that the in-app slider drag AND the
+    system scrubber both drive; `skip(by:)` routes through `seek` so it clamps too. The phone detail view
+    no longer hosts an in-note transport (spec 0027 removed `ThoughtPlaybackModel`): its "Play recording"
+    button just starts the thought on the controller, surfacing the bottom player. The CarPlay scene drives
+    the same controller. **Queue (spec 0015):** the
     controller also owns an internal ordered `queue: [Thought]` + index. `playQueue(_:)` filters to
     `hasAudio` thoughts and plays the first through the shared start path; the NATURAL end-of-track path
     (`handleFinish`) advances to the next until the queue is exhausted, then clears. The advance is
@@ -481,8 +492,11 @@ How the system is built and why.
   the actions), `.searchResults` (a flat GLOBAL result list from `ThoughtSearch.results` over `feed.thoughts`,
   ignoring `folderPath`), `.noMatches` (a message, search field kept visible), or `.normal` (the
   interleaved `FolderListModel` list). The `searchQuery` is a `@Binding` owned by `StreamListView` (so a
-  search started on the thought page can pop to root and land here). The `NowPlayingBar` still sits above
-  the bottom bar in the same inset, and the transient undo-delete chip (spec 0020) now renders at the
+  search started on the thought page can pop to root and land here). The bottom PLAYER (`BottomPlayer`,
+  spec 0027, superseding spec 0015's `NowPlayingBar`) still sits above the bottom bar in the same inset -
+  now a full transport (title, play/pause, draggable seek slider with elapsed/remaining labels, skip
+  +/-15s, Next while a queue has one), rendered in the ONE `StreamBottomStack` so compact and the iPad
+  lifted stack share it. The transient undo-delete chip (spec 0020) now renders at the
   TOP of that same VStack (its ~5s window timer moved here, lifecycle-tied and keyed on
   `ThoughtDeletionController.deleteTrigger`, replacing the old root overlay + hardcoded clearance), so the
   three bottom affordances compose without overlap. `ThoughtDetailView`'s bottom bar reuses the SAME
