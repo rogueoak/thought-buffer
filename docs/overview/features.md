@@ -321,11 +321,15 @@ Notes get a real, editable title instead of an always-derived one.
 A branded launch moment: on a normal cold launch the app shows a full-screen cover on the River Mist
 background before the Thoughts list.
 
-- **Icon over a waveform.** The app icon (rounded, with a subtle shadow) is centered, with a row of
-  eight equalizer bars in the primary token beneath it that rise and fall as if reacting to a voice.
+- **Title over icon over a waveform.** A prominent "Thought Stream" wordmark (Canopy `sizeX3xl`,
+  bold) sits above the app icon (rounded, with a subtle shadow), centered, with a row of eight
+  equalizer bars in the primary token beneath it that rise and fall as if reacting to a voice. The
+  title renders in both the animated and Reduce Motion variants.
 - **Speech-like animation.** The bars are driven by a `TimelineView(.animation)`; each bar's height
   is a phase-shifted sum of two sines of the timeline date, so the row ripples like speech rather than
-  sweeping as one wave. The pure math lives in the testable `LaunchCoverView.barHeight(bar:of:at:)`.
+  sweeping as one wave. The per-bar phase is indexed from the far end (`count - 1 - bar`) so the
+  traveling wave sweeps in the intended direction (feedback 0018). The pure math lives in the testable
+  `LaunchCoverView.barHeight(bar:of:at:)`.
 - **Short hold, then cross-fade.** The cover holds for ~2.5s (a named constant) and cross-fades into
   the Thoughts list. It sits above the brief storage-resolution themed background, so the open is one
   smooth moment rather than background -> pop -> list. Tapping the cover skips it immediately.

@@ -23,13 +23,18 @@ struct LaunchCoverView: View {
             CanopyColor.bg.ignoresSafeArea()
 
             VStack(spacing: CanopySpacing.x8) {
+                Text("Thought Stream")
+                    .font(.system(size: CanopyFont.sizeX3xl, weight: .bold))
+                    .foregroundStyle(CanopyColor.text)
+                    .multilineTextAlignment(.center)
+
                 Image("LaunchIcon")
                     .resizable()
                     .interpolation(.high)
                     .frame(width: iconSize, height: iconSize)
                     .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.x2xl, style: .continuous))
                     .shadow(color: CanopyColor.overlay.opacity(0.25), radius: 20, y: 10)
-                    .accessibilityLabel("Thought Stream")
+                    .accessibilityHidden(true)
 
                 bars
                     .frame(height: barRowHeight)
@@ -94,7 +99,9 @@ struct LaunchCoverView: View {
     /// and ripples over time like speech. Two frequencies are summed so the motion does not read as a
     /// single sweeping wave.
     static func barHeight(bar: Int, of count: Int, at t: Double) -> Double {
-        let index = Double(bar)
+        // Reverse the traveling-wave direction (feedback 0018): index the phase from the far end so
+        // the crest sweeps the opposite way. Bar 0 uses the largest offset, the last bar uses zero.
+        let index = Double(count - 1 - bar)
         // Phase offset per bar so neighbours differ at any instant (the row is not flat).
         let phase = index * 0.9
         let primaryWave = sin(t * 3.1 + phase)
