@@ -55,7 +55,9 @@ enum ThoughtSearch {
     /// one normalization.
     private static func normalized(_ value: String) -> String {
         value
-            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            // The same fold options as `ThoughtFind` (the per-thought find), shared via one constant so the
+            // global and in-thought search cannot drift on the option set (architect review).
+            .folding(options: ThoughtFind.foldingOptions, locale: .current)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

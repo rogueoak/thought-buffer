@@ -73,11 +73,15 @@ How the system is built and why.
 - `Models/` - `ThoughtFind` + `ThoughtFindNavigator` (spec 0025) are the pure, unit-testable IN-THOUGHT
   find - the per-thought counterpart to `ThoughtSearch` (which decides WHICH thoughts match, globally).
   `ThoughtFind.matches(title:paragraphs:query:)` returns the ordered `Match` locations within ONE thought
-  (a `Region` = `.title` or `.paragraph(Int)`, plus the character `Range<String.Index>` into that region's
-  ORIGINAL text), reusing `ThoughtSearch`'s case- and diacritic-insensitive folding but folding PER
-  CHARACTER so each range maps back to the original string (a length-changing fold would misplace the
-  highlight); an empty/whitespace query yields no matches, matches within a region are left-to-right and
-  non-overlapping, and the order is title-then-paragraphs-in-order. `ThoughtFindNavigator` holds the
+  (a `Region` = `.title` or `.paragraph(Int)`, plus a `Range<Int>` of CHARACTER OFFSETS into that region's
+  ORIGINAL text - integer offsets, not a `String.Index`, which is valid only against its producing string
+  and would be undefined against the title the view re-derives each render), reusing `ThoughtSearch`'s case-
+  and diacritic-insensitive folding OPTIONS (one shared `ThoughtFind.foldingOptions` constant, so the two
+  seams cannot drift) but folding PER CHARACTER so each range maps back to the original string (a
+  length-changing whole-string fold would misplace the highlight; the two AGREE for length-preserving folds
+  and diverge only for the rare ligature / 'sz' case, documented on `fold`); an empty/whitespace query
+  yields no matches, matches within a region are left-to-right and non-overlapping, and the order is
+  title-then-paragraphs-in-order. `ThoughtFindNavigator` holds the
   current-match index (starts on the first match), steps next/previous WRAPPING, and formats the "N of M"
   `countLabel`; `Region.scrollID` is the stable `ScrollViewReader` anchor. `ThoughtDetailView` is a thin
   caller: its bottom-bar search field drives this find (superseding spec 0021's "detail search routes to

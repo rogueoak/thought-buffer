@@ -565,11 +565,13 @@ struct ThoughtDetailView: View {
         guard findNavigator.hasMatches else { return attributed }
         let current = findNavigator.currentMatch
         for match in findNavigator.matches where match.region == region {
-            // Map the match's `String.Index` range to CHARACTER offsets, then into the `AttributedString`
-            // (built from the same string, so character offsets align). Guard the bounds so a stale match
-            // against a just-edited paragraph is skipped rather than crashing.
-            let lower = text.distance(from: text.startIndex, to: match.range.lowerBound)
-            let upper = text.distance(from: text.startIndex, to: match.range.upperBound)
+            // The match carries CHARACTER OFFSETS (instance-independent, unlike a `String.Index` which is
+            // valid only against its producing string - the title is re-derived each render, engineer
+            // review). Map them into the `AttributedString` (built from this same region text, so the
+            // character offsets align). Guard the bounds so a stale match against a just-edited paragraph is
+            // skipped rather than crashing.
+            let lower = match.characterRange.lowerBound
+            let upper = match.characterRange.upperBound
             guard lower >= 0, upper <= attributed.characters.count, lower < upper else { continue }
             let start = attributed.index(attributed.startIndex, offsetByCharacters: lower)
             let end = attributed.index(attributed.startIndex, offsetByCharacters: upper)

@@ -14,7 +14,10 @@ final class ThoughtFindTests: XCTestCase {
         case let .paragraph(index):
             source = paragraphs[index]
         }
-        return String(source[match.range])
+        // The match carries CHARACTER OFFSETS; resolve them against the region text (as the view does).
+        let lower = source.index(source.startIndex, offsetBy: match.characterRange.lowerBound)
+        let upper = source.index(source.startIndex, offsetBy: match.characterRange.upperBound)
+        return String(source[lower..<upper])
     }
 
     // MARK: - Region matches: title / body / ordering
@@ -53,7 +56,25 @@ final class ThoughtFindTests: XCTestCase {
         let matches = ThoughtFind.matches(title: "no", paragraphs: paragraphs, query: "aa")
         XCTAssertEqual(matches.count, 2)
         // Non-overlapping, so the two "aa" runs are distinct and ordered by start.
-        XCTAssertTrue(matches[0].range.lowerBound < matches[1].range.lowerBound)
+        XCTAssertTrue(matches[0].characterRange.lowerBound < matches[1].characterRange.lowerBound)
+    }
+
+    func testOverlappingRunsAreNonOverlapping() {
+        // "aaa" contains "aa" twice if overlapping is allowed; non-overlapping yields exactly ONE match,
+        // covering the first two characters (tester review - the "aa then aa" test passes either way).
+        let matches = ThoughtFind.matches(title: "aaa", paragraphs: [], query: "aa")
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches[0].characterRange, 0..<2)
+    }
+
+    func testMatchAtEndOfRegion() {
+        // A match ending at the very LAST character exercises the upper-bound offset the highlight consumes
+        // (tester review): the range must cover through the final character without overrunning.
+        let paragraphs = ["ends with plan"]
+        let matches = ThoughtFind.matches(title: "no", paragraphs: paragraphs, query: "plan")
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches[0].characterRange.upperBound, paragraphs[0].count)
+        XCTAssertEqual(text(of: matches[0], title: "no", paragraphs: paragraphs), "plan")
     }
 
     // MARK: - Case / diacritic insensitivity
@@ -101,6 +122,33 @@ final class ThoughtFindTests: XCTestCase {
         XCTAssertEqual(matches.count, 1)
     }
 
+    func testCombiningMarkOnlyQueryHasNoMatches() {
+        // A query of only a lone combining mark folds AWAY (distinct from whitespace, which trims): the
+        // folded needle is empty, so there are no matches (tester review). U+0301 = combining acute accent.
+        let matches = ThoughtFind.matches(title: "cafe", paragraphs: ["resume"], query: "\u{0301}")
+        XCTAssertTrue(matches.isEmpty)
+    }
+
+    // MARK: - Multi-scalar grapheme (emoji) - per-Character folding
+
+    func testEmojiQueryMatchesByGraphemeCluster() {
+        // A multi-scalar emoji is ONE `Character`; the per-`Character` fold matches it as a single unit and
+        // the character range maps back to the whole grapheme (tester review). Flag emoji = two scalars.
+        let paragraphs = ["party \u{1F389} time"] // party popper emoji
+        let matches = ThoughtFind.matches(title: "no", paragraphs: paragraphs, query: "\u{1F389}")
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(text(of: matches[0], title: "no", paragraphs: paragraphs), "\u{1F389}")
+    }
+
+    func testMatchAfterEmojiHasCorrectOffset() {
+        // A match FOLLOWING a multi-scalar emoji must use character (grapheme) offsets, not scalar/UTF-16
+        // offsets, so the range still lands on the word (per-Character offset contract, tester review).
+        let paragraphs = ["\u{1F389} find me"]
+        let matches = ThoughtFind.matches(title: "no", paragraphs: paragraphs, query: "find")
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(text(of: matches[0], title: "no", paragraphs: paragraphs), "find")
+    }
+
     // MARK: - Navigator: current, next / previous (wrap), count
 
     func testNavigatorStartsOnFirstMatch() {
@@ -143,6 +191,20 @@ final class ThoughtFindTests: XCTestCase {
         XCTAssertEqual(nav.countLabel, "1 of 3")
         nav.next()
         XCTAssertEqual(nav.countLabel, "2 of 3")
+    }
+
+    func testRebuildingNavigatorResetsToFirstMatch() {
+        // The view rebuilds the navigator whenever the query changes (`refreshFind`), so navigating and then
+        // rebuilding must return to the first match - the "changed query seeks to the first hit" contract
+        // (tester review). Modeled here at the pure boundary: a fresh navigator over new matches is index 0.
+        let matches = ThoughtFind.matches(title: "a a a", paragraphs: [], query: "a")
+        var nav = ThoughtFindNavigator(matches: matches)
+        nav.next()
+        nav.next()
+        XCTAssertEqual(nav.currentIndex, 2)
+        // A new query rebuilds the navigator from scratch.
+        let rebuilt = ThoughtFindNavigator(matches: ThoughtFind.matches(title: "a a a", paragraphs: [], query: "a"))
+        XCTAssertEqual(rebuilt.currentIndex, 0)
     }
 
     func testNavigatorEmptyListHasNoCurrentAndEmptyCount() {
