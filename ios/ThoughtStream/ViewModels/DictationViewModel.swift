@@ -339,33 +339,53 @@ final class DictationViewModel: ObservableObject {
     /// resumed note's original recording is never re-trimmed.
     private var didAdoptNewRecording = false
 
-    /// Trim dead air from a just-saved note's recording off the main actor, remap its timings, and
-    /// re-save (spec 0019). Non-blocking: the caller has already returned the untrimmed note. On any
-    /// trim failure the original recording and timings are left in place, so the note is never lost.
-    /// The task is detached so it outlives the view being dismissed after `finish()`.
+    /// Called on the main actor after a background dead-air trim finishes and the note's timings were
+    /// re-saved (spec 0019), so the host can reload its feed and drop the stale (un-remapped) in-memory
+    /// note. Nil when no host wired it (tests, screenshot tooling). Set by the view.
+    var onTrimmed: (() -> Void)?
+
+    /// Trim dead air from a just-saved note's recording OFF the main actor, then adopt the trimmed
+    /// audio and remap the note's timings (spec 0019). Non-blocking: `finish()` has already returned
+    /// the untrimmed note. On any trim failure the original recording and timings are left in place, so
+    /// the note is never lost. The task is detached so it outlives the view dismissed after `finish()`.
+    ///
+    /// Two review-driven safeguards. First, the swap is done through the store's COORDINATED
+    /// `replaceAudio` (not a bare `replaceItemAt`), so an iCloud recording is not raced against the sync
+    /// daemon. Second, the timings re-save reads the note FRESH from disk by id and only replaces its
+    /// timings - it does NOT re-save the stale snapshot captured at `finish()`. The user may edit,
+    /// rename, move, or delete the note on the detail screen while a long trim runs; re-saving the
+    /// snapshot would clobber those edits (or resurrect a deleted note). Reading fresh and skipping when
+    /// the note is gone keeps the trim a pure timings-only update.
     private func scheduleTrim(for note: Note) {
         guard let audioTrimmer, note.hasAudio,
               let audioURL = store.audioURL(for: note.id) else { return }
         let store = self.store
-        Task.detached {
+        let noteID = note.id
+        Task.detached { [weak self] in
             let result = await audioTrimmer.trim(fileAt: audioURL)
-            guard case .trimmed(let removedRanges) = result else { return }
-            let remapped = TimingRemapper.remap(timings: note.timings, removedRanges: removedRanges)
-            let trimmedNote = Note(
-                id: note.id,
-                title: note.title,
-                paragraphs: note.paragraphs,
-                createdAt: note.createdAt,
-                hasCustomTitle: note.hasCustomTitle,
-                audioFileName: note.audioFileName,
-                timings: remapped,
-                folderPath: note.folderPath
+            guard case .trimmed(let trimmedFileURL, let removedRanges) = result else { return }
+
+            // Adopt the verified trimmed file through the coordinated atomic-replace seam. On failure,
+            // clean up the temp and leave the original recording + timings untouched (never lost).
+            do {
+                try store.replaceAudio(from: trimmedFileURL, for: noteID)
+            } catch {
+                try? FileManager.default.removeItem(at: trimmedFileURL)
+                return
+            }
+
+            // Re-read the note FRESH from disk and remap only its timings, so a concurrent edit/move on
+            // the detail screen is preserved and a delete is honored (the note is simply gone here).
+            guard let current = store.loadAll().first(where: { $0.id == noteID }) else { return }
+            let remappedNote = current.withTimings(
+                TimingRemapper.remap(timings: current.timings, removedRanges: removedRanges)
             )
-            // Re-save the same `.md` in place with the remapped timings; the trimmed `.m4a` already sits
-            // beside it (replaced atomically by the trimmer). A save failure here leaves the on-disk
-            // note with its original timings against a shorter recording - a seek slip, not data loss -
-            // which is acceptable versus blocking the UI; the audio itself is intact.
-            try? store.save(trimmedNote)
+            // A save failure leaves the note with its original timings against the shorter recording - a
+            // seek slip, not data loss - acceptable versus blocking the UI; the audio itself is intact.
+            try? store.save(remappedNote)
+
+            // Hop back to the main actor so the host reloads and drops the stale in-memory note.
+            await MainActor.run { self?.onTrimmed?() }
         }
     }
 

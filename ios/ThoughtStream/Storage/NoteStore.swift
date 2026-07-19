@@ -362,6 +362,26 @@ struct NoteStore: NoteStoring {
         return destination
     }
 
+    /// Atomically replace a note's existing recording with a rewritten one (spec 0019 dead-air trim).
+    /// Uses `replaceItemAt` so there is never a window where the note has no recording; on any failure
+    /// the original is left in place (`replaceItemAt` is atomic). Re-asserts audio file protection on
+    /// the replacement. When no recording exists yet, falls back to a plain adopt (`saveAudio`).
+    @discardableResult
+    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL {
+        guard let destination = audioURL(for: id) else { return temporaryURL }
+        let fm = FileManager.default
+        try ensureDirectory(at: destination.deletingLastPathComponent())
+        guard fm.fileExists(atPath: destination.path) else {
+            return try saveAudio(from: temporaryURL, for: id)
+        }
+        _ = try fm.replaceItemAt(destination, withItemAt: temporaryURL)
+        try fm.setAttributes(
+            [.protectionKey: FileProtectionType.completeUnlessOpen],
+            ofItemAtPath: destination.path
+        )
+        return destination
+    }
+
     /// Delete a note's audio recording, wherever in the tree it lives. No-op if it does not exist.
     func deleteAudio(for id: UUID) throws {
         guard let url = audioURL(for: id) else { return }

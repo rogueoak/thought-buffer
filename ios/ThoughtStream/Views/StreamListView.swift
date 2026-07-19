@@ -110,6 +110,26 @@ struct StreamListView: View {
         settingsStore.trimSilence ? AudioTrimmer() : nil
     }
 
+    /// Build a dictation view model for this session and wire its `onTrimmed` callback to reload the
+    /// feed (spec 0019): a background dead-air trim re-saves the note's remapped timings off-main, so
+    /// after it lands the feed must reload to drop the stale (un-remapped) in-memory note - otherwise
+    /// playing the just-saved note would seek against timings that no longer match the shorter audio.
+    private func makeDictationModel(
+        recordsAudio: Bool,
+        audioTrimmer: AudioTrimming?,
+        resuming: Note? = nil
+    ) -> DictationViewModel {
+        let model = DictationViewModel(
+            store: store,
+            processor: makeTextProcessor(),
+            recordsAudio: recordsAudio,
+            audioTrimmer: audioTrimmer,
+            resuming: resuming
+        )
+        model.onTrimmed = { Task { await feed.reload() } }
+        return model
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             FolderContentsView(
@@ -199,9 +219,7 @@ struct StreamListView: View {
             }
             .fullScreenCover(isPresented: showDictation) {
                 DictationView(
-                    model: DictationViewModel(
-                        store: store,
-                        processor: makeTextProcessor(),
+                    model: makeDictationModel(
                         recordsAudio: settingsStore.audioRetention.recordsAudio,
                         // Dead-air trimming (spec 0019): a trimmer only when the setting is on, so OFF
                         // leaves the recording byte-for-byte the untrimmed capture (nil trimmer = no
@@ -221,9 +239,7 @@ struct StreamListView: View {
             }
             .fullScreenCover(item: $resumeNote) { note in
                 DictationView(
-                    model: DictationViewModel(
-                        store: store,
-                        processor: makeTextProcessor(),
+                    model: makeDictationModel(
                         // A note with NO recording captures real audio when the user records into it
                         // (spec 0013), subject to the transcript-only retention setting; a note that
                         // already has audio stays text-only append so its original recording is intact.

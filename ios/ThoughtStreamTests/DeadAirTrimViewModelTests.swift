@@ -40,13 +40,16 @@ final class DeadAirTrimViewModelTests: XCTestCase {
 
     // MARK: - ON path: trim runs, timings remap, note re-saved
 
-    func testTrimOnRemapsTimingsAndReSaves() async throws {
+    func testTrimOnAdoptsTrimmedAudioRemapsTimingsAndReSaves() async throws {
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()
-        // The stub trimmer reports removing 3.0s at [2.0, 5.0) - the gap before the second paragraph.
-        let trimmer = StubAudioTrimmer(result: .trimmed(removedRanges: [
-            SilenceTrimmer.KeepRange(start: 2.0, end: 5.0)
-        ]))
+        // The stub reports removing 3.0s at [2.0, 5.0) - the gap before the second paragraph - and
+        // hands back a trimmed temp file the view model must adopt via the store's replaceAudio seam.
+        let trimmedFile = try makeTempRecordingURL(contents: "trimmed-audio-bytes")
+        let trimmer = StubAudioTrimmer(result: .trimmed(
+            trimmedFileURL: trimmedFile,
+            removedRanges: [SilenceTrimmer.KeepRange(start: 2.0, end: 5.0)]
+        ))
         let model = DictationViewModel(
             service: service, store: store, recordsAudio: true, audioTrimmer: trimmer
         )
@@ -56,9 +59,7 @@ final class DeadAirTrimViewModelTests: XCTestCase {
 
         let note = try XCTUnwrap(try model.finish())
         let id = note.id
-
-        // The trim runs on a detached task; wait for it to fire and re-save.
-        await trimmer.awaitInvocation()
+        let audioURL = try XCTUnwrap(store.audioURL(for: id))
 
         // Poll the store for the re-saved note with remapped timings (second paragraph shifted left 3s).
         let reloaded = try await pollForRemap(id: id, expectedSecondStart: 2.0)
@@ -66,6 +67,47 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 2.0, accuracy: 0.001,
                        "second paragraph shifted left by the 3s removed before it")
         XCTAssertTrue(reloaded.hasAudio, "the note keeps its (now trimmed) recording")
+
+        // The trimmed audio was adopted into the note's slot (its bytes replaced the original), and the
+        // trimmer's temp file was consumed by the coordinated replace.
+        XCTAssertEqual(try Data(contentsOf: audioURL), Data("trimmed-audio-bytes".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: trimmedFile.path),
+                       "the trimmed temp file was consumed by replaceAudio")
+    }
+
+    /// Architect + engineer finding: a concurrent edit to the note (on the detail screen) while the
+    /// background trim runs must be PRESERVED - the trim re-reads the note fresh and updates only its
+    /// timings, so it never clobbers the edit with the stale snapshot captured at finish().
+    func testTrimReReadsNoteSoAConcurrentEditIsNotClobbered() async throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let trimmedFile = try makeTempRecordingURL(contents: "trimmed")
+        let trimmer = StubAudioTrimmer(result: .trimmed(
+            trimmedFileURL: trimmedFile,
+            removedRanges: [SilenceTrimmer.KeepRange(start: 2.0, end: 5.0)]
+        ))
+        // Gate the trim so we can inject an edit BEFORE the re-save reads the note back.
+        trimmer.pauseUntilReleased = true
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true, audioTrimmer: trimmer
+        )
+        service.emitFinalized("First.", range: ParagraphTiming(start: 0.0, duration: 2.0))
+        service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
+        let note = try XCTUnwrap(try model.finish())
+
+        // Simulate the user editing the note's title on the detail screen while the trim is in flight
+        // (the trim is paused inside its invocation until we release it).
+        await trimmer.awaitInvocation()
+        let onDisk = try XCTUnwrap(store.loadAll().first { $0.id == note.id })
+        let renamed = onDisk.editedCopy(
+            paragraphs: onDisk.paragraphs, hasCustomTitle: true, customTitle: "User renamed this")
+        try store.save(renamed)
+        trimmer.release() // let the trim finish and re-save with remapped timings
+
+        // The user's title survives, AND the timings are remapped - both changes coexist.
+        let reloaded = try await pollForRemap(id: note.id, expectedSecondStart: 2.0)
+        XCTAssertEqual(reloaded.title, "User renamed this", "the concurrent edit was not clobbered")
+        XCTAssertTrue(reloaded.hasCustomTitle)
     }
 
     func testTrimReturningNotTrimmedLeavesTimingsUnchanged() async throws {
@@ -80,13 +122,12 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
 
         let note = try XCTUnwrap(try model.finish())
+        // Wait until the trim has actually run and returned .notTrimmed (no arbitrary sleep).
         await trimmer.awaitInvocation()
-
-        // Give the (no-op) detached task a beat, then confirm the stored timings are unchanged.
-        try await Task.sleep(nanoseconds: 100_000_000)
         let reloaded = try XCTUnwrap(store.loadAll().first { $0.id == note.id })
         XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start, 5.0, "no remap on a not-trimmed result")
     }
+
 
     // MARK: - Helpers
 
@@ -104,10 +145,10 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         return try XCTUnwrap(store.loadAll().first { $0.id == id })
     }
 
-    private func makeTempRecordingURL() throws -> URL {
+    private func makeTempRecordingURL(contents: String = "audio-bytes") throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("rec-\(UUID().uuidString).m4a")
-        try Data("audio-bytes".utf8).write(to: url)
+        try Data(contents.utf8).write(to: url)
         return url
     }
 }
@@ -153,12 +194,19 @@ private final class RecordingStubCaptureService: SpeechCaptureService {
 }
 
 /// A stub `AudioTrimming` that returns a fixed result and signals when it was invoked, so a test can
-/// await the detached trim task deterministically.
+/// await the detached trim task deterministically. Optionally PAUSES inside `trim` (after signaling
+/// invocation) until `release()` is called, so a test can inject a concurrent edit before the trim's
+/// re-save reads the note back.
 private final class StubAudioTrimmer: AudioTrimming, @unchecked Sendable {
     private let result: AudioTrimResult
     private let lock = NSLock()
     private var invoked = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var invocationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// When true, `trim` blocks after signaling invocation until `release()` is called.
+    var pauseUntilReleased = false
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(result: AudioTrimResult) {
         self.result = result
@@ -167,10 +215,24 @@ private final class StubAudioTrimmer: AudioTrimming, @unchecked Sendable {
     func trim(fileAt url: URL) async -> AudioTrimResult {
         lock.lock()
         invoked = true
-        let toResume = waiters
-        waiters.removeAll()
+        let toResume = invocationWaiters
+        invocationWaiters.removeAll()
+        let mustPause = pauseUntilReleased && !released
         lock.unlock()
         toResume.forEach { $0.resume() }
+
+        if mustPause {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if released {
+                    lock.unlock()
+                    continuation.resume()
+                } else {
+                    releaseWaiters.append(continuation)
+                    lock.unlock()
+                }
+            }
+        }
         return result
     }
 
@@ -182,9 +244,19 @@ private final class StubAudioTrimmer: AudioTrimming, @unchecked Sendable {
                 lock.unlock()
                 continuation.resume()
             } else {
-                waiters.append(continuation)
+                invocationWaiters.append(continuation)
                 lock.unlock()
             }
         }
+    }
+
+    /// Let a paused `trim` proceed to return its result.
+    func release() {
+        lock.lock()
+        released = true
+        let toResume = releaseWaiters
+        releaseWaiters.removeAll()
+        lock.unlock()
+        toResume.forEach { $0.resume() }
     }
 }

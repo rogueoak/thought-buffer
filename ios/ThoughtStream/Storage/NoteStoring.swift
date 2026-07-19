@@ -56,6 +56,15 @@ protocol NoteStoring: Sendable {
     @discardableResult
     func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL
 
+    /// Atomically REPLACE a note's existing recording with a rewritten one from `temporaryURL` (spec
+    /// 0019 dead-air trim), coordinated (on iCloud) so the swap never races the sync daemon and
+    /// protected to match the note file. Distinct from `saveAudio`: it is only for swapping in a
+    /// processed version of an already-adopted recording, and it is done as an ATOMIC replace so there
+    /// is never a window where the note has no recording. Throws on failure, leaving the original in
+    /// place. No-op returning the temp URL for a store that keeps no audio.
+    @discardableResult
+    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL
+
     /// Delete a note's sibling audio recording. No-op if it does not exist. `delete(id:)` calls this
     /// too, so deleting a note never leaves an orphaned recording behind.
     func deleteAudio(for id: UUID) throws
@@ -132,6 +141,10 @@ extension NoteStoring {
     /// Default no-op for stores without on-disk audio. The file-backed stores override this.
     @discardableResult
     func saveAudio(from temporaryURL: URL, for id: UUID) throws -> URL { temporaryURL }
+
+    /// Default no-op for stores without on-disk audio. The file-backed stores override this.
+    @discardableResult
+    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL { temporaryURL }
 
     /// Default no-op for stores without on-disk audio. The file-backed stores override this.
     func deleteAudio(for id: UUID) throws {}

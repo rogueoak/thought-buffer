@@ -46,6 +46,22 @@ final class SilenceTrimmerTests: XCTestCase {
         XCTAssertEqual(keeps.first?.end ?? -1, 3.5, accuracy: 0.001)
     }
 
+    func testSilenceExactlyAtMinPauseIsKept() {
+        // The trim is a STRICT `runLength > minPauseSeconds`, so a silence EXACTLY at the 2.0s floor is
+        // NOT trimmed - the on/off boundary. 1s speech, exactly 2.0s pause, 1s speech -> kept whole.
+        let rms = windows([(loud: 10, quiet: 20), (loud: 10, quiet: 0)])
+        let keeps = SilenceTrimmer.keepRanges(windowRMS: rms, windowSeconds: window)
+        XCTAssertEqual(keeps.count, 1, "a silence exactly at the min-pause floor is kept, not trimmed")
+        XCTAssertEqual(keeps.first?.end ?? -1, 4.0, accuracy: 0.001)
+    }
+
+    func testSilenceJustOverMinPauseIsTrimmed() {
+        // Just over the floor (2.1s pause) IS trimmed - the other side of the boundary.
+        let rms = windows([(loud: 10, quiet: 21), (loud: 10, quiet: 0)])
+        let keeps = SilenceTrimmer.keepRanges(windowRMS: rms, windowSeconds: window)
+        XCTAssertEqual(keeps.count, 2, "a silence just over the floor is trimmed")
+    }
+
     // MARK: - Silence in the middle
 
     func testMidClipSilenceTrimmedToBreathGap() {

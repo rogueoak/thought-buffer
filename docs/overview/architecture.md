@@ -204,15 +204,23 @@ How the system is built and why.
     strictly ABOVE `ParagraphGrouper.defaultGapThreshold` (a guard test asserts it), so a trimmable
     silence is always a paragraph boundary and never lies inside a paragraph. `AudioTrimmer` (the
     `AudioTrimming` seam, AVFoundation) reads the finished `.m4a` via `AVAudioFile`, computes windowed
-    RMS, feeds `SilenceTrimmer`, writes only the kept frame ranges to a temp `.m4a` by `AVAudioFile`
-    read/write (concatenation - no `AVAssetExportSession`, which is load-gated on modern iOS), VERIFIES
-    the temp is a valid non-empty audio file, and only THEN `replaceItemAt`s the original atomically;
-    ANY failure returns `.notTrimmed` and leaves the original untouched (the trim is non-reversible, so
-    it is never allowed to lose the recording). It returns the removed original-timeline ranges for the
-    remap. `DictationViewModel` runs the trim OFF the main actor in a detached task after `finish()`
-    returns the (untrimmed) note - only for a note that just adopted a NEW recording - then remaps its
-    timings and re-saves in place; a nil `AudioTrimming` (the "Trim silences" setting OFF) means NO code
-    path touches the audio. `StreamListView.makeAudioTrimmer()` builds the trimmer only when the setting
+    RMS, feeds `SilenceTrimmer`, writes only the kept frame ranges to a PROTECTED temp `.m4a` by
+    `AVAudioFile` read/write (concatenation - no `AVAssetExportSession`, which is load-gated on modern
+    iOS; the temp is created `completeUnlessOpen` before any audio is written, like `RecordingWriter`),
+    and VERIFIES the temp is a valid non-empty audio file - but it NEVER touches the original. It hands
+    the verified temp + the removed original-timeline ranges back; ANY failure returns `.notTrimmed` and
+    writes nothing (the trim is non-reversible, so it never loses the recording). The COORDINATED atomic
+    swap is a store seam (`NoteStoring.replaceAudio(from:for:)`): `NoteStore` uses `replaceItemAt`;
+    `ICloudNoteStore` does the `replaceItemAt` INSIDE an `NSFileCoordinator` `.forReplacing` block so the
+    swap never races the sync daemon (a bare replace on a ubiquity-container file would). Both re-assert
+    audio protection. `DictationViewModel` runs the trim OFF the main actor in a detached task after
+    `finish()` returns the (untrimmed) note - only for a note that just adopted a NEW recording - then
+    adopts the trimmed audio via `replaceAudio`, RE-READS the note fresh from disk by id (so a concurrent
+    edit/move/delete on the detail screen is preserved, not clobbered by the stale finish()-time
+    snapshot), applies only the timings remap via `Note.withTimings`, re-saves, and calls back
+    `onTrimmed` on the main actor so the host reloads the feed (dropping the stale un-remapped in-memory
+    note). A nil `AudioTrimming` (the "Trim silences" setting OFF) means NO code path touches the audio.
+    `StreamListView.makeAudioTrimmer()` builds the trimmer only when the setting
     is on and only for a session capturing new audio (a resumed note keeps its original recording).
   - **System Now Playing (spec 0008).** `NowPlayingCenter.swift` holds the media-center seam:
     `NowPlayingInfo` (title / duration / elapsed / rate value), `NowPlayingInfoWriting` (production

@@ -64,23 +64,28 @@ final class AudioTrimmerTests: XCTestCase {
         let originalDuration = try duration(of: url)
         XCTAssertEqual(originalDuration, total, accuracy: 0.2)
 
+        let originalBytes = try Data(contentsOf: url)
         let trimmer = AudioTrimmer()
         let result = await trimmer.trim(fileAt: url)
 
-        guard case .trimmed(let removed) = result else {
+        guard case .trimmed(let trimmedFileURL, let removed) = result else {
             return XCTFail("Expected a trim of the 4s silence, got \(result)")
         }
+        defer { try? FileManager.default.removeItem(at: trimmedFileURL) }
+
         // Something was removed, and only from the silent middle (roughly [1.3, 4.7) with a 0.6s gap).
         XCTAssertFalse(removed.isEmpty)
         let removedTotal = removed.reduce(0) { $0 + $1.duration }
         // ~3.4s removed (4s silence minus the 0.6s kept breath gap), allow slack for window rounding.
         XCTAssertEqual(removedTotal, 3.4, accuracy: 0.4)
 
-        // The rewritten file is shorter than the original by about the removed amount.
-        let newDuration = try duration(of: url)
-        XCTAssertLessThan(newDuration, originalDuration - 2.0)
-        // And it is still a valid, non-empty audio file.
-        XCTAssertGreaterThan(newDuration, 0)
+        // The ORIGINAL is untouched (the trimmer never replaces it - the store's coordinated seam does).
+        XCTAssertEqual(try Data(contentsOf: url), originalBytes)
+
+        // The produced TEMP file is shorter than the original by about the removed amount, and valid.
+        let trimmedDuration = try duration(of: trimmedFileURL)
+        XCTAssertLessThan(trimmedDuration, originalDuration - 2.0)
+        XCTAssertGreaterThan(trimmedDuration, 0)
     }
 
     func testNoLongSilenceLeavesFileUntouched() async throws {
@@ -105,5 +110,30 @@ final class AudioTrimmerTests: XCTestCase {
             .appendingPathComponent("missing-\(UUID().uuidString).m4a")
         let result = await AudioTrimmer().trim(fileAt: url)
         XCTAssertEqual(result, .notTrimmed)
+    }
+
+    /// Tester finding #3: exercise the non-reversible SAFETY branch from a VALID source. A trimmer
+    /// whose verify step always fails must return `.notTrimmed`, write no adopted output, and leave the
+    /// original byte-for-byte intact - the branch that protects a real recording from a bad trim.
+    func testVerifyFailureFromValidSourceLeavesOriginalIntact() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("trimtest-\(UUID().uuidString).m4a")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeClip(to: url, leadSeconds: 1, silenceSeconds: 4, tailSeconds: 1)
+        let before = try Data(contentsOf: url)
+
+        // A trimmer whose validity check always fails: the trimmed temp is treated as invalid, so the
+        // service must fall back to `.notTrimmed` and never hand back a file to adopt.
+        let result = await AlwaysInvalidTrimmer().trim(fileAt: url)
+        XCTAssertEqual(result, .notTrimmed)
+        XCTAssertEqual(try Data(contentsOf: url), before, "the original recording is left intact")
+    }
+}
+
+/// An `AudioTrimmer` whose output verification always fails, to drive the verify-failure safety branch
+/// with a real, trimmable source file (tester finding #3).
+private struct AlwaysInvalidTrimmer: AudioTrimming {
+    func trim(fileAt url: URL) async -> AudioTrimResult {
+        await AudioTrimmer(validateOutput: { _ in false }).trim(fileAt: url)
     }
 }

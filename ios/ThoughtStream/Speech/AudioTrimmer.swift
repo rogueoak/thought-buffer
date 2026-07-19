@@ -4,26 +4,33 @@ import AVFoundation
 /// The seam a caller uses to trim dead air from a finished recording (spec 0019). A protocol so the
 /// view model is testable with a stub and so the AVFoundation glue stays thin and swappable.
 protocol AudioTrimming: Sendable {
-    /// Trim silences longer than the min-pause threshold from the `.m4a` at `url`, REPLACING it
-    /// atomically. Runs off the main actor. On success, returns the removed time-ranges (in the
-    /// ORIGINAL timeline's seconds) so the caller can remap paragraph timings; on ANY failure -
-    /// unreadable file, nothing to trim, a write / verify error - returns `.notTrimmed` and leaves the
-    /// original file untouched. Never throws: a trim is best-effort and must never lose the recording.
+    /// Analyze the `.m4a` at `url` and, if it has trimmable silence, PRODUCE a trimmed copy at a temp
+    /// URL - WITHOUT touching the original. Runs off the main actor. The temp file is verified to be a
+    /// valid non-empty audio file before it is returned, so the caller can safely adopt it (the caller,
+    /// which owns the store, performs the actual COORDINATED atomic replace of the original - the trim
+    /// is non-reversible and, on iCloud, the swap must go through `NSFileCoordinator`, so the trimmer
+    /// deliberately does not replace the file itself). On ANY failure (unreadable, nothing to trim, a
+    /// write / verify error) returns `.notTrimmed` and writes nothing. Never throws: a trim is
+    /// best-effort and must never lose the recording.
     func trim(fileAt url: URL) async -> AudioTrimResult
 }
 
 /// The outcome of a trim attempt.
 enum AudioTrimResult: Equatable {
-    /// The file was rewritten atomically; these ranges (original-timeline seconds) were removed.
-    case trimmed(removedRanges: [SilenceTrimmer.KeepRange])
-    /// The original file is unchanged (either nothing worth trimming, or a safe failure fallback).
+    /// A verified trimmed copy was written to `trimmedFileURL` (a temp file the caller must adopt or
+    /// clean up); `removedRanges` are the removed original-timeline seconds for the timing remap. The
+    /// ORIGINAL file is untouched - the caller swaps it in through the store's coordinated seam.
+    case trimmed(trimmedFileURL: URL, removedRanges: [SilenceTrimmer.KeepRange])
+    /// No trimmed file was produced (either nothing worth trimming, or a safe failure fallback). The
+    /// original file is untouched.
     case notTrimmed
 }
 
 /// Reads a finished `.m4a`, computes windowed RMS across it, feeds the pure `SilenceTrimmer` to get
-/// keep-ranges, writes a trimmed copy of only those ranges to a temp file, verifies it is a valid
-/// non-empty audio file, and only THEN atomically replaces the original. Any failure leaves the
-/// original in place and returns `.notTrimmed`, because the trim is non-reversible (spec 0019).
+/// keep-ranges, writes a trimmed copy of only those ranges to a temp file, and verifies it is a valid
+/// non-empty audio file. It never touches the original: the caller adopts the verified temp through
+/// the store's coordinated atomic-replace seam (`replaceAudio`), because the trim is non-reversible
+/// and, on iCloud, the swap must be coordinated. Any failure returns `.notTrimmed` and writes nothing.
 ///
 /// All AVFoundation work happens here so `SilenceTrimmer` (the analysis) and `TimingRemapper` (the
 /// remap) stay pure. The type is `Sendable` and its one method is designed to run inside a detached
@@ -37,15 +44,22 @@ struct AudioTrimmer: AudioTrimming {
     let silenceFloor: Float
     let minPauseSeconds: Double
     let breathGapSeconds: Double
+    /// The output-validity check run on the trimmed temp file before it is returned to the caller.
+    /// Injectable so a test can force it to fail and exercise the non-reversible SAFETY branch (the
+    /// trimmed file is discarded and `.notTrimmed` returned, leaving the original intact). Defaults to
+    /// the real `isValidNonEmptyAudio`.
+    private let validateOutput: (@Sendable (URL) -> Bool)?
 
     init(
         silenceFloor: Float = SilenceTrimmer.silenceFloor,
         minPauseSeconds: Double = SilenceTrimmer.minPauseSeconds,
-        breathGapSeconds: Double = SilenceTrimmer.breathGapSeconds
+        breathGapSeconds: Double = SilenceTrimmer.breathGapSeconds,
+        validateOutput: (@Sendable (URL) -> Bool)? = nil
     ) {
         self.silenceFloor = silenceFloor
         self.minPauseSeconds = minPauseSeconds
         self.breathGapSeconds = breathGapSeconds
+        self.validateOutput = validateOutput
     }
 
     func trim(fileAt url: URL) async -> AudioTrimResult {
@@ -85,26 +99,16 @@ struct AudioTrimmer: AudioTrimming {
 
         let tempURL = try writeTrimmed(keepRanges: keepRanges, source: url)
 
-        // Verify the output is a real, non-empty audio file BEFORE we destroy the original.
-        guard isValidNonEmptyAudio(at: tempURL) else {
+        // Verify the output is a real, non-empty audio file before handing it to the caller to adopt.
+        // The ORIGINAL is never touched here: the caller swaps in this verified temp through the store's
+        // coordinated atomic-replace seam (so an iCloud swap goes through NSFileCoordinator). On a
+        // verify failure the temp is discarded and the original stays exactly as captured.
+        let isValid = (validateOutput ?? { self.isValidNonEmptyAudio(at: $0) })(tempURL)
+        guard isValid else {
             try? FileManager.default.removeItem(at: tempURL)
             return .notTrimmed
         }
-
-        // Atomic replace: only now is the original touched, and only by an atomic swap. If this throws
-        // the original is left in place (outer catch -> `.notTrimmed`); clean up the temp on the way.
-        do {
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
-        } catch {
-            try? FileManager.default.removeItem(at: tempURL)
-            throw error
-        }
-        // Preserve the sensitive-audio file protection on the replacement (spec 0007 posture).
-        try? FileManager.default.setAttributes(
-            [.protectionKey: FileProtectionType.completeUnlessOpen],
-            ofItemAtPath: url.path
-        )
-        return .trimmed(removedRanges: removed)
+        return .trimmed(trimmedFileURL: tempURL, removedRanges: removed)
     }
 
     /// Read the whole file in chunks and produce one RMS value per `windowSeconds` window. RMS is the
@@ -168,10 +172,20 @@ struct AudioTrimmer: AudioTrimming {
         let format = source.processingFormat
         let totalFrames = source.length
 
-        let tempURL = FileManager.default.temporaryDirectory
+        let fm = FileManager.default
+        let tempURL = fm.temporaryDirectory
             .appendingPathComponent("thoughtstream-trim-\(UUID().uuidString).\(NoteStore.audioFileExtension)")
-        try? FileManager.default.removeItem(at: tempURL)
+        try? fm.removeItem(at: tempURL)
 
+        // Create the temp file PROTECTED (`completeUnlessOpen`) before `AVAudioFile` writes any audio
+        // into it, mirroring `RecordingWriter`: raw audio is sensitive, so there must be no window where
+        // the trimmed `.m4a` exists on disk unprotected. `AVAudioFile(forWriting:)` then opens this
+        // existing (empty, already-protected) file rather than creating an unprotected one.
+        fm.createFile(
+            atPath: tempURL.path,
+            contents: nil,
+            attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
+        )
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: format.sampleRate,
@@ -221,11 +235,11 @@ struct AudioTrimmer: AudioTrimming {
         }
     }
 
-    /// Whether the file at `url` is a real, non-empty, readable audio file. Guards the atomic replace:
-    /// we never destroy the original unless the trimmed output opens and carries frames.
-    private func isValidNonEmptyAudio(at url: URL) -> Bool {
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
-        guard (size ?? 0) > 0 else { return false }
+    /// Whether the file at `url` is a real, non-empty, readable audio file. Guards the caller's adopt:
+    /// the original is never replaced unless the trimmed output has bytes AND opens with frames.
+    func isValidNonEmptyAudio(at url: URL) -> Bool {
+        let size = ((try? FileManager.default.attributesOfItem(atPath: url.path)[.size]) as? Int) ?? 0
+        guard size > 0 else { return false }
         guard let file = try? AVAudioFile(forReading: url) else { return false }
         return file.length > 0
     }
