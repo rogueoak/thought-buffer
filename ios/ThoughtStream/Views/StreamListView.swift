@@ -51,7 +51,7 @@ struct StreamListView: View {
     @State private var path: [StreamRoute] = []
     /// The subject selected in the split view's SIDEBAR (spec 0022 + 0026): the content column shows this
     /// folder / alias's flat thought list. Nil shows a placeholder in the content column.
-    @State private var selectedSubject: FolderThoughtsView.Subject?
+    @State private var selectedSubject: FolderSubject?
     /// The thought (or new-thought draft) shown in the split view's DETAIL column (spec 0022).
     @State private var selectedRoute: StreamRoute?
     @State private var undoReclaimTrigger = 0
@@ -279,7 +279,7 @@ struct StreamListView: View {
 
     /// One flat thought list (a user folder or an alias), wired to the active container's navigation.
     private func folderThoughts(
-        subject: FolderThoughtsView.Subject,
+        subject: FolderSubject,
         showsBottomBar: Bool,
         resolved: StreamSearchProjection.Result?
     ) -> some View {
@@ -372,7 +372,7 @@ struct StreamListView: View {
             deletion: deletion,
             showsBottomBar: StreamContainer.split.folderScreenShowsOwnBottomBar,
             resolvedContent: StreamSearchProjection.sidebarProjection(from: projection),
-            onFoldersLoaded: { splitFoldersLoaded = true }
+            onFoldersLoaded: { folderNames in reconcileSplitContent(folderNames: folderNames) }
         )
     }
 
@@ -489,10 +489,9 @@ struct StreamListView: View {
     /// The new-thought placement for the lifted split bar (spec 0026): the currently-selected subject decides
     /// - a user folder files contextually, an alias or no selection files uncategorized.
     private var liftedPlacement: [String] {
-        switch selectedSubject {
-        case let .userFolder(name): return NewThoughtPlacement.folderPath(browsingFolder: [name])
-        case .alias, nil: return NewThoughtPlacement.folderPath(browsingFolder: [])
-        }
+        // No selection files uncategorized, like an alias; otherwise defer to the pure placement decision.
+        guard let selectedSubject else { return NewThoughtPlacement.folderPath(browsingFolder: []) }
+        return NewThoughtPlacement.folderPath(for: selectedSubject)
     }
 
     private func deleteThoughtFromSplit(_ id: UUID) {
@@ -509,9 +508,23 @@ struct StreamListView: View {
 
     /// Select a subject (a user folder or an alias) in the split view's sidebar: point the content column at
     /// it and clear the detail column (the previously-open thought belonged to the old context).
-    private func selectSubject(_ subject: FolderThoughtsView.Subject) {
+    private func selectSubject(_ subject: FolderSubject) {
         selectedSubject = subject
         selectedRoute = nil
+    }
+
+    /// Reconcile the split view's CONTENT column after the sidebar's folder names reload (spec 0026): if the
+    /// user folder shown in the content column was renamed or deleted from the sidebar, its subject no longer
+    /// exists, so the content column would silently show an empty list. Clearing `selectedSubject` reverts it
+    /// to the placeholder (and clears any detail selection). Alias subjects always survive. Also gates the
+    /// lifted projection (`splitFoldersLoaded`) like the compact `folderLoaded` gate. The pure decision is
+    /// `SplitDetailReconcile.contentSubjectSurvives`.
+    private func reconcileSplitContent(folderNames: [String]) {
+        splitFoldersLoaded = true
+        if !SplitDetailReconcile.contentSubjectSurvives(selectedSubject, inFolderNames: folderNames) {
+            selectedSubject = nil
+            selectedRoute = nil
+        }
     }
 
     /// Land on a just-saved thought from a dictation / resume session, in whichever container is active. A

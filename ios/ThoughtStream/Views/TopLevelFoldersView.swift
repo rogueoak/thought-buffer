@@ -32,8 +32,11 @@ struct TopLevelFoldersView: View {
 
     var showsBottomBar: Bool = true
     var resolvedContent: StreamSearchProjection.Result?
-    /// Fired once the top-level folder names have loaded (spec 0022 gate parity for the split view).
-    var onFoldersLoaded: (() -> Void)?
+    /// Fired whenever the top-level folder names (re)load, carrying the loaded names (spec 0022 gate parity
+    /// for the split view, plus spec 0026 content-column reconcile so a rename/delete of the shown folder in
+    /// the sidebar can revert the content column to its placeholder). Fires on EVERY reload, not just the
+    /// first, so the split view learns of a rename/delete.
+    var onFoldersLoaded: (([String]) -> Void)?
 
     @State private var childFolderNames: [String] = []
     @State private var folderLoaded = false
@@ -152,7 +155,10 @@ struct TopLevelFoldersView: View {
     /// The top-level folder list (spec 0026): the title header row, the two pinned alias rows, then the user
     /// folders. FOLDERS ONLY - no thoughts.
     private var foldersList: some View {
-        List {
+        // Bucket every folder's flattened thought count in ONE pass (spec 0026) so the rows do not each
+        // rescan the whole thoughts array (O(thoughts) here, not O(folders x thoughts) per render).
+        let counts = TopLevelFolders.folderThoughtCounts(feed.thoughts)
+        return List {
             StreamListTitleRow(title: "Thoughts")
 
             ForEach(AliasFolder.allCases) { alias in
@@ -160,7 +166,7 @@ struct TopLevelFoldersView: View {
             }
 
             ForEach(userFolders, id: \.self) { name in
-                folderRow(name: name)
+                folderRow(name: name, count: counts[name] ?? 0)
             }
         }
         .listStyle(.plain)
@@ -227,15 +233,13 @@ struct TopLevelFoldersView: View {
         }
     }
 
-    private func folderRow(name: String) -> some View {
+    private func folderRow(name: String, count: Int) -> some View {
         Button {
             onOpenFolder(name)
         } label: {
             FolderRow(
                 name: name,
-                countLabel: TopLevelFolders.thoughtCountLabel(
-                    TopLevelFolders.folderThoughtCount(feed.thoughts, folder: name)
-                )
+                countLabel: TopLevelFolders.thoughtCountLabel(count)
             )
         }
         .buttonStyle(.plain)
@@ -379,7 +383,7 @@ struct TopLevelFoldersView: View {
     private func reloadFolders() async {
         childFolderNames = await feed.childFolders(at: [])
         folderLoaded = true
-        onFoldersLoaded?()
+        onFoldersLoaded?(childFolderNames)
     }
 
     private func createFolder() async {

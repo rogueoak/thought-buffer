@@ -74,13 +74,24 @@ final class TopLevelFoldersTests: XCTestCase {
     func testRecentsBreaksCreatedAtTiesDeterministically() {
         let idA = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
         let idB = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
-        // Same createdAt: the stable id tie-break (idA < idB) fixes the order.
+        // SAME createdAt AND SAME title, so only the id tie-break can decide the order (idA < idB). Using
+        // distinct titles would let the title tie-break decide first and never exercise the id fallback.
         let thoughts = [
-            thought("B", 5_000, id: idB),
-            thought("A", 5_000, id: idA),
+            thought("same", 5_000, id: idB),
+            thought("same", 5_000, id: idA),
         ]
         let recents = TopLevelFolders.recents(thoughts)
         XCTAssertEqual(recents.map(\.id), [idA, idB])
+    }
+
+    func testRecentsLimitZeroReturnsNone() {
+        let thoughts = [thought("a", 1_000), thought("b", 2_000)]
+        XCTAssertTrue(TopLevelFolders.recents(thoughts, limit: 0).isEmpty)
+    }
+
+    func testRecentsNegativeLimitReturnsAllNewestFirst() {
+        let thoughts = [thought("a", 1_000), thought("c", 3_000), thought("b", 2_000)]
+        XCTAssertEqual(titles(TopLevelFolders.recents(thoughts, limit: -1)), ["c", "b", "a"])
     }
 
     func testRecentsEmptyIsEmpty() {
@@ -103,12 +114,26 @@ final class TopLevelFoldersTests: XCTestCase {
     }
 
     func testFolderThoughtsHonorsSort() {
+        // Diverging data so .titleAZ and .newest produce DIFFERENT orders (title order != date order): "apple"
+        // is newer than "mango", so titleAZ = [apple, mango] but newest = [apple, mango] would coincide -
+        // flip the dates so newest is [mango, apple] while titleAZ stays [apple, mango].
         let thoughts = [
-            thought("mango", 1_000, folder: ["Fruit"]),
-            thought("apple", 2_000, folder: ["Fruit"]),
+            thought("mango", 2_000, folder: ["Fruit"]),
+            thought("apple", 1_000, folder: ["Fruit"]),
         ]
         XCTAssertEqual(titles(TopLevelFolders.folderThoughts(thoughts, folder: "Fruit", sorted: .titleAZ)), ["apple", "mango"])
-        XCTAssertEqual(titles(TopLevelFolders.folderThoughts(thoughts, folder: "Fruit", sorted: .newest)), ["apple", "mango"])
+        XCTAssertEqual(titles(TopLevelFolders.folderThoughts(thoughts, folder: "Fruit", sorted: .newest)), ["mango", "apple"])
+        XCTAssertEqual(titles(TopLevelFolders.folderThoughts(thoughts, folder: "Fruit", sorted: .oldest)), ["apple", "mango"])
+    }
+
+    func testFolderMembershipIsComponentEqualityNotStringPrefix() {
+        // "Work" must NOT swallow "Workshop": membership is folderPath.first EQUALITY, not a string prefix.
+        let thoughts = [
+            thought("in work", 1_000, folder: ["Work"]),
+            thought("in workshop", 2_000, folder: ["Workshop"]),
+        ]
+        XCTAssertEqual(titles(TopLevelFolders.folderThoughts(thoughts, folder: "Work", sorted: .newest)), ["in work"])
+        XCTAssertEqual(TopLevelFolders.folderThoughtCount(thoughts, folder: "Work"), 1)
     }
 
     func testFolderThoughtCountCountsFlattenedSubtree() {
@@ -121,6 +146,21 @@ final class TopLevelFoldersTests: XCTestCase {
         XCTAssertEqual(TopLevelFolders.folderThoughtCount(thoughts, folder: "Missing"), 0)
     }
 
+    func testFolderThoughtCountsBucketsEveryFolderInOnePass() {
+        let thoughts = [
+            thought("a", 1_000, folder: ["Work"]),
+            thought("b", 2_000, folder: ["Work", "Q1"]),
+            thought("c", 3_000, folder: ["Other"]),
+            thought("d", 4_000, folder: []), // uncategorized: contributes to no folder
+        ]
+        let counts = TopLevelFolders.folderThoughtCounts(thoughts)
+        XCTAssertEqual(counts["Work"], 2)
+        XCTAssertEqual(counts["Other"], 1)
+        // An uncategorized thought and an unknown folder are absent from the map.
+        XCTAssertNil(counts["Missing"])
+        XCTAssertEqual(counts.count, 2)
+    }
+
     // MARK: - Uncategorized (store root)
 
     func testUncategorizedIsOnlyRootThoughtsAndExcludesFoldered() {
@@ -130,8 +170,40 @@ final class TopLevelFoldersTests: XCTestCase {
             thought("in folder", 3_000, folder: ["Work"]),
             thought("nested", 4_000, folder: ["Work", "Q1"]),
         ]
-        let uncategorized = TopLevelFolders.uncategorized(thoughts, sorted: .newest)
-        XCTAssertEqual(titles(uncategorized), ["root b", "root a"])
+        // Newest-first excludes every foldered thought.
+        XCTAssertEqual(titles(TopLevelFolders.uncategorized(thoughts, sorted: .newest)), ["root b", "root a"])
+        // Honors another sort order too (not hard-wired to newest).
+        XCTAssertEqual(titles(TopLevelFolders.uncategorized(thoughts, sorted: .oldest)), ["root a", "root b"])
+    }
+
+    func testUncategorizedIsEmptyWhenEveryThoughtIsFoldered() {
+        let thoughts = [
+            thought("in folder", 1_000, folder: ["Work"]),
+            thought("nested", 2_000, folder: ["Work", "Q1"]),
+        ]
+        XCTAssertTrue(TopLevelFolders.uncategorized(thoughts, sorted: .newest).isEmpty)
+    }
+
+    // MARK: - Subject-driven projection
+
+    func testThoughtsForSubjectRoutesEachCase() {
+        let thoughts = [
+            thought("root new", 5_000, folder: []),
+            thought("root old", 1_000, folder: []),
+            thought("work", 3_000, folder: ["Work"]),
+        ]
+        // A user folder -> its flattened thoughts.
+        XCTAssertEqual(titles(TopLevelFolders.thoughts(thoughts, for: .userFolder("Work"), sorted: .newest)), ["work"])
+        // All Thoughts -> every thought, sorted.
+        XCTAssertEqual(
+            Set(titles(TopLevelFolders.thoughts(thoughts, for: .alias(.allThoughts), sorted: .newest))),
+            Set(["root new", "root old", "work"])
+        )
+        // Recents -> newest first, ignoring the chosen sort order (pass .oldest, still newest-first).
+        XCTAssertEqual(
+            titles(TopLevelFolders.thoughts(thoughts, for: .alias(.recents), sorted: .oldest)),
+            ["root new", "work", "root old"]
+        )
     }
 
     // MARK: - User folder names

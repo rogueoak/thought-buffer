@@ -12,21 +12,10 @@ import SwiftUI
 struct FolderThoughtsView: View {
     @ObservedObject var feed: StreamFeed
 
-    /// What this screen shows: a user folder (by name) or a virtual alias. Drives the title, the thought
-    /// projection, and whether new-thought placement is contextual (a user folder) or uncategorized (alias).
-    enum Subject: Hashable {
-        case userFolder(String)
-        case alias(AliasFolder)
-
-        var title: String {
-            switch self {
-            case let .userFolder(name): return name
-            case let .alias(alias): return alias.title
-            }
-        }
-    }
-
-    let subject: Subject
+    /// What this screen shows: a user folder (by name) or a virtual alias (the pure `FolderSubject`). Drives
+    /// the title, the thought projection, and whether new-thought placement is contextual (a user folder) or
+    /// uncategorized (an alias).
+    let subject: FolderSubject
     @Binding var sortOrder: ThoughtSortOrder
     @Binding var searchQuery: String
     let playbackController: ThoughtPlaybackController?
@@ -52,28 +41,15 @@ struct FolderThoughtsView: View {
     @State private var copiedTrigger = 0
     @State private var showCopiedConfirmation = false
 
-    /// The placement `folderPath` for a new thought created on this screen (spec 0026): a user folder files
-    /// contextually into `[name]`; an alias files uncategorized (`[]`).
+    /// The placement `folderPath` for a new thought created on this screen (spec 0026), from the pure
+    /// `NewThoughtPlacement`: a user folder files contextually into `[name]`; an alias files uncategorized.
     private var newThoughtFolderPath: [String] {
-        switch subject {
-        case let .userFolder(name): return NewThoughtPlacement.folderPath(browsingFolder: [name])
-        case .alias: return NewThoughtPlacement.folderPath(browsingFolder: [])
-        }
+        NewThoughtPlacement.folderPath(for: subject)
     }
 
     /// The thoughts shown, projected purely from the loaded list per the subject and sort order.
     private var thoughts: [Thought] {
-        switch subject {
-        case let .userFolder(name):
-            return TopLevelFolders.folderThoughts(feed.thoughts, folder: name, sorted: sortOrder)
-        case let .alias(alias):
-            switch alias {
-            case .allThoughts:
-                return TopLevelFolders.allThoughts(feed.thoughts, sorted: sortOrder)
-            case .recents:
-                return TopLevelFolders.recents(feed.thoughts)
-            }
-        }
+        TopLevelFolders.thoughts(feed.thoughts, for: subject, sorted: sortOrder)
     }
 
     private func resolveContent() -> StreamSearchProjection.Result {
@@ -255,7 +231,7 @@ struct FolderThoughtsView: View {
 /// The empty-state row shown INSIDE a user folder's / alias's list when it has thoughts nowhere for this
 /// subject but the store is not empty overall (spec 0026): a gentle inline message rather than a bare list.
 private struct EmptyFolderRow: View {
-    let subject: FolderThoughtsView.Subject
+    let subject: FolderSubject
 
     private var message: String {
         switch subject {

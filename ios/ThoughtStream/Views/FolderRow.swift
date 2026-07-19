@@ -5,9 +5,8 @@ import SwiftUI
 /// count, and a trailing chevron (the row navigates into the folder, so a chevron is the right
 /// affordance here).
 ///
-/// The count label is an honest recursive descendant-thought count (e.g. "3 thoughts"), computed and
-/// pluralized in `FolderListModel` by the view that already holds the thoughts - the row stays a pure
-/// render.
+/// The count label is a flattened thought count (e.g. "3 thoughts"), computed and pluralized in
+/// `TopLevelFolders` by the view that already holds the thoughts - the row stays a pure render.
 struct FolderRow: View {
     let name: String
     /// A pluralized descendant-thought count label (e.g. "No thoughts", "1 thought", "3 thoughts").

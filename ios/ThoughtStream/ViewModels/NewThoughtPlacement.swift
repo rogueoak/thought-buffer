@@ -21,4 +21,16 @@ enum NewThoughtPlacement {
     static func folderPath(browsingFolder: [String]) -> [String] {
         browsingFolder
     }
+
+    /// The `folderPath` a new thought should be saved with, given the FLAT SCREEN the user is browsing (spec
+    /// 0026): a user folder files contextually into `[name]`; an alias (All Thoughts / Recents) files
+    /// uncategorized (`[]`). This is the real subject-to-context mapping the view uses (not a pre-resolved
+    /// path), so the "alias -> uncategorized, folder -> that folder" decision is unit-tested here rather than
+    /// trapped in the SwiftUI view.
+    static func folderPath(for subject: FolderSubject) -> [String] {
+        switch subject {
+        case let .userFolder(name): return folderPath(browsingFolder: [name])
+        case .alias: return folderPath(browsingFolder: [])
+        }
+    }
 }

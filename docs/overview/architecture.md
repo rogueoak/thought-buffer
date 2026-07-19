@@ -379,19 +379,27 @@ How the system is built and why.
     `children` closure (`store.folders(at:)`), it flattens the tree pre-order with depth for the
     move-to-folder picker, so an empty folder (never in any thought's `folderPath`) is still offered.
   - **Folder model redesign - top-level folders + aliases (spec 0026).** The top level is FOLDERS ONLY, one
-    level deep, so `FolderListModel`'s interleaved folders-and-thoughts projection is SUPERSEDED for the
-    top-level and folder screens by the pure, UI-free `TopLevelFolders` (`FolderListModel` itself is kept
-    only for its existing tests). `TopLevelFolders` holds the alias projections `allThoughts(_:sorted:)` (every
-    thought flat, honoring sort) and `recents(_:limit:)` (the 10 most recent by `createdAt`, newest first,
-    independent of the chosen sort, deterministic on ties via the id tie-break), plus `folderThoughts(_:folder:sorted:)`
-    - a user folder's thoughts FLATTENED over any legacy nested subtree (a thought whose `folderPath.first`
-    equals the folder name, so old nesting still surfaces) - `uncategorized(_:sorted:)` (thoughts with an
-    empty `folderPath`), and the count/label/name helpers. The two virtual aliases are the `AliasFolder` enum
-    (`.allThoughts`, `.recents`); they are pure projections, never real dirs, and cannot be renamed/deleted.
-    `NewThoughtPlacement.folderPath(browsingFolder:)` is the pure placement decision: inside a user folder ->
-    that folder, from the top level / an alias -> uncategorized (`[]`). Storage is unchanged; `createFolder`
-    and move-to-folder target the top level only, and deeper legacy dirs keep loading (their thoughts surface
-    flattened). Both seams are unit-tested (`TopLevelFoldersTests`, `NewThoughtPlacementTests`).
+    level deep, so `FolderListModel`'s interleaved folders-and-thoughts projection is REPLACED for the
+    top-level and folder screens by the pure, UI-free `TopLevelFolders` (`FolderListModel` and its tests are
+    deleted - no code referenced them after the redesign). `TopLevelFolders` holds the alias projections
+    `allThoughts(_:sorted:)` (every thought flat, honoring sort) and `recents(_:limit:)` (the 10 most recent
+    by `createdAt`, newest first, independent of the chosen sort, reusing the `.newest` total comparator so
+    ties are deterministic; `limit 0` -> none, negative -> uncapped), plus `folderThoughts(_:folder:sorted:)`
+    - a user folder's thoughts FLATTENED over any legacy nested subtree via the ONE `belongs(_:toFolder:)`
+    membership rule (a thought whose `folderPath.first` equals the folder name - component equality, so
+    "Work" does not swallow "Workshop" - shared by the list and the count so they cannot drift) -
+    `uncategorized(_:sorted:)` (thoughts with an empty `folderPath`), `thoughts(_:for:sorted:)` (the
+    subject-driven projection the views render), `folderThoughtCounts(_:)` (all folders' counts in one pass,
+    so a top-level list does not rescan per row), and the count/label/name helpers. The two virtual aliases
+    are the `AliasFolder` enum (`.allThoughts`, `.recents`); they are pure projections, never real dirs, and
+    cannot be renamed/deleted. `FolderSubject` (`.userFolder`/`.alias`) is the pure "what a flat screen shows"
+    type both the projection and the placement key off. `NewThoughtPlacement.folderPath(for:)` /
+    `(browsingFolder:)` is the pure placement decision: inside a user folder -> that folder, from the top
+    level / an alias -> uncategorized (`[]`). `SplitDetailReconcile.contentSubjectSurvives(_:inFolderNames:)`
+    reverts the split content column to its placeholder when the shown user folder is renamed/deleted from the
+    sidebar (an alias always survives). Storage is unchanged; `createFolder` and move-to-folder target the top
+    level only, and deeper legacy dirs keep loading (their thoughts surface flattened). The seams are
+    unit-tested (`TopLevelFoldersTests`, `NewThoughtPlacementTests`, `SplitDetailReconcileTests`).
   - **Shared playback + CarPlay browser (spec 0008).** `ThoughtPlaybackController` (`@MainActor
     ObservableObject`) is the ONE audio path: it owns an `AudioThoughtPlayer`, an `AudioURLResolving`
     (lazy off-main resolution at play time, as 0007's model did), and the Now Playing / remote-command

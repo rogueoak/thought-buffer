@@ -28,6 +28,23 @@ enum AliasFolder: String, CaseIterable, Hashable, Identifiable {
     }
 }
 
+/// What a flat thought screen shows (spec 0026): a top-level USER FOLDER (by name) or a virtual ALIAS
+/// folder. Pure (no SwiftUI) so both the view's thought projection and the new-thought placement decision
+/// key off the SAME type and can be unit-tested. The screen title, the thought projection, and the
+/// placement all derive from this.
+enum FolderSubject: Hashable {
+    case userFolder(String)
+    case alias(AliasFolder)
+
+    /// The screen / row title.
+    var title: String {
+        switch self {
+        case let .userFolder(name): return name
+        case let .alias(alias): return alias.title
+        }
+    }
+}
+
 /// The pure, `Sendable` model for the redesigned Thoughts screen (spec 0026): the TOP LEVEL is folders
 /// ONLY - two pinned alias folders (All Thoughts, Recents) then the user's folders - and a user folder or
 /// an alias opens a FLAT list of thoughts. There are no loose thoughts and no interleaving at the top
@@ -35,8 +52,8 @@ enum AliasFolder: String, CaseIterable, Hashable, Identifiable {
 ///
 /// Every projection here is a pure function over the already-loaded `[Thought]` (the driver loads every
 /// thought with its `folderPath` off the main actor), so it is unit-testable and UI-free (no SwiftUI
-/// import) and reusable by a future Watch target. This supersedes spec 0010's interleaved
-/// folders-and-thoughts `FolderListModel` for the top-level and folder screens.
+/// import) and reusable by a future Watch target. This REPLACES spec 0010's interleaved
+/// folders-and-thoughts folder-list projection for the top-level and folder screens.
 enum TopLevelFolders {
     /// How many thoughts the Recents alias shows: the 10 most recent, newest first (confirmed decision).
     static let recentsLimit = 10
@@ -50,8 +67,10 @@ enum TopLevelFolders {
     }
 
     /// The most-recent `limit` thoughts by `createdAt`, NEWEST FIRST (the "Recents" alias). Independent of
-    /// the chosen sort order - Recents is always newest-first by definition. Ties on `createdAt` fall to the
-    /// stable id tie-break so the order is deterministic. Fewer than `limit` thoughts returns them all.
+    /// the chosen sort order - Recents is always newest-first by definition, so it reuses the `.newest`
+    /// comparator (date desc, then its title-A-Z then id tie-break for equal dates), which is TOTAL and
+    /// deterministic. Fewer than `limit` thoughts returns them all; a `limit` of 0 returns none and a
+    /// negative `limit` is treated as "no cap" (returns every thought, newest first).
     static func recents(_ thoughts: [Thought], limit: Int = recentsLimit) -> [Thought] {
         let newestFirst = thoughts.sorted {
             ThoughtSortOrder.newest.areInIncreasingOrder(
@@ -73,24 +92,69 @@ enum TopLevelFolders {
 
     // MARK: - User folders (one level, flattened over legacy nesting)
 
-    /// The thoughts that belong to the top-level user folder `folderName`, FLATTENED over any legacy nested
-    /// subtree (spec 0026): a thought whose `folderPath` STARTS WITH `folderName` counts, so a thought that
-    /// lived in an old nested folder (`[folderName, "Q1"]`) still surfaces under its top-level folder. New
-    /// nesting is not created; this only keeps old data visible. Honors `sortOrder`.
+    /// Whether a thought belongs to the top-level user folder `folderName`, FLATTENED over any legacy nested
+    /// subtree (spec 0026): its `folderPath`'s FIRST component equals `folderName`. So a thought directly in
+    /// the folder (`[folderName]`) AND a thought that lived in an old nested folder (`[folderName, "Q1"]`)
+    /// both belong, but a same-prefixed sibling (`["Workshop"]` vs folder "Work") does NOT (this is component
+    /// equality, not a string prefix). The ONE definition of folder membership, so the list and the count
+    /// can never drift.
+    static func belongs(_ thought: Thought, toFolder folderName: String) -> Bool {
+        thought.folderPath.first == folderName
+    }
+
+    /// The thoughts that belong to the top-level user folder `folderName`, flattened over any legacy nested
+    /// subtree (see `belongs`). New nesting is not created; this only keeps old data visible. Honors
+    /// `sortOrder`.
     static func folderThoughts(
         _ thoughts: [Thought],
         folder folderName: String,
         sorted sortOrder: ThoughtSortOrder
     ) -> [Thought] {
-        sortOrder.sort(thoughts.filter { $0.folderPath.first == folderName })
+        sortOrder.sort(thoughts.filter { belongs($0, toFolder: folderName) })
     }
 
-    /// The number of thoughts in a top-level user folder, counting the flattened legacy subtree (so an
-    /// old nested thought is counted under its top-level folder). Pure so the row subtitle is testable.
+    /// The number of thoughts in a top-level user folder, counting the flattened legacy subtree (see
+    /// `belongs`). Pure so the row subtitle is testable and shares the ONE membership rule with the list.
     static func folderThoughtCount(_ thoughts: [Thought], folder folderName: String) -> Int {
         thoughts.reduce(into: 0) { count, thought in
-            if thought.folderPath.first == folderName { count += 1 }
+            if belongs(thought, toFolder: folderName) { count += 1 }
         }
+    }
+
+    // MARK: - Subject-driven projection + placement (spec 0026)
+
+    /// The thoughts a flat screen shows for its `subject`, honoring `sortOrder`: a user folder's flattened
+    /// thoughts, or an alias's projection (All Thoughts = every thought sorted; Recents = the 10 most recent
+    /// newest-first, ignoring `sortOrder`). The single definition the view renders, so the subject-to-list
+    /// mapping is unit-tested rather than re-derived in the SwiftUI view.
+    static func thoughts(
+        _ thoughts: [Thought],
+        for subject: FolderSubject,
+        sorted sortOrder: ThoughtSortOrder
+    ) -> [Thought] {
+        switch subject {
+        case let .userFolder(name):
+            return folderThoughts(thoughts, folder: name, sorted: sortOrder)
+        case let .alias(alias):
+            switch alias {
+            case .allThoughts: return allThoughts(thoughts, sorted: sortOrder)
+            case .recents: return recents(thoughts)
+            }
+        }
+    }
+
+    /// The flattened thought count for EVERY top-level folder, computed in ONE pass over the thoughts (each
+    /// thought increments the bucket for its `folderPath.first`), so a top-level list does not rescan the
+    /// whole thoughts array once per folder row (O(thoughts) instead of O(folders x thoughts) per render). A
+    /// folder with no thoughts is absent from the map; callers default it to 0.
+    static func folderThoughtCounts(_ thoughts: [Thought]) -> [String: Int] {
+        var counts: [String: Int] = [:]
+        for thought in thoughts {
+            if let top = thought.folderPath.first {
+                counts[top, default: 0] += 1
+            }
+        }
+        return counts
     }
 
     /// A user-facing, correctly pluralized label for a folder's thought count: "No thoughts" / "1 thought"
