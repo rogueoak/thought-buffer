@@ -23,13 +23,15 @@ struct ThoughtResultRow: View {
     let onCopied: () -> Void
 
     var body: some View {
-        Button {
-            onOpen(thought)
-        } label: {
-            ThoughtCard(thought: thought)
-        }
-        .buttonStyle(.plain)
-        .unifiedRow()
+        // A plain-styled Button as an .insetGrouped List cell fights the list's own tap handling
+        // (feedback 0025: taps needed multiple presses). A plain row + contentShape + onTapGesture is
+        // the reliable list-cell tap; swipeActions/contextMenu still attach to the row. The isButton
+        // trait keeps VoiceOver treating the row as a button.
+        ThoughtCard(thought: thought)
+            .contentShape(Rectangle())
+            .onTapGesture { onOpen(thought) }
+            .accessibilityAddTraits(.isButton)
+            .unifiedRow()
         .contextMenu {
             ThoughtActionsMenu(thought: thought, onCopied: onCopied) {
                 Button {

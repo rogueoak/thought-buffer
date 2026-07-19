@@ -204,13 +204,11 @@ struct TopLevelFoldersView: View {
     /// A pinned virtual alias folder row (All Thoughts / Recents), visually distinct from a user folder (a
     /// tinted glyph, no context menu, no count) and not renamable/deletable.
     private func aliasRow(_ alias: AliasFolder) -> some View {
-        Button {
-            onOpenAlias(alias)
-        } label: {
-            AliasFolderRow(alias: alias)
-        }
-        .buttonStyle(.plain)
-        .unifiedRow()
+        AliasFolderRow(alias: alias)
+            .contentShape(Rectangle())
+            .onTapGesture { onOpenAlias(alias) }
+            .accessibilityAddTraits(.isButton)
+            .unifiedRow()
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
             // A leading swipe on an alias plays its recordings as a queue (parity with the old folder swipe).
             if let controller = playbackController {
@@ -225,16 +223,14 @@ struct TopLevelFoldersView: View {
     }
 
     private func folderRow(name: String, count: Int) -> some View {
-        Button {
-            onOpenFolder(name)
-        } label: {
-            FolderRow(
-                name: name,
-                countLabel: TopLevelFolders.thoughtCountLabel(count)
-            )
-        }
-        .buttonStyle(.plain)
-        .unifiedRow()
+        FolderRow(
+            name: name,
+            countLabel: TopLevelFolders.thoughtCountLabel(count)
+        )
+            .contentShape(Rectangle())
+            .onTapGesture { onOpenFolder(name) }
+            .accessibilityAddTraits(.isButton)
+            .unifiedRow()
         .contextMenu {
             Button {
                 beginRename(name: name)
