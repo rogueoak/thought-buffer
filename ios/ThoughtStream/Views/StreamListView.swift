@@ -92,6 +92,9 @@ struct StreamListView: View {
                 onOpenSettings: { showSettings = true }
             )
             .navigationTitle("Thoughts")
+            // Inline title (feedback 0016) so "Thoughts" sits on the SAME bar as the trailing mic/gear
+            // buttons instead of on its own large-title row below them.
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: StreamRoute.self) { route in
                 switch route {
                 case let .folder(folderPath):

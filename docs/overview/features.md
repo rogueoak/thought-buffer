@@ -440,9 +440,10 @@ A note's text can leave the app: send it to another app or copy it to the clipbo
   blank lines. A note with no custom title shares its derived title; a note with no body shares just
   its title. Audio is never shared here - text only.
 
-## Note UX polish, round 3 (feedback 0013-0015)
+## Note UX polish, round 3 (feedback 0013-0016)
 
-Small consistency fixes to the note card and detail page, from a round of device use:
+Small consistency fixes to the note card, detail page, and Thoughts header, from a round of device
+use:
 
 - **Tighter timer spacing (0013).** The note card's timer/duration glyph sits as close to its label
   as the clock glyph does to its relative time, both using the same `CanopySpacing.x1` token.
@@ -453,3 +454,5 @@ Small consistency fixes to the note card and detail page, from a round of device
 - **Matching duration on the detail page (0015).** The note detail header shows the recording
   duration with the same timer glyph and spacing as the list card, not a dash. Both the card and the
   detail header now render one shared `NoteMetaStats` component, so their metadata line cannot drift.
+- **Inline Thoughts header (0016).** The top-level "Thoughts" title sits on the same navigation-bar
+  row as the mic and gear buttons (inline title) instead of on its own large-title row below them.
