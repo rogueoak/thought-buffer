@@ -255,6 +255,30 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertTrue(reopened.refineTranscript)
     }
 
+    // MARK: - Trim silences (spec 0019)
+
+    func testTrimSilenceDefaultsToTrue() {
+        // A fresh install (no key stored) must read as ON, not the `bool(forKey:)` false default.
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertTrue(store.trimSilence)
+    }
+
+    func testTrimSilencePersistsFalseAcrossInstances() {
+        // An explicit OFF must survive relaunch and not be masked by the true default.
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.trimSilence = false
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertFalse(reopened.trimSilence)
+    }
+
+    func testTrimSilencePersistsTrueAcrossInstances() {
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.trimSilence = false
+        store.trimSilence = true
+        let reopened = UserDefaultsSettingsStore(defaults: defaults)
+        XCTAssertTrue(reopened.trimSilence)
+    }
+
     // MARK: - Command-word aliases (spec 0018)
 
     func testAliasesDefaultToTheDefaultSetOnFreshInstall() {

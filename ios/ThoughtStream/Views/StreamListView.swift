@@ -102,6 +102,14 @@ struct StreamListView: View {
         TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)
     }
 
+    /// The dead-air trimmer for a new recording (spec 0019), or nil when the "Trim silences" setting is
+    /// OFF. A nil trimmer means the view model touches no code path over the audio, so the recording is
+    /// the byte-for-byte untrimmed capture. Read at build time so a Settings change applies to the next
+    /// recording.
+    private func makeAudioTrimmer() -> AudioTrimming? {
+        settingsStore.trimSilence ? AudioTrimmer() : nil
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             FolderContentsView(
@@ -194,7 +202,12 @@ struct StreamListView: View {
                     model: DictationViewModel(
                         store: store,
                         processor: makeTextProcessor(),
-                        recordsAudio: settingsStore.audioRetention.recordsAudio
+                        recordsAudio: settingsStore.audioRetention.recordsAudio,
+                        // Dead-air trimming (spec 0019): a trimmer only when the setting is on, so OFF
+                        // leaves the recording byte-for-byte the untrimmed capture (nil trimmer = no
+                        // code path touches the audio). Read at build time, so a Settings change applies
+                        // to the next recording, like the other per-session settings.
+                        audioTrimmer: makeAudioTrimmer()
                     )
                 ) { savedNote in
                     // A fresh recording saves at top level (folderPath []); land on it by resetting the
@@ -215,6 +228,10 @@ struct StreamListView: View {
                         // (spec 0013), subject to the transcript-only retention setting; a note that
                         // already has audio stays text-only append so its original recording is intact.
                         recordsAudio: !note.hasAudio && settingsStore.audioRetention.recordsAudio,
+                        // Only a note capturing a NEW recording (a text-only note recorded into) trims;
+                        // a note that already has audio keeps its original recording untouched, and the
+                        // view model only trims a freshly adopted recording anyway (spec 0019).
+                        audioTrimmer: note.hasAudio ? nil : makeAudioTrimmer(),
                         resuming: note
                     )
                 ) { savedNote in

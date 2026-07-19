@@ -112,4 +112,5 @@ private final class MutableSettingsStore: SettingsStoring {
     var lockScreenTitle: LockScreenTitle = .noteTitle
     var noteSortOrder: NoteSortOrder = .newest
     var refineTranscript = true
+    var trimSilence = true
 }
