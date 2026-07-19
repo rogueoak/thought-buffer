@@ -107,6 +107,14 @@ struct ThoughtDetailView: View {
     /// query or the thought's text changes so the highlights and count stay in sync.
     @State private var findNavigator = ThoughtFindNavigator(matches: [])
 
+    /// A ONE-SHOT latch for the open-from-search find seed (feedback 0030, item 9): true once the carried
+    /// `initialFindQuery` has been applied on the first appear. An explicit latch, NOT a `findQuery.isEmpty`
+    /// check, because the latter conflates "never seeded" with "the user opened find and then CLEARED it": if
+    /// `.onAppear` re-fires on a retained instance (returning from background, a re-appear after a child pop),
+    /// an empty-query check would re-seed and resurrect a search the user dismissed. The latch guarantees the
+    /// seed happens at most once per view lifetime, so it never fights a user clear.
+    @State private var didSeedFind = false
+
     /// Build the detail view. Prefers the ONE shared `ThoughtPlaybackController` (so the phone and
     /// CarPlay drive the same media center and never race); when none is supplied - a preview, a
     /// screenshot build, or a bare call site - it falls back to a private controller over the given
@@ -322,13 +330,18 @@ struct ThoughtDetailView: View {
         // the in-note find with it ONCE on appear, which drives `refreshFind` (rebuilding the navigator to the
         // FIRST match) and, via the `currentMatch` observer, scrolls that hit into view - exactly as if the
         // user had typed the query into the in-note field. Gated on `enablesFind` (a real find surface, not the
-        // split detail column or a preview) and a non-empty carried query; skipped for a brand-new thought,
-        // which opens straight into the editor where find is inert.
+        // split detail column or a preview). The `didSeedFind` ONE-SHOT latch (not a `findQuery.isEmpty` check)
+        // ensures the seed fires at most once per view lifetime, so a re-appear cannot resurrect a search the
+        // user cleared. Skipped for a brand-new thought, which opens straight into the editor where find is
+        // inert.
         .onAppear {
             if isUnsavedNewThought {
                 editorFocused = true
-            } else if enablesFind, findQuery.isEmpty, !initialFindQuery.isEmpty {
-                findQuery = initialFindQuery
+            } else if enablesFind, !didSeedFind {
+                didSeedFind = true
+                if !initialFindQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    findQuery = initialFindQuery
+                }
             }
         }
         // Playback is NOT stopped on leaving the detail (spec 0027): it lives in the persistent bottom
