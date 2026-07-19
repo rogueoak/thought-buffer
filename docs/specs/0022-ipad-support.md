@@ -33,6 +33,29 @@ the final navigation, not the old one.
 
 4. **Regression safety.** iPhone layout and behavior are unchanged on compact width.
 
+## Required restructure carried from the 0021 review
+
+The search + bottom-bar redesign (0021) owns bottom-bar/search/undo state PER
+folder-screen instance and vends the shake `UndoManager` from a first-responder host
+attached to the single root `NavigationStack`. That works only because a
+`NavigationStack` shows one screen at a time. Under this milestone's
+`NavigationSplitView` these become bugs that MUST be handled here (flagged by the
+0021 architect review, not defects in 0021 itself):
+
+- **Lift bottom-bar + search ownership above the navigation container.** With a
+  sidebar column and a content column both showing `FolderContentsView`
+  simultaneously, each would render its own `BottomBar` bound to the one shared
+  `searchQuery` and the same global flat results - two search fields fighting one
+  state. Move the bottom bar, the search query, and the results projection up to the
+  split container so there is a single search surface and one results list.
+- **Re-home the `UndoManagerHost` first responder for split view.** First responder
+  moves between columns and focused fields on iPad; the host must re-assert / re-home
+  so Shake-to-Undo keeps reaching the deletion controller's manager regardless of
+  which column is active (0021 fixes the re-assert-on-focus-change case; multi-column
+  is this milestone's extension).
+- **Extract any remaining per-screen affordance decisions into the pure layout seam**
+  so both compact and split layouts drive one tested `BottomBarLayout`.
+
 ## Non-goals
 
 - No iPad-specific features (no multi-note side-by-side editing, no pointer/keyboard
