@@ -43,7 +43,15 @@ struct UndoManagerHost: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> FirstResponderUndoController {
         let controller = FirstResponderUndoController()
-        onManager(controller.stableUndoManager)
+        // Hand the vended manager back OUTSIDE the current view-update pass (feedback 0020). This runs
+        // during SwiftUI's update, and `onManager` mutates the composition root's `@State`
+        // (`undoManagerInjected`); doing that synchronously here is the "Modifying state during view
+        // update, this will cause undefined behavior" warning, which also made SwiftUI re-run the pass and
+        // the list title lazy-render on navigation. Deferring to the next main-actor tick injects the
+        // manager just as reliably (it is needed only when a shake happens, long after the first render)
+        // without mutating state mid-update.
+        let manager = controller.stableUndoManager
+        DispatchQueue.main.async { onManager(manager) }
         return controller
     }
 

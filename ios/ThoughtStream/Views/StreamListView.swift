@@ -358,10 +358,10 @@ struct StreamListView: View {
                 // compact stack's one-screen-at-a-time folder screen owns its bottom bar.
                 showsBottomBar: StreamContainer.stack.folderScreenShowsOwnBottomBar
             )
-            .navigationTitle("Thoughts")
             // The "Thoughts" title sits BELOW the toolbar buttons as a large title (spec 0021, revising
-            // feedback 0016's inline choice), CONSISTENT with the folder screens.
-            .navigationBarTitleDisplayMode(.large)
+            // feedback 0016's inline choice), CONSISTENT with the folder screens, at the Canopy H3 size
+            // (feedback 0020: one Canopy step smaller than the system large title).
+            .streamListTitle("Thoughts")
             .navigationDestination(for: StreamRoute.self) { route in
                 switch route {
                 case let .folder(folderPath):
@@ -381,8 +381,7 @@ struct StreamListView: View {
                         deletion: deletion,
                         showsBottomBar: StreamContainer.stack.folderScreenShowsOwnBottomBar
                     )
-                    .navigationTitle(folderPath.last ?? "Thoughts")
-                    .navigationBarTitleDisplayMode(.large)
+                    .streamListTitle(folderPath.last ?? "Thoughts")
                 default:
                     // A thought / new-thought route uses the SHARED detail builder so the compact stack and
                     // the split detail column construct the same view (spec 0022): the detail's edit/delete/
@@ -453,8 +452,7 @@ struct StreamListView: View {
             resolvedContent: StreamSearchProjection.sidebarProjection(from: projection),
             onFoldersLoaded: { splitFoldersLoaded = true }
         )
-        .navigationTitle("Thoughts")
-        .navigationBarTitleDisplayMode(.large)
+        .streamListTitle("Thoughts")
     }
 
     /// The split-view CONTENT column: the selected folder's thoughts, in its OWN `NavigationStack` so nested
@@ -495,8 +493,7 @@ struct StreamListView: View {
             showsBottomBar: StreamContainer.split.folderScreenShowsOwnBottomBar,
             resolvedContent: projection
         )
-        .navigationTitle(folderPath.last ?? "Thoughts")
-        .navigationBarTitleDisplayMode(.large)
+        .streamListTitle(folderPath.last ?? "Thoughts")
     }
 
     /// The split-view DETAIL column: the selected thought (or new-thought draft), or a centered placeholder

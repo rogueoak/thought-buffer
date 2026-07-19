@@ -112,4 +112,15 @@ final class BottomBarLayoutTests: XCTestCase {
         XCTAssertFalse(d.showsSearch)
         XCTAssertTrue(d.showsResume)
     }
+
+    // MARK: - List title size (feedback 0020)
+
+    /// The below-the-toolbar list title is ONE Canopy step below the system large title: the H3-equivalent
+    /// `sizeX3xl` (30), not the larger `sizeX4xl` (36). Asserting against the token (not a raw point size)
+    /// keeps the "one step down, on the Canopy scale" rule verifiable without rendering.
+    func testListTitleUsesCanopyH3Size() {
+        XCTAssertEqual(StreamListTitle.fontSize, CanopyFont.sizeX3xl)
+        // One step below the next size up on the Canopy scale (the old, larger header).
+        XCTAssertLessThan(StreamListTitle.fontSize, CanopyFont.sizeX4xl)
+    }
 }
