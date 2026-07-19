@@ -776,3 +776,27 @@ inside the note. This supersedes spec 0015's simpler now-playing bar and extends
   [0, duration] and the elapsed / remaining time formatting are the pure, unit-tested `PlaybackProgress`.
   Real audio playback, the live Now Playing / Dynamic Island render, and the system remote commands are
   device-verifiable; the transport math and the Now Playing / remote-command wiring are proven by tests.
+
+## List and folder UX fixes (feedback 0026)
+
+Six polish fixes on the redesigned Thoughts screens (spec 0026):
+
+- **Tighter list headers.** The scrolling section title sits close to its rows and to the toolbar
+  (Notes-app rhythm), on both the top-level and folder screens, single-sourced in `StreamListTitleRow` +
+  `unifiedList()`.
+- **Aligned row icons.** The "All Thoughts" / "Recents" alias rows and the user-folder rows now share one
+  icon frame width, so every row label lines up on a single left edge.
+- **Stable search focus.** The bottom search field keeps focus from the first keystroke onward and stays
+  focused/editable in the "No matches" state, so a query can be refined or cleared in place. A stable id on
+  the bottom stack keeps the `TextField` the same instance across the content-state flip that a search
+  triggers.
+- **Working folder rename + delete.** Renaming or deleting a folder from the top-level screen now takes
+  effect. The bug was the alert button reading the dialog's target path from state the dialog's own
+  dismissal had already cleared; the payload is now captured synchronously at tap time.
+- **In-folder folder menu.** Inside a user folder, a nav-bar "..." menu renames or deletes THAT folder,
+  wired to the same store ops; delete pops back to the top level. Aliases (All Thoughts / Recents) have no
+  such menu.
+- **Three empty-state actions.** An empty user folder offers Move thoughts here, Record, and New thought.
+  "Move thoughts here" opens a multi-select picker of every thought not already in the folder and files the
+  chosen ones in. The Move action is omitted where it is meaningless (the root / All Thoughts / an alias, or
+  a truly empty store).

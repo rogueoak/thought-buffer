@@ -173,9 +173,19 @@ final class ThoughtStoreDriver {
     /// Move a thought to `folderPath` by re-saving it there. The store relocates the thought's `.md` and its
     /// sibling `.m4a`, so a recorded thought keeps its recording. Reloads so the list reflects the move.
     func move(_ thought: Thought, to folderPath: [String]) async {
+        await move([thought], to: folderPath)
+    }
+
+    /// Move SEVERAL thoughts to `folderPath` in one pass, reloading ONCE at the end (feedback 0026, item 6).
+    /// The per-thought `move` reloaded after each save (disk `loadAll` + republish), so moving N thoughts in
+    /// via the empty-folder picker triggered N full reloads and a visible flicker; batching re-saves them all
+    /// off the main actor and republishes a single time. An empty batch is a no-op (no reload).
+    func move(_ thoughts: [Thought], to folderPath: [String]) async {
+        guard !thoughts.isEmpty else { return }
         await Task.detached(priority: .userInitiated) { [store] in
-            // Discard the saved URL: this is a fire-and-forget re-file, the reload below reflects the move.
-            _ = try? store.save(thought.withFolderPath(folderPath))
+            for thought in thoughts {
+                _ = try? store.save(thought.withFolderPath(folderPath))
+            }
         }.value
         await reload()
     }

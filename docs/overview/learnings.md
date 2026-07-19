@@ -770,3 +770,21 @@ not weaken the new clamp back). Second: prefer expressing a bound ONCE, at the l
 authoritative value (here the controller owns `duration`), and have relative operations compose through
 the absolute one (`skip` -> `seek` -> clamp), so there is a single definition of "in range" that the
 in-app slider, the system scrubber, and both skip directions all share and cannot drift.
+
+## Read a dismiss-on-tap dialog's payload synchronously - the dismissal out-races a deferred read (feedback 0026)
+
+Folder rename and delete from the top-level screen silently did nothing while the store, driver, and feed
+were all correct (and unit-tested). The bug was one line: `Button("Rename") { Task { await renameFolder() } }`,
+where `renameFolder()` read the target folder path from the per-dialog state enum (`activeDialog`). Tapping
+an alert button DISMISSES the alert, which fires the presentation binding's setter and clears `activeDialog`
+to nil. The button's `Task` runs on a LATER runloop tick, so by the time it reads `activeDialog` the state
+is already gone and the `guard case .renameFolder(path)? = activeDialog` failed - a silent no-op. Create
+worked only because it read a SEPARATE `@State` (the name field) that the dismissal did not touch. The rule:
+when a dismiss-on-tap presentation (alert, confirmationDialog, sheet button) needs the payload of the
+per-presentation state that identifies WHICH item it was for, capture that payload SYNCHRONOUSLY inside the
+button action, before any `Task`/async hop, and act on the captured value - never read the presentation
+state after the tap, because the presentation's own dismissal binding clears it first. This extends the
+feedback 0018 un-stacked-alerts lesson (which fixed presentation identity): un-stacking made the dialog
+present, but the payload READ still has to beat the dismissal. A tell for this class of bug: the action is
+correct in isolation (its tests pass by calling it directly) yet no-ops only through the real UI, because
+only the UI path runs the dismissal binding that clears the state the deferred read depends on.

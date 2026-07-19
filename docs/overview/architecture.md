@@ -554,6 +554,27 @@ How the system is built and why.
     swipe-to-play based on which screen the search started from, and it is the single wiring point a future
     "play -> bottom player from a row" hooks into. Global search stays the same
     `StreamSearchProjection`/`FolderScreenState` seam (it reaches every thought, folder or uncategorized).
+  - **List / folder UX fixes (feedback 0026).** Six polish fixes on the spec 0026 screens. (1) Tighter list
+    headers: `StreamListTitleRow` insets drop to `x1`/`x1` and `unifiedList()` overrides the `.insetGrouped`
+    top content margin to `x2`, so the scrolling title sits close to the rows and toolbar (Notes-app). (2)
+    Row-icon alignment: `FolderRow`'s glyph gains a fixed `.frame(width: x8)` matching the alias tile, so every
+    row label lines up on one left edge. (3) Search focus: a stable `.id("stream-bottom-stack")` on the
+    `StreamBottomStack` in the bottom safe-area inset keeps the search `TextField` the SAME instance across the
+    normal->results->no-matches content flip, so focus survives the first keystroke and the no-matches state
+    (the `FolderScreenState.showsSearchField` seam already kept the field mounted). (4) Folder rename/delete:
+    the alert button captures the dialog's target path SYNCHRONOUSLY through the pure, unit-tested
+    `FolderDialogAction.capture(from:name:)` seam before its async `Task`, because the dialog's dismissal
+    binding clears `activeDialog` before a deferred read would run (the store/driver/feed were already correct
+    - see learnings; the seam lets a regression test cover the real path). (5) In-folder menu:
+    `FolderThoughtsView` gains a nav-bar "..." menu (user folders only, not aliases) with Rename / Delete
+    folder, routed through the SAME `FolderDialogAction.capture` seam to new `onRenameFolder`/`onDeleteFolder`
+    callbacks the root implements - rename re-points navigation at the new name, delete pops back (compact) or
+    clears the split selection. (6) Empty-state third action: `FolderEmptyStateCTA` takes an optional
+    `onMoveToFolder`; inside an empty USER folder (store non-empty) the normal state renders the CTA with Move
+    thoughts here / Record / New, and `MoveThoughtsIntoFolderSheet` (a new multi-select picker over every
+    thought not already in the folder) re-files the chosen thoughts via a new BATCH `feed.move(_ thoughts:to:)`
+    (one reload, no per-thought flicker). The Move action is omitted in the root / All Thoughts / an alias / a
+    truly empty store.
   `SettingsView` edits the injected
   `SettingsStoring` instance directly (control-phrase field with validation hint, a command-aliases
   editable list below it - spec 0018: an add field + plus button gated by the same

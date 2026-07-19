@@ -16,9 +16,13 @@ struct FolderRow: View {
 
     var body: some View {
         HStack(spacing: CanopySpacing.x3) {
+            // A fixed icon frame (x8) so the folder glyph occupies the SAME leading box as the alias
+            // rows' tinted tile (feedback 0026, item 2): otherwise the intrinsic-width glyph is narrower
+            // than the alias tile and the two rows' text labels do not line up on one left edge.
             Image(systemName: "folder.fill")
                 .font(.system(size: CanopyFont.sizeLg, weight: .semibold))
                 .foregroundStyle(CanopyColor.primary)
+                .frame(width: CanopySpacing.x8, alignment: .center)
 
             VStack(alignment: .leading, spacing: CanopySpacing.x1) {
                 Text(name)
