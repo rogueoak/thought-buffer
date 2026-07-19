@@ -7,12 +7,12 @@ import XCTest
 @MainActor
 final class DualCaptureViewModelTests: XCTestCase {
     private var tempDir: URL!
-    private var store: NoteStore!
+    private var store: ThoughtStore!
 
     override func setUpWithError() throws {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("DualCaptureVM-\(UUID().uuidString)", isDirectory: true)
-        store = NoteStore(directory: tempDir)
+        store = ThoughtStore(directory: tempDir)
     }
 
     override func tearDownWithError() throws {
@@ -47,14 +47,14 @@ final class DualCaptureViewModelTests: XCTestCase {
         service.emitFinalized("First paragraph.", range: ParagraphTiming(start: 0.0, duration: 2.0))
         service.emitFinalized("Second paragraph.", range: ParagraphTiming(start: 2.0, duration: 3.5))
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.paragraphs, ["First paragraph.", "Second paragraph."])
-        XCTAssertTrue(note.hasAudio)
-        XCTAssertEqual(note.timings.count, 2)
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0)
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 2.0)
-        XCTAssertEqual(note.timing(forParagraphAt: 1)?.start, 2.0)
-        XCTAssertEqual(note.timing(forParagraphAt: 1)?.duration, 3.5)
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.paragraphs, ["First paragraph.", "Second paragraph."])
+        XCTAssertTrue(thought.hasAudio)
+        XCTAssertEqual(thought.timings.count, 2)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.start, 0.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.duration, 2.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 1)?.start, 2.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 1)?.duration, 3.5)
     }
 
     /// Feedback 0012: two small-gap segments merge into ONE paragraph, and their timings merge into one
@@ -73,13 +73,13 @@ final class DualCaptureViewModelTests: XCTestCase {
             "before noon", range: ParagraphTiming(start: 2.5, duration: 1.0),
             startSeconds: 2.5, durationSeconds: 1.0, isAnalysisStart: false)
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.paragraphs, ["Remember to call the supplier before noon"],
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.paragraphs, ["Remember to call the supplier before noon"],
                        "a mid-thought breath stays in one paragraph")
-        XCTAssertEqual(note.timings.count, 1, "one timing per merged paragraph")
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0)
+        XCTAssertEqual(thought.timings.count, 1, "one timing per merged paragraph")
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.start, 0.0)
         // Merged duration spans the first start (0.0) through the second's end (3.5).
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 3.5)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.duration, 3.5)
     }
 
     /// Feedback 0012 (PR #24 engineer-major review): a paragraph that began text-only (its first
@@ -98,12 +98,12 @@ final class DualCaptureViewModelTests: XCTestCase {
             "two", range: ParagraphTiming(start: 1.2, duration: 1.0),
             startSeconds: 1.2, durationSeconds: 1.0, isAnalysisStart: false)
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.paragraphs, ["One two"])
-        XCTAssertTrue(note.hasAudio, "the merged paragraph adopts the recorded tail, not text-only")
-        XCTAssertEqual(note.timings.count, 1)
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 1.2, "adopts the incoming tail's start")
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 1.0, "adopts the incoming tail's duration")
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.paragraphs, ["One two"])
+        XCTAssertTrue(thought.hasAudio, "the merged paragraph adopts the recorded tail, not text-only")
+        XCTAssertEqual(thought.timings.count, 1)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.start, 1.2, "adopts the incoming tail's start")
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.duration, 1.0, "adopts the incoming tail's duration")
     }
 
     func testSaveAdoptsRecordingIntoStore() throws {
@@ -113,11 +113,11 @@ final class DualCaptureViewModelTests: XCTestCase {
         let model = DictationViewModel(service: service, store: store, recordsAudio: true)
         service.emitFinalized("Recorded.", range: ParagraphTiming(start: 0, duration: 1.5))
 
-        let note = try XCTUnwrap(try model.finish())
-        let audioURL = try XCTUnwrap(store.audioURL(for: note.id))
-        // The recording was moved into the note's audio slot.
+        let thought = try XCTUnwrap(try model.finish())
+        let audioURL = try XCTUnwrap(store.audioURL(for: thought.id))
+        // The recording was moved into the thought's audio slot.
         XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path))
-        XCTAssertEqual(note.audioFileName, audioURL.lastPathComponent)
+        XCTAssertEqual(thought.audioFileName, audioURL.lastPathComponent)
         // The temp file was consumed (moved), not left behind.
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempURL.path))
     }
@@ -129,9 +129,9 @@ final class DualCaptureViewModelTests: XCTestCase {
         let model = DictationViewModel(service: service, store: store, recordsAudio: false)
         service.emitFinalized("Words only.", range: nil)
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertFalse(note.hasAudio)
-        XCTAssertNil(store.audioURL(for: note.id).flatMap {
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertFalse(thought.hasAudio)
+        XCTAssertNil(store.audioURL(for: thought.id).flatMap {
             FileManager.default.fileExists(atPath: $0.path) ? $0 : nil
         })
     }
@@ -141,13 +141,13 @@ final class DualCaptureViewModelTests: XCTestCase {
         service.stubRecordingURL = try makeTempRecordingURL()
         let model = DictationViewModel(service: service, store: store, recordsAudio: true)
         // Recording armed, but the only paragraph has no real range (a folded partial / edited text):
-        // every resolved timing is zero-duration, so the note must save text-only and adopt no audio.
+        // every resolved timing is zero-duration, so the thought must save text-only and adopt no audio.
         service.emitFinalized("No timing here.", range: nil)
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertFalse(note.hasAudio, "a note with no real timing is text-only")
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertFalse(thought.hasAudio, "a thought with no real timing is text-only")
         // No orphan .m4a: the adopted file was cleaned up and the temp discarded.
-        let audioURL = try XCTUnwrap(store.audioURL(for: note.id))
+        let audioURL = try XCTUnwrap(store.audioURL(for: thought.id))
         XCTAssertFalse(FileManager.default.fileExists(atPath: audioURL.path))
     }
 
@@ -155,8 +155,8 @@ final class DualCaptureViewModelTests: XCTestCase {
 
     /// In-session read-back always speaks via TTS, even when the session is recording: the live
     /// `.m4a` is still open for writing (finalized only at Stop), so there is no finalized file to
-    /// play. Recorded-range playback of the actual voice is a SAVED-note feature (`NotePlaybackModel`,
-    /// covered in `NotePlaybackModelTests`).
+    /// play. Recorded-range playback of the actual voice is a SAVED-thought feature (`ThoughtPlaybackModel`,
+    /// covered in `ThoughtPlaybackModelTests`).
     func testInSessionReadThatBackSpeaksViaTTSEvenWhenRecording() async throws {
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()
@@ -199,13 +199,13 @@ final class DualCaptureViewModelTests: XCTestCase {
 
         XCTAssertEqual(model.paragraphs, ["First paragraph."], "the last paragraph was removed")
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.paragraphs, ["First paragraph."])
-        XCTAssertTrue(note.hasAudio)
-        XCTAssertEqual(note.timings.count, 1, "exactly one timing survives - no stale/extra entry")
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.paragraphs, ["First paragraph."])
+        XCTAssertTrue(thought.hasAudio)
+        XCTAssertEqual(thought.timings.count, 1, "exactly one timing survives - no stale/extra entry")
         // The surviving paragraph keeps ITS timing (start 0.0), not the dropped paragraph's 2.0.
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0)
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 2.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.start, 0.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.duration, 2.0)
     }
 
     /// Inject two timed paragraphs, remove the last SENTENCE, save, and assert the surviving
@@ -225,10 +225,10 @@ final class DualCaptureViewModelTests: XCTestCase {
         // The second paragraph was a single sentence, so it is removed entirely.
         XCTAssertEqual(model.paragraphs, ["First paragraph."])
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.timings.count, 1, "no stale timing left from the removed paragraph")
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0)
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 2.0)
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.timings.count, 1, "no stale timing left from the removed paragraph")
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.start, 0.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.duration, 2.0)
     }
 
     /// Removing the last sentence of a MULTI-sentence last paragraph shrinks it in place. Its recorded
@@ -247,30 +247,30 @@ final class DualCaptureViewModelTests: XCTestCase {
 
         XCTAssertEqual(model.paragraphs, ["First paragraph.", "One."])
 
-        let note = try XCTUnwrap(try model.finish())
-        XCTAssertEqual(note.timings.count, 2, "still 1:1 with paragraphs")
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0, "first paragraph timing untouched")
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 2.0)
+        let thought = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(thought.timings.count, 2, "still 1:1 with paragraphs")
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.start, 0.0, "first paragraph timing untouched")
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.duration, 2.0)
         // The edited paragraph's timing was dropped to a zero-length placeholder (plays via TTS).
-        XCTAssertEqual(note.timing(forParagraphAt: 1)?.duration, 0.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 1)?.duration, 0.0)
     }
 
-    // MARK: - Text-only note gains audio on resume (spec 0013)
+    // MARK: - Text-only thought gains audio on resume (spec 0013)
 
-    /// Spec 0013 acceptance: resuming a TEXT-ONLY note with `recordsAudio: true` and speaking a tail
-    /// must save a note that (a) keeps the original typed paragraphs, (b) appends the newly spoken
+    /// Spec 0013 acceptance: resuming a TEXT-ONLY thought with `recordsAudio: true` and speaking a tail
+    /// must save a thought that (a) keeps the original typed paragraphs, (b) appends the newly spoken
     /// paragraph, (c) attaches the newly captured recording, and (d) maps timings so the original
     /// paragraphs have zero-length placeholders (play back via TTS) while the spoken tail keeps its
     /// real recorded range. This is the inverse of the usual resume (which preserves an EXISTING
     /// recording): here the original had none, so the new audio is adopted.
-    func testResumingTextOnlyNoteWithRecordingAttachesAudioForNewTail() throws {
-        // A typed note with two paragraphs and NO recording (hasAudio == false).
-        let original = Note(
-            title: "Typed note",
+    func testResumingTextOnlyThoughtWithRecordingAttachesAudioForNewTail() throws {
+        // A typed thought with two paragraphs and NO recording (hasAudio == false).
+        let original = Thought(
+            title: "Typed thought",
             paragraphs: ["First typed paragraph.", "Second typed paragraph."],
             createdAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
-        XCTAssertFalse(original.hasAudio, "precondition: the original note carries no recording")
+        XCTAssertFalse(original.hasAudio, "precondition: the original thought carries no recording")
 
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()
@@ -281,32 +281,32 @@ final class DualCaptureViewModelTests: XCTestCase {
         // Speak a tail with a real recorded range (an absolute offset past the typed paragraphs).
         service.emitFinalized("Spoken addition.", range: ParagraphTiming(start: 0.0, duration: 2.5))
 
-        let note = try XCTUnwrap(try model.finish())
+        let thought = try XCTUnwrap(try model.finish())
 
         // The original paragraphs are preserved and the spoken tail is appended, in order.
-        XCTAssertEqual(note.paragraphs, [
+        XCTAssertEqual(thought.paragraphs, [
             "First typed paragraph.",
             "Second typed paragraph.",
             "Spoken addition."
         ])
-        // The newly captured recording was adopted (the note now has audio and a Play control shows).
-        XCTAssertTrue(note.hasAudio, "the note gained a recording from the spoken tail")
-        let audioURL = try XCTUnwrap(store.audioURL(for: note.id))
+        // The newly captured recording was adopted (the thought now has audio and a Play control shows).
+        XCTAssertTrue(thought.hasAudio, "the thought gained a recording from the spoken tail")
+        let audioURL = try XCTUnwrap(store.audioURL(for: thought.id))
         XCTAssertTrue(FileManager.default.fileExists(atPath: audioURL.path), "audio adopted into store")
-        XCTAssertEqual(note.audioFileName, audioURL.lastPathComponent)
+        XCTAssertEqual(thought.audioFileName, audioURL.lastPathComponent)
 
         // Timings line up 1:1 with paragraphs: the two typed paragraphs get zero-length placeholders
         // (TTS on playback), the spoken tail keeps its real range.
-        XCTAssertEqual(note.timings.count, 3)
-        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 0.0, "typed paragraph plays via TTS")
-        XCTAssertEqual(note.timing(forParagraphAt: 1)?.duration, 0.0, "typed paragraph plays via TTS")
-        XCTAssertEqual(note.timing(forParagraphAt: 2)?.start, 0.0)
-        XCTAssertEqual(note.timing(forParagraphAt: 2)?.duration, 2.5, "the spoken tail keeps its range")
+        XCTAssertEqual(thought.timings.count, 3)
+        XCTAssertEqual(thought.timing(forParagraphAt: 0)?.duration, 0.0, "typed paragraph plays via TTS")
+        XCTAssertEqual(thought.timing(forParagraphAt: 1)?.duration, 0.0, "typed paragraph plays via TTS")
+        XCTAssertEqual(thought.timing(forParagraphAt: 2)?.start, 0.0)
+        XCTAssertEqual(thought.timing(forParagraphAt: 2)?.duration, 2.5, "the spoken tail keeps its range")
     }
 
     // MARK: - Cancelled / empty session leaves no audio on disk
 
-    /// Cancelling a session discards the recording: the temp file is removed and no note audio is
+    /// Cancelling a session discards the recording: the temp file is removed and no thought audio is
     /// left behind. Pins that a backed-out session never orphans an `.m4a`.
     func testCancelledSessionDiscardsRecordingFile() throws {
         let service = RecordingStubCaptureService()
@@ -321,14 +321,14 @@ final class DualCaptureViewModelTests: XCTestCase {
         XCTAssertEqual(service.discardCount, 1)
     }
 
-    /// Finishing with nothing captured discards the recording and saves no note - no orphan audio.
+    /// Finishing with nothing captured discards the recording and saves no thought - no orphan audio.
     func testEmptyFinishDiscardsRecordingAndSavesNothing() throws {
         let service = RecordingStubCaptureService()
         let tempURL = try makeTempRecordingURL()
         service.stubRecordingURL = tempURL
         let model = DictationViewModel(service: service, store: store, recordsAudio: true)
 
-        XCTAssertNil(try model.finish(), "nothing captured, so no note")
+        XCTAssertNil(try model.finish(), "nothing captured, so no thought")
         XCTAssertFalse(FileManager.default.fileExists(atPath: tempURL.path), "empty session leaves no audio")
         XCTAssertEqual(store.loadAll().count, 0)
     }

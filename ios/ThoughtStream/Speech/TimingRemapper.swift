@@ -15,7 +15,7 @@ import Foundation
 enum TimingRemapper {
     /// Remap `timings` onto the compressed timeline produced by removing `removedRanges` (each an
     /// original-timeline `[start, end)` in seconds). Returns one output per input, in order, with the
-    /// same count, so the note's paragraph <-> timing alignment is preserved.
+    /// same count, so the thought's paragraph <-> timing alignment is preserved.
     ///
     /// A timing with a non-positive duration (a zero-length placeholder for a text-only paragraph) is
     /// still shifted so its start stays consistent with its neighbors, but its (zero) duration is kept.

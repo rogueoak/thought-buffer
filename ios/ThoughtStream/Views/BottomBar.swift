@@ -1,9 +1,9 @@
 import SwiftUI
 
-/// The persistent bottom bar shared across the list, folder, and note-detail screens (spec 0021): a
+/// The persistent bottom bar shared across the list, folder, and thought-detail screens (spec 0021): a
 /// SEARCH FIELD filling most of the width on the left, and a small set of ICON-ONLY action buttons on
 /// the right. It is factored so each screen passes in its own right-side actions via `trailing` rather
-/// than forking the bar per screen - the list/folder pass a new-note + record pair, the note-detail
+/// than forking the bar per screen - the list/folder pass a new-thought + record pair, the thought-detail
 /// passes a resume icon (only when resuming applies).
 ///
 /// The bar drops the text labels the old toolbar/record pill carried (to make room for the field), but
@@ -17,10 +17,10 @@ struct BottomBar<Trailing: View>: View {
     /// per `FolderScreenState.showsSearchField`; the trailing actions still show so Record is reachable.
     let showsSearchField: Bool
     /// Called when the user submits the field (Search key). Nil on screens that filter live off `query`
-    /// (the folder list); the note-detail page passes one so submitting routes to the global results
+    /// (the folder list); the thought-detail page passes one so submitting routes to the global results
     /// rather than popping on the first keystroke.
     let onSubmit: (() -> Void)?
-    /// The screen's icon-only right-side actions (new-note + record for lists, resume for notes), passed
+    /// The screen's icon-only right-side actions (new-thought + record for lists, resume for thoughts), passed
     /// in so the bar is not forked per screen.
     @ViewBuilder let trailing: Trailing
 
@@ -56,20 +56,20 @@ struct BottomBar<Trailing: View>: View {
 
     /// The search field: a magnifier glyph, a text field filling the remaining width, and a clear
     /// button when there is text. Uses `.search` submit semantics but never fights the dictation mic -
-    /// the record/resume action is a distinct button in `trailing` (spec 0021 keyboard note).
+    /// the record/resume action is a distinct button in `trailing` (spec 0021 keyboard thought).
     private var searchField: some View {
         HStack(spacing: CanopySpacing.x2) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
                 .foregroundStyle(CanopyColor.textSubtle)
-            TextField("Search notes", text: $query)
+            TextField("Search thoughts", text: $query)
                 .font(.system(size: CanopyFont.sizeSm))
                 .foregroundStyle(CanopyColor.text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .submitLabel(.search)
                 .onSubmit { onSubmit?() }
-                .accessibilityLabel("Search notes")
+                .accessibilityLabel("Search thoughts")
             if !query.isEmpty {
                 Button {
                     query = ""
@@ -87,7 +87,7 @@ struct BottomBar<Trailing: View>: View {
 
 /// A round, icon-only bottom-bar action button (spec 0021): a tappable glyph tinted in the primary
 /// token, sized as a comfortable tap target, with the accessibility label the caller supplies (the
-/// text label is dropped to make room for the search field). Used for the new-note and resume actions.
+/// text label is dropped to make room for the search field). Used for the new-thought and resume actions.
 struct BottomBarIconButton: View {
     let systemImage: String
     let accessibilityLabel: String
@@ -106,7 +106,7 @@ struct BottomBarIconButton: View {
 
 /// The record/resume icon-only button for the bottom bar (spec 0021): a filled mic glyph on the primary
 /// surface, keeping its prominent, always-active affordance WITHOUT a text label. The list/folder
-/// screens use it as "Record" (start a fresh session) and the note-detail as "Resume recording", set
+/// screens use it as "Record" (start a fresh session) and the thought-detail as "Resume recording", set
 /// via `accessibilityLabel`.
 struct BottomBarRecordButton: View {
     var accessibilityLabel: String = "Record"

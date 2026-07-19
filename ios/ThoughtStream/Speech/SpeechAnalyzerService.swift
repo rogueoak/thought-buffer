@@ -243,9 +243,9 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         startTask?.cancel()
         startTask = nil
         let pending = detachAnalysis()
-        // Stop emitting immediately: the view model folds the last live partial into the note on
+        // Stop emitting immediately: the view model folds the last live partial into the thought on
         // finish, so no words are lost, and cancelling means no late finalized result lands after the
-        // note is already saved (which would append a duplicate paragraph).
+        // thought is already saved (which would append a duplicate paragraph).
         pending?.resultsTask.cancel()
         // A pause teardown may be in flight; stop supersedes it.
         teardownTask?.cancel()

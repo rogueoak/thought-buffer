@@ -5,7 +5,7 @@ import MediaPlayer
 /// small value so the controller can build it once and hand it to whatever writes the system center,
 /// and so tests can assert exactly what was published without a real `MPNowPlayingInfoCenter`.
 struct NowPlayingInfo: Equatable {
-    /// The note's title, shown as the Now Playing track title on the lock screen / CarPlay.
+    /// The thought's title, shown as the Now Playing track title on the lock screen / CarPlay.
     let title: String
     /// Total recording length in seconds (`MPMediaItemPropertyPlaybackDuration`).
     let duration: Double

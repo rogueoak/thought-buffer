@@ -18,7 +18,7 @@ import AVFoundation
 /// `FileProtection.completeUnlessOpen` and nothing about the audio is ever logged.
 final class RecordingWriter: @unchecked Sendable {
     /// The temporary file the recording is written to. The caller adopts it into storage after
-    /// `stop()` via `NoteStoring.saveAudio(from:for:)`.
+    /// `stop()` via `ThoughtStoring.saveAudio(from:for:)`.
     let url: URL
 
     private let lock = NSLock()
@@ -33,7 +33,7 @@ final class RecordingWriter: @unchecked Sendable {
     /// Create a writer targeting a fresh temporary `.m4a`. The file is opened lazily on the first
     /// `append`, once the input format is known, so the AAC settings match the tap's sample rate.
     init() {
-        let name = "thoughtstream-recording-\(UUID().uuidString).\(NoteStore.audioFileExtension)"
+        let name = "thoughtstream-recording-\(UUID().uuidString).\(ThoughtStore.audioFileExtension)"
         self.url = FileManager.default.temporaryDirectory.appendingPathComponent(name, isDirectory: false)
     }
 
@@ -81,7 +81,7 @@ final class RecordingWriter: @unchecked Sendable {
     }
 
     /// Delete the temporary file, if it exists. Used when the recording is discarded (empty, or the
-    /// session produced no note to attach it to).
+    /// session produced no thought to attach it to).
     func discard() {
         finish()
         try? FileManager.default.removeItem(at: url)

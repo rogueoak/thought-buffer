@@ -1,6 +1,6 @@
 import Foundation
 
-/// Shared, cheap relative-time label for note timestamps ("2h ago", "Yesterday").
+/// Shared, cheap relative-time label for thought timestamps ("2h ago", "Yesterday").
 enum RelativeTime {
     private static let formatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()

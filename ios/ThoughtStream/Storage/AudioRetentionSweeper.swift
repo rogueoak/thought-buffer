@@ -1,18 +1,18 @@
 import Foundation
 
-/// Deletes note recordings that have outlived the user's auto-delete window (spec 0007).
+/// Deletes thought recordings that have outlived the user's auto-delete window (spec 0007).
 ///
-/// Runs once at launch. Only the audio sibling is removed; the note's text is always kept, so a
-/// swept note simply loses its recording and falls back to text-to-speech on "read that back". This
+/// Runs once at launch. Only the audio sibling is removed; the thought's text is always kept, so a
+/// swept thought simply loses its recording and falls back to text-to-speech on "read that back". This
 /// is a no-op for the `keep` and `transcriptOnly` policies (nothing to expire).
 ///
 /// Kept off the main actor: it reads the store (`loadAll` can block on coordinated iCloud IO) and
-/// deletes through it, mirroring the discipline the note-list load already follows.
+/// deletes through it, mirroring the discipline the thought-list load already follows.
 struct AudioRetentionSweeper {
-    let store: NoteStoring
+    let store: ThoughtStoring
 
-    /// Delete the recording of every note older than the retention window. Uses `now` and `createdAt`
-    /// so the caller can inject a clock in tests. Deletion errors are swallowed per note so one
+    /// Delete the recording of every thought older than the retention window. Uses `now` and `createdAt`
+    /// so the caller can inject a clock in tests. Deletion errors are swallowed per thought so one
     /// stuck file does not stop the sweep. Returns the ids whose audio was deleted (for tests).
     ///
     /// `async` on purpose: `store.loadAll()` / `deleteAudio` do coordinated IO that can block on the
@@ -25,10 +25,10 @@ struct AudioRetentionSweeper {
         let cutoff = now.addingTimeInterval(-Double(days) * 86_400)
 
         var deleted: [UUID] = []
-        for note in store.loadAll() where note.hasAudio && note.createdAt < cutoff {
+        for thought in store.loadAll() where thought.hasAudio && thought.createdAt < cutoff {
             do {
-                try store.deleteAudio(for: note.id)
-                deleted.append(note.id)
+                try store.deleteAudio(for: thought.id)
+                deleted.append(thought.id)
             } catch {
                 // Best-effort: skip a file that will not delete rather than failing the whole sweep.
             }

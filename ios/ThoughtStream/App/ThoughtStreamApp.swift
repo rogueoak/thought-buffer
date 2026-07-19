@@ -67,14 +67,14 @@ struct ThoughtStreamApp: App {
             // start on the Stream list.
             if CommandLine.arguments.contains("-uiScreen"),
                CommandLine.arguments.contains("note-playback") {
-                // Screenshot mode: a note detail carrying a recording, so the Play affordance renders
+                // Screenshot mode: a thought detail carrying a recording, so the Play affordance renders
                 // without a mic. The audio URL points at a bundled/temp file only so the button
                 // shows; a stub player keeps it inert.
                 NavigationStack {
-                    NoteDetailView(
-                        note: ScreenshotNotes.recorded,
+                    ThoughtDetailView(
+                        thought: ScreenshotThoughts.recorded,
                         resolver: FixedAudioURLResolver(url: URL(fileURLWithPath: "/tmp/thoughtstream-preview.m4a")),
-                        player: InertAudioNotePlayer()
+                        player: InertAudioThoughtPlayer()
                     )
                 }
             } else if CommandLine.arguments.contains("-uiScreen"),
@@ -92,7 +92,7 @@ struct ThoughtStreamApp: App {
                 // command so the Mira control chip renders.
                 DictationView(
                     model: DictationViewModel(
-                        store: dependencies.noteStore,
+                        store: dependencies.thoughtStore,
                         processor: dependencies.makeTextProcessor()
                     ),
                     previewInjection:
@@ -104,11 +104,11 @@ struct ThoughtStreamApp: App {
                 )
             } else {
                 StreamListView(
-                    store: dependencies.noteStore,
+                    store: dependencies.thoughtStore,
                     makeTextProcessor: dependencies.makeTextProcessor,
                     settingsStore: dependencies.settingsStore,
-                    noteStoreKind: dependencies.noteStoreKind,
-                    noteObserver: dependencies.noteObserver,
+                    thoughtStoreKind: dependencies.thoughtStoreKind,
+                    thoughtObserver: dependencies.thoughtObserver,
                     sessionRoute: dependencies.sessionRoute,
                     playbackController: dependencies.playbackController
                 )
@@ -132,15 +132,15 @@ private final class ScreenshotSettings: SettingsStoring {
     ]
     var audioRetention: AudioRetention = .keep
     var lockScreenTitle: LockScreenTitle = .noteTitle
-    var noteSortOrder: NoteSortOrder = .newest
+    var thoughtSortOrder: ThoughtSortOrder = .newest
     var refineTranscript: Bool = true
     var trimSilence: Bool = true
 }
 
-/// Sample notes for screenshot mode.
-private enum ScreenshotNotes {
-    /// A note that carries a recording, so the detail view shows its Play affordance.
-    static let recorded = Note(
+/// Sample thoughts for screenshot mode.
+private enum ScreenshotThoughts {
+    /// A thought that carries a recording, so the detail view shows its Play affordance.
+    static let recorded = Thought(
         title: "Morning drive",
         paragraphs: [
             "Remember to call the supplier about the Shea butter order before noon.",
@@ -155,9 +155,9 @@ private enum ScreenshotNotes {
     )
 }
 
-/// A no-op `AudioNotePlayer` for screenshot mode: the Play button renders without touching audio.
+/// A no-op `AudioThoughtPlayer` for screenshot mode: the Play button renders without touching audio.
 @MainActor
-private final class InertAudioNotePlayer: AudioNotePlayer {
+private final class InertAudioThoughtPlayer: AudioThoughtPlayer {
     var onFinish: (() -> Void)?
     func play(url: URL, from start: Double, duration: Double?) -> Bool { false }
     func pause() {}
@@ -171,5 +171,5 @@ private final class InertAudioNotePlayer: AudioNotePlayer {
 /// without reaching into a real store.
 private struct FixedAudioURLResolver: AudioURLResolving {
     let url: URL?
-    func resolveAudioURL(for noteID: UUID, audioFileName: String?) -> URL? { url }
+    func resolveAudioURL(for thoughtID: UUID, audioFileName: String?) -> URL? { url }
 }

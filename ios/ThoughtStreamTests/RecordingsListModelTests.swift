@@ -1,22 +1,22 @@
 import XCTest
 @testable import ThoughtStream
 
-/// The CarPlay recordings-browser model (spec 0008): projects the shared `NoteStoreDriver` to only
-/// notes that have a recording, newest first, with a formatted duration, and refreshes when the
+/// The CarPlay recordings-browser model (spec 0008): projects the shared `ThoughtStoreDriver` to only
+/// thoughts that have a recording, newest first, with a formatted duration, and refreshes when the
 /// driver's list changes. Proven with an in-memory store + stub observer, so the filter, order,
 /// duration formatting, and the driver-change -> list-refresh mapping are all provable without
 /// SwiftUI, CarPlay, or real iCloud.
 @MainActor
 final class RecordingsListModelTests: XCTestCase {
 
-    private final class InMemoryStore: NoteStoring, @unchecked Sendable {
-        var notes: [Note] = []
-        func save(_ note: Note) throws -> URL { URL(fileURLWithPath: "/dev/null") }
-        func loadAll() -> [Note] { notes }
+    private final class InMemoryStore: ThoughtStoring, @unchecked Sendable {
+        var thoughts: [Thought] = []
+        func save(_ thought: Thought) throws -> URL { URL(fileURLWithPath: "/dev/null") }
+        func loadAll() -> [Thought] { thoughts }
         func delete(id: UUID) throws {}
     }
 
-    private final class StubObserver: UbiquitousNoteObserving {
+    private final class StubObserver: UbiquitousThoughtObserving {
         var onChange: (() -> Void)?
         private(set) var startCount = 0
         private(set) var stopCount = 0
@@ -25,8 +25,8 @@ final class RecordingsListModelTests: XCTestCase {
         func fireChange() { onChange?() }
     }
 
-    private func recorded(title: String, at t: TimeInterval, length: Double) -> Note {
-        Note(
+    private func recorded(title: String, at t: TimeInterval, length: Double) -> Thought {
+        Thought(
             title: title,
             paragraphs: ["p"],
             createdAt: Date(timeIntervalSince1970: t),
@@ -35,16 +35,16 @@ final class RecordingsListModelTests: XCTestCase {
         )
     }
 
-    private func textOnly(title: String, at t: TimeInterval) -> Note {
-        Note(title: title, paragraphs: ["p"], createdAt: Date(timeIntervalSince1970: t))
+    private func textOnly(title: String, at t: TimeInterval) -> Thought {
+        Thought(title: title, paragraphs: ["p"], createdAt: Date(timeIntervalSince1970: t))
     }
 
     // MARK: - Filter + order
 
-    func testListsOnlyNotesWithAudioNewestFirst() async {
+    func testListsOnlyThoughtsWithAudioNewestFirst() async {
         let store = InMemoryStore()
         // The driver returns newest first; emulate that ordering here.
-        store.notes = [
+        store.thoughts = [
             recorded(title: "third", at: 300, length: 10),
             textOnly(title: "no-audio", at: 250),
             recorded(title: "first", at: 100, length: 20),
@@ -54,12 +54,12 @@ final class RecordingsListModelTests: XCTestCase {
 
         XCTAssertTrue(model.didLoad)
         XCTAssertEqual(model.entries.map(\.title), ["third", "first"],
-                       "only notes with audio, in the driver's newest-first order")
+                       "only thoughts with audio, in the driver's newest-first order")
     }
 
-    func testEmptyWhenNoNoteHasAudio() async {
+    func testEmptyWhenNoThoughtHasAudio() async {
         let store = InMemoryStore()
-        store.notes = [textOnly(title: "a", at: 1), textOnly(title: "b", at: 2)]
+        store.thoughts = [textOnly(title: "a", at: 1), textOnly(title: "b", at: 2)]
         let model = RecordingsListModel(store: store)
         await model.start()
         XCTAssertTrue(model.didLoad)
@@ -80,7 +80,7 @@ final class RecordingsListModelTests: XCTestCase {
 
     func testEntryDetailIncludesTheDuration() async {
         let store = InMemoryStore()
-        store.notes = [recorded(title: "drive", at: 100, length: 83)]
+        store.thoughts = [recorded(title: "drive", at: 100, length: 83)]
         let model = RecordingsListModel(store: store)
         await model.start()
 
@@ -89,31 +89,31 @@ final class RecordingsListModelTests: XCTestCase {
     }
 
     func testRecordingDurationIsTailOfLastParagraph() {
-        let note = Note(
+        let thought = Thought(
             title: "t", paragraphs: ["a", "b"], createdAt: Date(),
             audioFileName: "t.m4a",
             timings: [ParagraphTiming(start: 0, duration: 4), ParagraphTiming(start: 4, duration: 6)]
         )
-        XCTAssertEqual(note.recordingDuration, 10, "start + duration of the last-ending range")
+        XCTAssertEqual(thought.recordingDuration, 10, "start + duration of the last-ending range")
     }
 
     func testRecordingDurationIsOrderIndependent() {
         // `recordingDuration` uses max(start + duration), not `timings.last`, so a timing list that is
         // out of chronological order still yields the true recording length (the tail of the
         // last-ENDING range), never a shorter earlier range.
-        let note = Note(
+        let thought = Thought(
             title: "t", paragraphs: ["a", "b"], createdAt: Date(),
             audioFileName: "t.m4a",
             timings: [ParagraphTiming(start: 8, duration: 4), ParagraphTiming(start: 0, duration: 3)]
         )
-        XCTAssertEqual(note.recordingDuration, 12, "the longest tail wins regardless of order")
+        XCTAssertEqual(thought.recordingDuration, 12, "the longest tail wins regardless of order")
     }
 
     // MARK: - Live refresh on driver change
 
     func testDriverChangeRefreshesTheList() async {
         let store = InMemoryStore()
-        store.notes = [recorded(title: "first", at: 100, length: 10)]
+        store.thoughts = [recorded(title: "first", at: 100, length: 10)]
         let observer = StubObserver()
         let model = RecordingsListModel(store: store, observer: observer)
 
@@ -123,8 +123,8 @@ final class RecordingsListModelTests: XCTestCase {
         XCTAssertEqual(model.entries.map(\.title), ["first"])
         let afterStart = changeCount
 
-        // A note syncs in from another device with a recording; the observer fires.
-        store.notes = [
+        // A thought syncs in from another device with a recording; the observer fires.
+        store.thoughts = [
             recorded(title: "synced", at: 200, length: 5),
             recorded(title: "first", at: 100, length: 10),
         ]

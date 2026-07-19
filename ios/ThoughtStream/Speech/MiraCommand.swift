@@ -3,15 +3,15 @@ import Foundation
 /// A hands-free voice-editing command recognized from a finalized speech segment.
 ///
 /// A control word ("Mira") followed by a command is executed as an action instead of being
-/// written into the note. See `MiraCommandParser` for the grammar and `DictationViewModel` for
+/// written into the thought. See `MiraCommandParser` for the grammar and `DictationViewModel` for
 /// execution.
 enum MiraCommand: Equatable {
-    /// Delete the last sentence of the current note.
+    /// Delete the last sentence of the current thought.
     case removeLastSentence
-    /// Delete the last paragraph of the current note.
+    /// Delete the last paragraph of the current thought.
     case removeLastParagraph
-    /// Save the current note and start a fresh one, keeping the session running.
-    case newNote
+    /// Save the current thought and start a fresh one, keeping the session running.
+    case newThought
     /// Speak the last paragraph aloud (text to speech).
     case readThatBack
 }
@@ -22,16 +22,16 @@ extension MiraCommand {
     /// The commands shown on the record-screen cheat sheet, in the order presented to the user
     /// (feedback 0008). The single source for the on-screen command list.
     static let cheatSheet: [MiraCommand] = [
-        .newNote, .readThatBack, .removeLastSentence, .removeLastParagraph,
+        .newThought, .readThatBack, .removeLastSentence, .removeLastParagraph,
     ]
 
-    /// The canonical spoken phrasing shown after the control word (e.g. "new note"). Kept beside the
+    /// The canonical spoken phrasing shown after the control word (e.g. "new thought"). Kept beside the
     /// parser's grammar so the cheat sheet matches what actually fires.
     var spokenPhrase: String {
         switch self {
         case .removeLastSentence: return "remove last sentence"
         case .removeLastParagraph: return "remove last paragraph"
-        case .newNote: return "new note"
+        case .newThought: return "new thought"
         case .readThatBack: return "read that back"
         }
     }
@@ -41,7 +41,7 @@ extension MiraCommand {
         switch self {
         case .removeLastSentence: return "Delete the last sentence you spoke. Also \"delete the last line\" or \"scratch that\"."
         case .removeLastParagraph: return "Delete the whole last paragraph."
-        case .newNote: return "Save this note and start a fresh one."
+        case .newThought: return "Save this thought and start a fresh one."
         case .readThatBack: return "Read your last paragraph aloud."
         }
     }
@@ -52,7 +52,7 @@ extension MiraCommand {
 /// `ProcessedSegment.split` (the processor's result), so the processor forwards the outcome instead
 /// of mechanically re-wrapping an identical enum.
 enum CommandOutcome: Equatable {
-    /// Matched a known command; execute it (and suppress it from the note).
+    /// Matched a known command; execute it (and suppress it from the thought).
     case command(MiraCommand)
     /// Led with the control word but matched no known command (feedback 0005): NOT transcribed; the
     /// view model drops it and shows a brief "didn't catch that" chip so the user knows it was

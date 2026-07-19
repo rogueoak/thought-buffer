@@ -159,7 +159,7 @@ final class SettingsStoreTests: XCTestCase {
 
     // MARK: - Lock screen title (spec 0008)
 
-    func testLockScreenTitleDefaultsToNoteTitle() {
+    func testLockScreenTitleDefaultsToThoughtTitle() {
         let store = UserDefaultsSettingsStore(defaults: defaults)
         XCTAssertEqual(store.lockScreenTitle, .noteTitle)
     }
@@ -172,7 +172,7 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(reopened.lockScreenTitle, .generic)
     }
 
-    func testUnknownLockScreenTitleTagFallsBackToNoteTitle() {
+    func testUnknownLockScreenTitleTagFallsBackToThoughtTitle() {
         // A value written by a newer build (or a corrupt default) must decode to the safe default.
         defaults.set("someFutureMode", forKey: "settings.lockScreenTitle")
         let store = UserDefaultsSettingsStore(defaults: defaults)
@@ -202,32 +202,32 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.spellingOverrides, [])
     }
 
-    // MARK: - Note sort order persistence (spec 0010)
+    // MARK: - Thought sort order persistence (spec 0010)
 
-    func testNoteSortOrderDefaultsToNewest() {
+    func testThoughtSortOrderDefaultsToNewest() {
         let store = UserDefaultsSettingsStore(defaults: defaults)
-        XCTAssertEqual(store.noteSortOrder, .newest)
+        XCTAssertEqual(store.thoughtSortOrder, .newest)
     }
 
-    func testNoteSortOrderPersistsAcrossInstances() {
+    func testThoughtSortOrderPersistsAcrossInstances() {
         let store = UserDefaultsSettingsStore(defaults: defaults)
-        store.noteSortOrder = .titleAZ
+        store.thoughtSortOrder = .titleAZ
         let reopened = UserDefaultsSettingsStore(defaults: defaults)
-        XCTAssertEqual(reopened.noteSortOrder, .titleAZ)
+        XCTAssertEqual(reopened.thoughtSortOrder, .titleAZ)
     }
 
-    func testNoteSortOrderUnknownTagFallsBackToDefault() {
+    func testThoughtSortOrderUnknownTagFallsBackToDefault() {
         defaults.set("someFutureOrder", forKey: "settings.noteSortOrder")
         let store = UserDefaultsSettingsStore(defaults: defaults)
-        XCTAssertEqual(store.noteSortOrder, .newest)
+        XCTAssertEqual(store.thoughtSortOrder, .newest)
     }
 
-    func testNoteSortOrderRoundTripsEveryCase() {
-        for order in NoteSortOrder.allCases {
+    func testThoughtSortOrderRoundTripsEveryCase() {
+        for order in ThoughtSortOrder.allCases {
             let store = UserDefaultsSettingsStore(defaults: defaults)
-            store.noteSortOrder = order
+            store.thoughtSortOrder = order
             let reopened = UserDefaultsSettingsStore(defaults: defaults)
-            XCTAssertEqual(reopened.noteSortOrder, order, "\(order) should round-trip")
+            XCTAssertEqual(reopened.thoughtSortOrder, order, "\(order) should round-trip")
         }
     }
 

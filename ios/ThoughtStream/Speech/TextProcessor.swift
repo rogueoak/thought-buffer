@@ -21,7 +21,7 @@ enum ProcessedSegment: Equatable {
     case drop
 }
 
-/// A thin, injectable transform applied to speech text between recognition and the note.
+/// A thin, injectable transform applied to speech text between recognition and the thought.
 ///
 /// Every finalized segment passes through `process` before it reaches the view model's
 /// paragraphs. The default is a pass-through that always returns `.text`. This is the seam where

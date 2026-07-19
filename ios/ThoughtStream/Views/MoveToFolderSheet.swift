@@ -1,16 +1,16 @@
 import SwiftUI
 
 /// The "Move to folder" picker sheet (spec 0010): presents "New folder...", "Top level", and every
-/// existing folder in the tree indented by depth. Picking a destination re-saves the note there (the
-/// store relocates its `.md` and sibling `.m4a`), so a recorded note keeps its recording.
+/// existing folder in the tree indented by depth. Picking a destination re-saves the thought there (the
+/// store relocates its `.md` and sibling `.m4a`), so a recorded thought keeps its recording.
 ///
 /// The folder tree is walked once on appear via the injected `childFolders` closure (`store.folders`
-/// through the feed, off the main actor) so an empty folder - which never appears in any note's
+/// through the feed, off the main actor) so an empty folder - which never appears in any thought's
 /// `folderPath` - is still offered. Ordering is `FolderMoveTargets`' pre-order, A-Z among siblings.
 struct MoveToFolderSheet: View {
-    /// The note being moved, used only to show its title and to know its current folder (so the
+    /// The thought being moved, used only to show its title and to know its current folder (so the
     /// current location is marked, not offered as a move onto itself).
-    let note: Note
+    let thought: Thought
     /// Walk the folder tree: `childFolders([])` gives the top-level folders. Injected so the sheet
     /// does not reach into the store directly and stays testable via the feed.
     let childFolders: ([String]) async -> [String]
@@ -42,7 +42,7 @@ struct MoveToFolderSheet: View {
                 }
 
                 Section {
-                    row(title: "Top level", systemImage: "tray", depth: 0, isCurrent: note.folderPath.isEmpty) {
+                    row(title: "Top level", systemImage: "tray", depth: 0, isCurrent: thought.folderPath.isEmpty) {
                         Task { await onMove([]); dismiss() }
                     }
                     ForEach(targets) { target in
@@ -50,7 +50,7 @@ struct MoveToFolderSheet: View {
                             title: target.name,
                             systemImage: "folder",
                             depth: target.depth + 1,
-                            isCurrent: target.path == note.folderPath
+                            isCurrent: target.path == thought.folderPath
                         ) {
                             Task { await onMove(target.path); dismiss() }
                         }

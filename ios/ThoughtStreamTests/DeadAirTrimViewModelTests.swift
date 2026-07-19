@@ -2,17 +2,17 @@ import XCTest
 @testable import ThoughtStream
 
 /// The view-model wiring for dead-air removal (spec 0019): on save, an ON session (a trimmer present)
-/// trims the freshly adopted recording off the main actor and re-saves the note with remapped
+/// trims the freshly adopted recording off the main actor and re-saves the thought with remapped
 /// timings; an OFF session (nil trimmer) never touches the audio and never invokes a trim.
 @MainActor
 final class DeadAirTrimViewModelTests: XCTestCase {
     private var tempDir: URL!
-    private var store: NoteStore!
+    private var store: ThoughtStore!
 
     override func setUpWithError() throws {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("DeadAirVM-\(UUID().uuidString)", isDirectory: true)
-        store = NoteStore(directory: tempDir)
+        store = ThoughtStore(directory: tempDir)
     }
 
     override func tearDownWithError() throws {
@@ -32,13 +32,13 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         service.emitFinalized("First.", range: ParagraphTiming(start: 0.0, duration: 2.0))
         service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
 
-        let note = try XCTUnwrap(try model.finish())
-        // Timings are the raw captured ones (no remap applied) and the note has audio.
-        XCTAssertTrue(note.hasAudio)
-        XCTAssertEqual(note.timing(forParagraphAt: 1)?.start, 5.0, "OFF leaves the original timeline")
+        let thought = try XCTUnwrap(try model.finish())
+        // Timings are the raw captured ones (no remap applied) and the thought has audio.
+        XCTAssertTrue(thought.hasAudio)
+        XCTAssertEqual(thought.timing(forParagraphAt: 1)?.start, 5.0, "OFF leaves the original timeline")
     }
 
-    // MARK: - ON path: trim runs, timings remap, note re-saved
+    // MARK: - ON path: trim runs, timings remap, thought re-saved
 
     func testTrimOnAdoptsTrimmedAudioRemapsTimingsAndReSaves() async throws {
         let service = RecordingStubCaptureService()
@@ -57,28 +57,28 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         service.emitFinalized("First.", range: ParagraphTiming(start: 0.0, duration: 2.0))
         service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
 
-        let note = try XCTUnwrap(try model.finish())
-        let id = note.id
+        let thought = try XCTUnwrap(try model.finish())
+        let id = thought.id
         let audioURL = try XCTUnwrap(store.audioURL(for: id))
 
-        // Poll the store for the re-saved note with remapped timings (second paragraph shifted left 3s).
+        // Poll the store for the re-saved thought with remapped timings (second paragraph shifted left 3s).
         let reloaded = try await pollForRemap(id: id, expectedSecondStart: 2.0)
         XCTAssertEqual(reloaded.timing(forParagraphAt: 0)?.start ?? -1, 0.0, accuracy: 0.001)
         XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 2.0, accuracy: 0.001,
                        "second paragraph shifted left by the 3s removed before it")
-        XCTAssertTrue(reloaded.hasAudio, "the note keeps its (now trimmed) recording")
+        XCTAssertTrue(reloaded.hasAudio, "the thought keeps its (now trimmed) recording")
 
-        // The trimmed audio was adopted into the note's slot (its bytes replaced the original), and the
+        // The trimmed audio was adopted into the thought's slot (its bytes replaced the original), and the
         // trimmer's temp file was consumed by the coordinated replace.
         XCTAssertEqual(try Data(contentsOf: audioURL), Data("trimmed-audio-bytes".utf8))
         XCTAssertFalse(FileManager.default.fileExists(atPath: trimmedFile.path),
                        "the trimmed temp file was consumed by replaceAudio")
     }
 
-    /// Architect + engineer finding: a concurrent edit to the note (on the detail screen) while the
-    /// background trim runs must be PRESERVED - the trim re-reads the note fresh and updates only its
+    /// Architect + engineer finding: a concurrent edit to the thought (on the detail screen) while the
+    /// background trim runs must be PRESERVED - the trim re-reads the thought fresh and updates only its
     /// timings, so it never clobbers the edit with the stale snapshot captured at finish().
-    func testTrimReReadsNoteSoAConcurrentEditIsNotClobbered() async throws {
+    func testTrimReReadsThoughtSoAConcurrentEditIsNotClobbered() async throws {
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()
         let trimmedFile = try makeTempRecordingURL(contents: "trimmed")
@@ -86,36 +86,36 @@ final class DeadAirTrimViewModelTests: XCTestCase {
             trimmedFileURL: trimmedFile,
             removedRanges: [SilenceTrimmer.KeepRange(start: 2.0, end: 5.0)]
         ))
-        // Gate the trim so we can inject an edit BEFORE the re-save reads the note back.
+        // Gate the trim so we can inject an edit BEFORE the re-save reads the thought back.
         trimmer.pauseUntilReleased = true
         let model = DictationViewModel(
             service: service, store: store, recordsAudio: true, audioTrimmer: trimmer
         )
         service.emitFinalized("First.", range: ParagraphTiming(start: 0.0, duration: 2.0))
         service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
-        let note = try XCTUnwrap(try model.finish())
+        let thought = try XCTUnwrap(try model.finish())
 
-        // Simulate the user editing the note's title on the detail screen while the trim is in flight
+        // Simulate the user editing the thought's title on the detail screen while the trim is in flight
         // (the trim is paused inside its invocation until we release it).
         await trimmer.awaitInvocation()
-        let onDisk = try XCTUnwrap(store.loadAll().first { $0.id == note.id })
+        let onDisk = try XCTUnwrap(store.loadAll().first { $0.id == thought.id })
         let renamed = onDisk.editedCopy(
             paragraphs: onDisk.paragraphs, hasCustomTitle: true, customTitle: "User renamed this")
         try store.save(renamed)
         trimmer.release() // let the trim finish and re-save with remapped timings
 
         // The user's title survives, AND the timings are remapped - both changes coexist.
-        let reloaded = try await pollForRemap(id: note.id, expectedSecondStart: 2.0)
+        let reloaded = try await pollForRemap(id: thought.id, expectedSecondStart: 2.0)
         XCTAssertEqual(reloaded.title, "User renamed this", "the concurrent edit was not clobbered")
         XCTAssertTrue(reloaded.hasCustomTitle)
     }
 
-    /// REGRESSION (engineer + tester MAJOR, feedback 0017 round 2): a note SOFT-DELETED during the trim
+    /// REGRESSION (engineer + tester MAJOR, feedback 0017 round 2): a thought SOFT-DELETED during the trim
     /// window must NOT leave an orphan raw-voice `.m4a` behind, and must STAY deleted. Before the fix,
     /// `replaceAudio` fell through to `saveAudio` and materialized `root/<id>.m4a` (invisible to
     /// `loadAll`, never purged), defeating the delete. This test fails without BOTH the existence
     /// re-check in `scheduleTrim` and `replaceAudio` refusing to create an absent file.
-    func testNoteSoftDeletedDuringTrimLeavesNoOrphanAudio() async throws {
+    func testThoughtSoftDeletedDuringTrimLeavesNoOrphanAudio() async throws {
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()
         let trimmedFile = try makeTempRecordingURL(contents: "trimmed-secret-voice")
@@ -129,14 +129,14 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         )
         service.emitFinalized("First.", range: ParagraphTiming(start: 0.0, duration: 2.0))
         service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
-        let note = try XCTUnwrap(try model.finish())
-        let id = note.id
+        let thought = try XCTUnwrap(try model.finish())
+        let id = thought.id
         let rootOrphan = tempDir.appendingPathComponent("\(id.uuidString).m4a")
 
-        // The user deletes the note (spec 0020 soft delete) while the trim is paused mid-flight.
+        // The user deletes the thought (spec 0020 soft delete) while the trim is paused mid-flight.
         await trimmer.awaitInvocation()
         _ = try store.softDelete(id: id)
-        XCTAssertNil(store.loadAll().first { $0.id == id }, "precondition: the note is deleted")
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "precondition: the thought is deleted")
         trimmer.release() // let the (now-doomed) trim proceed
 
         // Give the detached trim task time to run its bail path, then assert nothing was resurrected and
@@ -144,7 +144,7 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         try await pollUntil {
             !FileManager.default.fileExists(atPath: trimmedFile.path) // temp consumed either way
         }
-        XCTAssertNil(store.loadAll().first { $0.id == id }, "the note stays deleted")
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "the thought stays deleted")
         XCTAssertFalse(FileManager.default.fileExists(atPath: rootOrphan.path),
                        "no orphan raw-voice .m4a is left at the store root")
     }
@@ -160,10 +160,10 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         service.emitFinalized("First.", range: ParagraphTiming(start: 0.0, duration: 2.0))
         service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
 
-        let note = try XCTUnwrap(try model.finish())
+        let thought = try XCTUnwrap(try model.finish())
         // Wait until the trim has actually run and returned .notTrimmed (no arbitrary sleep).
         await trimmer.awaitInvocation()
-        let reloaded = try XCTUnwrap(store.loadAll().first { $0.id == note.id })
+        let reloaded = try XCTUnwrap(store.loadAll().first { $0.id == thought.id })
         XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start, 5.0, "no remap on a not-trimmed result")
     }
 
@@ -179,14 +179,14 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         }
     }
 
-    /// Poll the store until the note's second-paragraph start matches the expected remapped value, so
+    /// Poll the store until the thought's second-paragraph start matches the expected remapped value, so
     /// the test does not race the detached re-save.
-    private func pollForRemap(id: UUID, expectedSecondStart: Double) async throws -> Note {
+    private func pollForRemap(id: UUID, expectedSecondStart: Double) async throws -> Thought {
         for _ in 0..<50 {
-            if let note = store.loadAll().first(where: { $0.id == id }),
-               let start = note.timing(forParagraphAt: 1)?.start,
+            if let thought = store.loadAll().first(where: { $0.id == id }),
+               let start = thought.timing(forParagraphAt: 1)?.start,
                abs(start - expectedSecondStart) < 0.001 {
-                return note
+                return thought
             }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
@@ -244,7 +244,7 @@ private final class RecordingStubCaptureService: SpeechCaptureService {
 /// A stub `AudioTrimming` that returns a fixed result and signals when it was invoked, so a test can
 /// await the detached trim task deterministically. Optionally PAUSES inside `trim` (after signaling
 /// invocation) until `release()` is called, so a test can inject a concurrent edit before the trim's
-/// re-save reads the note back.
+/// re-save reads the thought back.
 private final class StubAudioTrimmer: AudioTrimming, @unchecked Sendable {
     private let result: AudioTrimResult
     private let lock = NSLock()

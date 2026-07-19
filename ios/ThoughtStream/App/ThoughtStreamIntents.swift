@@ -49,13 +49,13 @@ struct StartThoughtStreamIntent: AppIntent {
     }
 }
 
-/// "New note in Thought Stream." A second, cheap entry that starts the same fresh session. In this
-/// app a "new note" and a "new stream" both mean "open a fresh dictation session", so it shares the
+/// "New thought in Thought Stream." A second, cheap entry that starts the same fresh session. In this
+/// app a "new thought" and a "new stream" both mean "open a fresh dictation session", so it shares the
 /// one starter; the separate phrase just gives Siri and Shortcuts a second natural way in.
-struct NewNoteIntent: AppIntent {
-    static var title: LocalizedStringResource = "New Note"
+struct NewThoughtIntent: AppIntent {
+    static var title: LocalizedStringResource = "New Thought"
     static var description = IntentDescription(
-        "Open Thought Stream and start a fresh note by voice."
+        "Open Thought Stream and start a fresh thought by voice."
     )
 
     static var openAppWhenRun: Bool = true
@@ -98,10 +98,10 @@ struct ThoughtStreamShortcuts: AppShortcutsProvider {
         "New thought in"
     ]
 
-    /// The leading text of each "new note" phrase; the app name follows in the literal below.
-    static let newNotePhraseLeads = [
-        "New note in",
-        "Start a note in"
+    /// The leading text of each "new thought" phrase; the app name follows in the literal below.
+    static let newThoughtPhraseLeads = [
+        "Make a new thought in",
+        "Jot a thought in"
     ]
 
     static var appShortcuts: [AppShortcut] {
@@ -117,12 +117,12 @@ struct ThoughtStreamShortcuts: AppShortcutsProvider {
             systemImageName: "waveform"
         )
         AppShortcut(
-            intent: NewNoteIntent(),
+            intent: NewThoughtIntent(),
             phrases: [
-                "New note in \(.applicationName)",
-                "Start a note in \(.applicationName)"
+                "Make a new thought in \(.applicationName)",
+                "Jot a thought in \(.applicationName)"
             ],
-            shortTitle: "New Note",
+            shortTitle: "New Thought",
             systemImageName: "mic.fill"
         )
     }

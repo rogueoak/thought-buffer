@@ -3,7 +3,7 @@ import Foundation
 /// Decides, per finalized speech segment, whether it continues the CURRENT paragraph or starts a
 /// NEW one (feedback 0012). This replaces the old "one finalized result = one paragraph" rule, which
 /// broke a single spoken sentence into several paragraphs whenever the iOS 26 transcriber finalized
-/// on a short mid-thought breath. Grouping like the native Notes app - flow through a breath, break
+/// on a short mid-thought breath. Grouping like the native Thoughts app - flow through a breath, break
 /// only on a real silence - is the whole fix.
 ///
 /// The decision is based purely on the SILENCE GAP between the previous segment's end and the new

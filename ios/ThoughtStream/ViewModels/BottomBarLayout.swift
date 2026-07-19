@@ -8,30 +8,30 @@ import Foundation
 /// search is active, and whether that search found anything. The view renders one of these; the mapping
 /// from raw conditions to the case lives here so it can be tested exhaustively.
 enum FolderScreenState: Equatable {
-    /// The store has no notes at all: show the centered record + new-note CTA (spec 0021 empty state).
+    /// The store has no thoughts at all: show the centered record + new-thought CTA (spec 0021 empty state).
     /// The search field hides in this state (nothing to search).
     case emptyStore
-    /// A search is active and matched at least one note: show the flat global results list.
+    /// A search is active and matched at least one thought: show the flat global results list.
     case searchResults
     /// A search is active but matched nothing in a non-empty store: show a "no matches" message, keeping
     /// the search field visible so the user can edit the query.
     case noMatches
-    /// No active search: show the normal interleaved folder list (folders + notes at this path).
+    /// No active search: show the normal interleaved folder list (folders + thoughts at this path).
     case normal
 
     /// Select the state.
     ///
-    /// - `storeHasNotes`: the whole store has at least one note (across all folders). When false, the
+    /// - `storeHasThoughts`: the whole store has at least one thought (across all folders). When false, the
     ///   screen is `.emptyStore` regardless of search - there is nothing to find.
-    /// - `searchActive`: the search field has a non-whitespace query (see `NoteSearch.isActive`).
+    /// - `searchActive`: the search field has a non-whitespace query (see `ThoughtSearch.isActive`).
     /// - `hasSearchMatches`: the active search produced at least one result. Only consulted when a
     ///   search is active.
     static func select(
-        storeHasNotes: Bool,
+        storeHasThoughts: Bool,
         searchActive: Bool,
         hasSearchMatches: Bool
     ) -> FolderScreenState {
-        guard storeHasNotes else { return .emptyStore }
+        guard storeHasThoughts else { return .emptyStore }
         guard searchActive else { return .normal }
         return hasSearchMatches ? .searchResults : .noMatches
     }
@@ -44,43 +44,43 @@ enum FolderScreenState: Equatable {
     }
 }
 
-/// Which affordances the NOTE-DETAIL bottom bar shows (spec 0021), and whether it shows at all. The
-/// note page's bar carries a search field and a resume icon, and it must be HIDDEN entirely while the
+/// Which affordances the THOUGHT-DETAIL bottom bar shows (spec 0021), and whether it shows at all. The
+/// thought page's bar carries a search field and a resume icon, and it must be HIDDEN entirely while the
 /// user edits the title or body (engineer + architect review): otherwise the search `TextField` renders
-/// under the keyboard during an edit, and a brand-new (`.newNote`) note shows two competing text fields
+/// under the keyboard during an edit, and a brand-new (`.newThought`) thought shows two competing text fields
 /// from open. This pure decision lives here (mirroring `FolderScreenState`) so it is unit-tested, not
 /// re-derived inline in the view.
-struct NoteDetailBottomBar: Equatable {
+struct ThoughtDetailBottomBar: Equatable {
     /// Whether to show the bar at all. False while editing (the Done flow owns the screen).
     let isVisible: Bool
     /// Whether the search field is shown (a call site that can route a search).
     let showsSearch: Bool
     /// Whether the resume icon is shown (a call site that can reopen a session, resuming applies per the
-    /// audio-retention setting, and the note is not a still-empty brand-new draft).
+    /// audio-retention setting, and the thought is not a still-empty brand-new draft).
     let showsResume: Bool
 
-    /// Decide what the note-detail bottom bar shows.
+    /// Decide what the thought-detail bottom bar shows.
     ///
     /// - `canSearch`: a call site supplied `onSearch` (else no field).
     /// - `canResume`: a call site supplied `onResume` (else no resume icon).
-    /// - `resumeApplies`: the audio-retention setting makes resuming meaningful for this note.
+    /// - `resumeApplies`: the audio-retention setting makes resuming meaningful for this thought.
     /// - `isEditing`: the title OR body editor is active - the bar is hidden entirely while true.
-    /// - `isUnsavedNewNote`: a brand-new note with no committed content - no resume onto it yet.
+    /// - `isUnsavedNewThought`: a brand-new thought with no committed content - no resume onto it yet.
     static func decide(
         canSearch: Bool,
         canResume: Bool,
         resumeApplies: Bool,
         isEditing: Bool,
-        isUnsavedNewNote: Bool
-    ) -> NoteDetailBottomBar {
+        isUnsavedNewThought: Bool
+    ) -> ThoughtDetailBottomBar {
         // Hidden entirely while editing, so the search field never renders under the keyboard and a new
-        // note does not present two competing text fields.
+        // thought does not present two competing text fields.
         if isEditing {
-            return NoteDetailBottomBar(isVisible: false, showsSearch: false, showsResume: false)
+            return ThoughtDetailBottomBar(isVisible: false, showsSearch: false, showsResume: false)
         }
-        let showsResume = canResume && resumeApplies && !isUnsavedNewNote
+        let showsResume = canResume && resumeApplies && !isUnsavedNewThought
         // The bar is worth showing only when at least one affordance would appear.
         let isVisible = canSearch || showsResume
-        return NoteDetailBottomBar(isVisible: isVisible, showsSearch: canSearch, showsResume: showsResume)
+        return ThoughtDetailBottomBar(isVisible: isVisible, showsSearch: canSearch, showsResume: showsResume)
     }
 }

@@ -21,7 +21,7 @@ enum SentenceTokenizer {
     }
 
     /// The paragraph with its last sentence removed, or nil if nothing remains (the caller then
-    /// drops the whole paragraph so the note stays coherent).
+    /// drops the whole paragraph so the thought stays coherent).
     static func removingLastSentence(from paragraph: String) -> String? {
         var sentences = sentences(in: paragraph)
         guard !sentences.isEmpty else { return nil }

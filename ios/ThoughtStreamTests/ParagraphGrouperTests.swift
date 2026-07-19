@@ -93,7 +93,7 @@ final class ParagraphGrouperTests: XCTestCase {
     }
 
     /// A realistic sequence: a first sentence spoken with a mid-thought breath stays one paragraph, a
-    /// clear pause then breaks, and text flows again after it - exactly the Notes-style cadence.
+    /// clear pause then breaks, and text flows again after it - exactly the Thoughts-style cadence.
     func testRealisticSequence() {
         var grouper = ParagraphGrouper()
         var decisions: [ParagraphGrouper.Decision] = []

@@ -37,7 +37,7 @@ How the system is built and why.
     is nil) is handled by `ColdStartSessionStarter`, which records the request on a process-wide
     `PendingSessionRoute.pendingColdStart` latch that the route adopts the moment it is created, so
     the request that launched the app is never dropped.
-  - `ThoughtStreamIntents.swift` - `StartThoughtStreamIntent` and `NewNoteIntent` (`AppIntent`,
+  - `ThoughtStreamIntents.swift` - `StartThoughtStreamIntent` and `NewThoughtIntent` (`AppIntent`,
     `openAppWhenRun`) call the starter (injected `SessionStarter`, defaulting to the live route), so
     they are unit-testable with a stub and never touch the UI. `ThoughtStreamShortcuts`
     (`AppShortcutsProvider`) registers the spoken phrases, each including `\(.applicationName)` per
@@ -45,9 +45,9 @@ How the system is built and why.
     CarPlay entitlement).
   - `CarPlaySceneDelegate.swift` - the CarPlay Audio surface (spec 0008): a
     `CPTemplateApplicationSceneDelegate` presenting a root `CPListTemplate` with a "Start a thought
-    stream" row (calls the shared starter) plus one row per note that HAS a recording (title, date +
-    duration), newest first, from a `RecordingsListModel` over the shared `NoteStoreDriver`, refreshed
-    live on driver change. A row tap drives the shared `NotePlaybackController` and pushes
+    stream" row (calls the shared starter) plus one row per thought that HAS a recording (title, date +
+    duration), newest first, from a `RecordingsListModel` over the shared `ThoughtStoreDriver`, refreshed
+    live on driver change. A row tap drives the shared `ThoughtPlaybackController` and pushes
     `CPNowPlayingTemplate` (play / pause + skip buttons wired to the controller). The Start-row builder
     is a static, closure-driven factory (`makeStartItem(onStart:)`) so its routing is unit-testable
     without a connected scene. Wired via the `CPTemplateApplicationSceneSessionRoleApplication` role in
@@ -56,86 +56,86 @@ How the system is built and why.
     unsigned Simulator build and App Store build are unaffected. Ready the day Apple grants the
     entitlement; activating it needs the entitlement plus a CarPlay head unit / the CarPlay simulator.
     See `docs/carplay-audio-entitlement-request.md`.
-- `Models/` - `NoteSearch` (spec 0021) is the pure, unit-testable full-text match seam over the notes
-  the store already loads (no separate index): `matches(_:query:)` tests whether a note's title OR any
+- `Models/` - `ThoughtSearch` (spec 0021) is the pure, unit-testable full-text match seam over the thoughts
+  the store already loads (no separate index): `matches(_:query:)` tests whether a thought's title OR any
   body paragraph contains the query as a substring, case- and diacritic-insensitively (both sides folded
   via `.folding(options: [.caseInsensitive, .diacriticInsensitive])`); `results(in:query:)` returns the
   flat, order-preserving GLOBAL list across all folders; `isActive(_:)` gates results-vs-normal on a
-  non-whitespace query. No SwiftUI import - the folder and note-detail views are thin callers.
-- `Models/` - `Note` (id, title, paragraphs, createdAt, derived snippet + paragraph count) with
-  Markdown (de)serialization, plus `MockNotes` (sample data, used only by previews now). The
+  non-whitespace query. No SwiftUI import - the folder and thought-detail views are thin callers.
+- `Models/` - `Thought` (id, title, paragraphs, createdAt, derived snippet + paragraph count) with
+  Markdown (de)serialization, plus `MockThoughts` (sample data, used only by previews now). The
   value type stays small and tolerant of unknown frontmatter keys so later fields do not break
   files on disk. Spec 0007 adds an optional `audioFileName` and per-paragraph `timings`
   (`ParagraphTiming` = start + duration), persisted as `audio:` and a compact `timings:` JSON array
-  in frontmatter and written ONLY when a recording is present, so a text-only note serializes and
+  in frontmatter and written ONLY when a recording is present, so a text-only thought serializes and
   parses byte-for-byte as before. Both are dropped on parse unless BOTH are present (a stray key is
   not a recording), keeping the tolerant-parse contract. Spec 0009 makes the title editable:
   `deriveTitle` now returns the first SENTENCE of the first paragraph (via `SentenceTokenizer`), and a
   `hasCustomTitle` flag (frontmatter `titleCustom: true`, written only when true) distinguishes a
   user-set title from a derived one. Parsing still prefers a stored `title:` (files keep their title),
-  and the flag only counts when a title is stored; it governs edit-time behavior - a non-custom note
-  re-derives its title on a body edit, a custom note keeps it. `NoteDetailView` edits the title as a
-  tappable header and `DictationViewModel` preserves a resumed note's custom title. `NoteDetailView`
-  also takes a `startInEdit` flag (spec 0013): a brand-new keyboard note opens with the body editor
+  and the flag only counts when a title is stored; it governs edit-time behavior - a non-custom thought
+  re-derives its title on a body edit, a custom thought keeps it. `ThoughtDetailView` edits the title as a
+  tappable header and `DictationViewModel` preserves a resumed thought's custom title. `ThoughtDetailView`
+  also takes a `startInEdit` flag (spec 0013): a brand-new keyboard thought opens with the body editor
   focused and is tracked as unsaved until its first non-empty commit; a commit or leave with no title
-  and no body calls `onDiscardEmpty` (delete any provisional save, pop the route) so no blank note is
+  and no body calls `onDiscardEmpty` (delete any provisional save, pop the route) so no blank thought is
   persisted.
-- `Storage/` - two `NoteStoring` backends behind one seam, chosen at startup:
-  - `NoteStore` persists each note as `Documents/ThoughtStream/<id>.md` (YAML frontmatter + body).
-    Thin and cache-free: the files are the source of truth. `loadAll` returns notes newest first.
-  - `ICloudNoteStore` writes the same `<id>.md` files (shared `Note` serialization) into the app's
+- `Storage/` - two `ThoughtStoring` backends behind one seam, chosen at startup:
+  - `ThoughtStore` persists each thought as `Documents/ThoughtStream/<id>.md` (YAML frontmatter + body).
+    Thin and cache-free: the files are the source of truth. `loadAll` returns thoughts newest first.
+  - `ICloudThoughtStore` writes the same `<id>.md` files (shared `Thought` serialization) into the app's
     iCloud Drive ubiquity container `Documents/ThoughtStream/`, wrapping every read/write/delete in
     `NSFileCoordinator` so it never races the sync daemon. Selected only when iCloud resolves.
-  - Both stores manage the note's SIBLING audio recording (spec 0007): `audioURL(for:)` locates
+  - Both stores manage the thought's SIBLING audio recording (spec 0007): `audioURL(for:)` locates
     `<id>.m4a` beside `<id>.md`, `saveAudio(from:for:)` moves a captured temp recording into that
     slot with `FileProtection.completeUnlessOpen` (raw audio is more sensitive than text), and
-    `deleteAudio(for:)` removes it - `delete(id:)` calls it so deleting a note never orphans a
-    recording. `ICloudNoteStore` coordinates every audio operation through `NSFileCoordinator` like
-    the note file. `NoteStoring` carries these with default no-ops so an in-memory test stub needs no
+    `deleteAudio(for:)` removes it - `delete(id:)` calls it so deleting a thought never orphans a
+    recording. `ICloudThoughtStore` coordinates every audio operation through `NSFileCoordinator` like
+    the thought file. `ThoughtStoring` carries these with default no-ops so an in-memory test stub needs no
     audio. `AudioRetentionSweeper` deletes recordings older than the auto-delete window at launch
-    (off the main actor), keeping the note text.
-  - Both stores support RECOVERABLE delete (spec 0020). `softDelete(id:)` MOVES a note's `<id>.md`
+    (off the main actor), keeping the thought text.
+  - Both stores support RECOVERABLE delete (spec 0020). `softDelete(id:)` MOVES a thought's `<id>.md`
     (and sibling `<id>.m4a`) into a hidden `.trash/<id>/` directory INSIDE the store root - never
-    removing them - and returns a lightweight `DeletedNote` token (id + former `folderPath` +
+    removing them - and returns a lightweight `DeletedThought` token (id + former `folderPath` +
     filenames) sufficient to `restore`. `restore(_:)` moves the files back to the former folder, or to
-    ROOT when that folder is gone (a `RestoredNote` records `landedAtRoot`, never a failure);
+    ROOT when that folder is gone (a `RestoredThought` records `landedAtRoot`, never a failure);
     `purge(_:)` and `purgeAllTrash()` permanently remove trashed files (undo-window close, launch
     sweep). The trash is hidden (leading dot) so `loadAll`/`locateFile` (which skip hidden files) never
-    surface a trashed note, and a restore's destination is gated by `resolvedRestoreDirectory` (at or
+    surface a trashed thought, and a restore's destination is gated by `resolvedRestoreDirectory` (at or
     below root) so a crafted former-folder path can never escape the tree - the same path-safety posture
-    as `resolvedFolderDirectory`. `ICloudNoteStore` wraps every trash move/delete/existence-check in
-    `NSFileCoordinator` exactly like the rest of its IO. `NoteStoring` defaults `softDelete` to the
+    as `resolvedFolderDirectory`. `ICloudThoughtStore` wraps every trash move/delete/existence-check in
+    `NSFileCoordinator` exactly like the rest of its IO. `ThoughtStoring` defaults `softDelete` to the
     hard `delete` and the rest to no-ops so stubs keep compiling.
-  - Both stores are FOLDER-AWARE (spec 0010, PR A). A note can live in nested folders: it is a real
-    subdirectory on disk (visible in Files / iCloud Drive), and a note in it lives at
-    `directory/<folderPath>/<id>.md` with its `<id>.m4a` beside it. `Note.folderPath: [String]` is a
+  - Both stores are FOLDER-AWARE (spec 0010, PR A). A thought can live in nested folders: it is a real
+    subdirectory on disk (visible in Files / iCloud Drive), and a thought in it lives at
+    `directory/<folderPath>/<id>.md` with its `<id>.m4a` beside it. `Thought.folderPath: [String]` is a
     LOCATION, not content - derived on load from the file's relative directory, consumed on save to
-    place the file, and NEVER serialized into the Markdown, so a foldered note's `.md` is byte-
-    identical to a top-level note's (old files and other apps are unaffected). Folder names are
-    sanitized (`Note.sanitizedFolderName`: strip separators + leading dots, trim) so a name can never
-    escape the tree. `loadAll` walks the tree recursively tagging each note's `folderPath`; the id-only
-    operations (`delete`, `audioURL`, `saveAudio`, `deleteAudio`, `audioExists`) find a note's file by
-    scanning the tree (`locateFile(id:)`), so the `NoteStoring` audio surface stays id-only and nothing
-    downstream (the resolver, playback, recordings browser) changed. `save(note)` writes under
+    place the file, and NEVER serialized into the Markdown, so a foldered thought's `.md` is byte-
+    identical to a top-level thought's (old files and other apps are unaffected). Folder names are
+    sanitized (`Thought.sanitizedFolderName`: strip separators + leading dots, trim) so a name can never
+    escape the tree. `loadAll` walks the tree recursively tagging each thought's `folderPath`; the id-only
+    operations (`delete`, `audioURL`, `saveAudio`, `deleteAudio`, `audioExists`) find a thought's file by
+    scanning the tree (`locateFile(id:)`), so the `ThoughtStoring` audio surface stays id-only and nothing
+    downstream (the resolver, playback, recordings browser) changed. `save(thought)` writes under
     `folderPath` creating dirs, and RELOCATES an existing `.md` + `.m4a` when the folder changed - a
     save with a new `folderPath` IS the move, and it leaves nothing behind. Folder ops
-    (`folders(at:)`, `createFolder`, `renameFolder`, `deleteFolder` - a recursive cascade over notes +
-    recordings + subfolders) round out the surface. `ICloudNoteStore` wraps every tree walk, move,
-    cascade, and dir-create in `NSFileCoordinator` exactly as the file IO. `NoteStoring` defaults the
-    folder methods to no-ops (like the audio methods) so stubs keep compiling. `NoteSortOrder`
-    (newest/oldest/titleAZ/titleZA) is a pure, stable sort over `[Note]` (PR B wires the persisted
-    toolbar menu). `DictationViewModel` saves the note FILE before adopting its recording, so the
-    `.m4a` lands beside the `.md` in the note's folder; a fresh note is created at the top level and
-    filed afterward, a resumed note re-saves in the folder it already lives in.
-  - `NoteStoreFactory` is the single decision point: it resolves the ubiquity container via
+    (`folders(at:)`, `createFolder`, `renameFolder`, `deleteFolder` - a recursive cascade over thoughts +
+    recordings + subfolders) round out the surface. `ICloudThoughtStore` wraps every tree walk, move,
+    cascade, and dir-create in `NSFileCoordinator` exactly as the file IO. `ThoughtStoring` defaults the
+    folder methods to no-ops (like the audio methods) so stubs keep compiling. `ThoughtSortOrder`
+    (newest/oldest/titleAZ/titleZA) is a pure, stable sort over `[Thought]` (PR B wires the persisted
+    toolbar menu). `DictationViewModel` saves the thought FILE before adopting its recording, so the
+    `.m4a` lands beside the `.md` in the thought's folder; a fresh thought is created at the top level and
+    filed afterward, a resumed thought re-saves in the folder it already lives in.
+  - `ThoughtStoreFactory` is the single decision point: it resolves the ubiquity container via
     `UbiquityContainerProviding` (off the main actor - the lookup can block) and returns a
-    `NoteStoreSelection` (store + `NoteStoreKind` .iCloud/.local + an observer for iCloud). The
+    `ThoughtStoreSelection` (store + `ThoughtStoreKind` .iCloud/.local + an observer for iCloud). The
     kind is carried through `AppDependencies` so a later Settings status can read it. Fallback is
     lossless: the local store is never touched and unavailable iCloud is a normal path, not an error.
-  - `UbiquitousNoteObserving` (production `MetadataUbiquitousNoteObserver`, `NSMetadataQuery` over
-    `NSMetadataQueryUbiquitousDocumentsScope`) enumerates iCloud notes, triggers downloads for
+  - `UbiquitousThoughtObserving` (production `MetadataUbiquitousThoughtObserver`, `NSMetadataQuery` over
+    `NSMetadataQueryUbiquitousDocumentsScope`) enumerates iCloud thoughts, triggers downloads for
     not-yet-local items, and fires an `onChange` the Stream list observes to refresh on external
-    edits / other-device syncs. Its pure mapping (`UbiquitousNoteMapping`) is unit-tested with
+    edits / other-device syncs. Its pure mapping (`UbiquitousThoughtMapping`) is unit-tested with
     stub items; the container provider and observer are protocols so selection and mapping are
     provable with no real iCloud.
   - The iCloud entitlement (iCloud Documents, container `iCloud.com.rogueoak.thoughtstream`) and
@@ -174,7 +174,7 @@ How the system is built and why.
   `TextProcessor` that strips standalone hesitation tokens from a conservative default set - only
   unambiguous hesitations, since it is on by default, so no unit/word/interjection is ever removed and a
   filler inside a quoted span is kept - and drops a filler-only segment to `.drop`), `TranscriptCleanup`
-  (spec 0016: pure `reflow` that merges obvious continuation lines, plus `refinedForSave(note, refine:)`
+  (spec 0016: pure `reflow` that merges obvious continuation lines, plus `refinedForSave(thought, refine:)`
   - the single gate for reflow-on-edit-save), and `Speaker`/`SystemSpeaker`
   (`AVSpeechSynthesizer` text to speech for "read that back"). `SystemSpeaker` sets each utterance's
   voice to the best installed one for the user's language (spec 0014) via the pure `VoiceSelector`
@@ -185,7 +185,7 @@ How the system is built and why.
     `setRecordingEnabled(true)` before `start()` - a `RecordingWriter`. The writer is an off-main,
     lock-guarded (`@unchecked Sendable`) helper that appends buffers to a compressed AAC `.m4a`;
     it is created ONCE per session and kept across pause/resume, so one continuous file spans the
-    whole note (finalized only at `stop()`). The tap tees to the writer BEFORE the analyzer so a
+    whole thought (finalized only at `stop()`). The tap tees to the writer BEFORE the analyzer so a
     resume offset is not under-counted. `finalizedSegment` events carry a `ParagraphTiming?`: a
     finalized result's audio `CMTimeRange` is relative to the analysis start, so the service adds an
     offset (recording seconds elapsed at analysis start, captured at each resume) via the pure,
@@ -193,7 +193,7 @@ How the system is built and why.
     continuous recording. `recordingURL()` exposes the temp file for adoption and is documented as
     finalized only after `stop()`;
     `discardRecording()` removes an orphan (even a zero-frame one).
-  - **Playback (spec 0007, extended in 0008).** `AudioNotePlayer` (production `SystemAudioNotePlayer`,
+  - **Playback (spec 0007, extended in 0008).** `AudioThoughtPlayer` (production `SystemAudioThoughtPlayer`,
     `AVAudioPlayer`) plays a recording seeked to a range (`play(url:from:duration:)`, a nil duration
     plays to the end; a timer stops a ranged play since `AVAudioPlayer` has no native stop-at),
     mirroring `SystemSpeaker`'s session handling and `onFinish`. Spec 0008 adds `pause()` / `resume()`
@@ -217,24 +217,24 @@ How the system is built and why.
     the verified temp + the removed original-timeline ranges back; ANY failure returns `.notTrimmed` and
     writes nothing (the trim is non-reversible, so it never loses the recording); the temp is removed on
     every non-success exit via a `defer` so a mid-write failure never orphans a partial voice copy. The
-    COORDINATED atomic swap is a store seam (`NoteStoring.replaceAudio(from:for:) -> URL?`): `NoteStore`
-    uses `replaceItemAt`; `ICloudNoteStore` does the `replaceItemAt` INSIDE an `NSFileCoordinator`
+    COORDINATED atomic swap is a store seam (`ThoughtStoring.replaceAudio(from:for:) -> URL?`): `ThoughtStore`
+    uses `replaceItemAt`; `ICloudThoughtStore` does the `replaceItemAt` INSIDE an `NSFileCoordinator`
     `.forReplacing` block so the swap never races the sync daemon (a bare replace on a ubiquity-container
     file would). Both re-assert audio protection, and both REFUSE to create a file when the slot is
     absent - they delete the temp and return nil ("nothing to replace") rather than materialize an orphan
     `.m4a` that `loadAll`/`purgeAllTrash` would never see. `DictationViewModel` runs the trim OFF the main
-    actor in a detached task after `finish()` returns the (untrimmed) note - only for a note that just
-    adopted a NEW recording - then RE-READS the note fresh from disk by id and confirms it still EXISTS
-    before adopting the trimmed audio via `replaceAudio` (so a note soft-deleted during the trim window
+    actor in a detached task after `finish()` returns the (untrimmed) thought - only for a thought that just
+    adopted a NEW recording - then RE-READS the thought fresh from disk by id and confirms it still EXISTS
+    before adopting the trimmed audio via `replaceAudio` (so a thought soft-deleted during the trim window
     leaves no orphan recording and stays deleted - belt-and-suspenders with the primitive's no-create
     rule; a concurrent edit/move is likewise preserved, not clobbered by the stale finish()-time
-    snapshot), applies only the timings remap via `Note.withTimings`, re-saves, and calls back `onTrimmed`
-    on the main actor so the host reloads the feed (dropping the stale un-remapped in-memory note; an
+    snapshot), applies only the timings remap via `Thought.withTimings`, re-saves, and calls back `onTrimmed`
+    on the main actor so the host reloads the feed (dropping the stale un-remapped in-memory thought; an
     already-open detail view keeps its snapshot, harmless while playback is whole-file - a future
     per-paragraph seek must revisit it). A nil `AudioTrimming` (the "Trim silences" setting OFF) means NO
     code path touches the audio.
     `StreamListView.makeAudioTrimmer()` builds the trimmer only when the setting
-    is on and only for a session capturing new audio (a resumed note keeps its original recording).
+    is on and only for a session capturing new audio (a resumed thought keeps its original recording).
   - **System Now Playing (spec 0008).** `NowPlayingCenter.swift` holds the media-center seam:
     `NowPlayingInfo` (title / duration / elapsed / rate value), `NowPlayingInfoWriting` (production
     `SystemNowPlayingInfoWriter` over `MPNowPlayingInfoCenter`), and `RemoteCommandRegistering`
@@ -276,10 +276,10 @@ How the system is built and why.
   presence-checked on read so a fresh install reads ON, not the `bool(forKey:)` false default - gating
   the filler stage and the edit-save reflow), and `trimSilence` (spec 0019: a `Bool` defaulting to
   `true`, presence-checked the same way - gating dead-air removal on a new recording at save; OFF means
-  no code path touches the audio). Local only - no cloud sync, no per-note settings.
+  no code path touches the audio). Local only - no cloud sync, no per-thought settings.
 - `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
   logic: it drives `DictationView` from the speech service, routes finalized segments through the
-  `TextProcessor`, executes `MiraCommand`s (note mutations, new note save+reset, read-back), and
+  `TextProcessor`, executes `MiraCommand`s (thought mutations, new thought save+reset, read-back), and
   saves through the store. Finalized dictation text is grouped into paragraphs by a pure
   `ParagraphGrouper` (feedback 0012) rather than one-paragraph-per-result: the view model calls
   `grouper.decide(...)` with the segment's raw analysis-relative seconds and analysis-start flag and
@@ -289,97 +289,97 @@ How the system is built and why.
   commits dictation text, so a filler-only segment that the processor reduces to `.drop` neither creates
   a paragraph nor advances the grouper's gap anchor - preserving the feedback-0012 invariant that a
   blank/dropped segment mid-flow cannot shift the boundary the next real segment is measured against. It keeps a `paragraphTimings` array in lockstep with `paragraphs`
-  (spec 0007), so every note mutation (commit, remove-sentence/paragraph, fold-partial) updates
-  both, and builds the saved `Note` with its recording (adopted from the service's temp file into
-  the store) and timings at `finish()`. Mid-session "new note" saves the transcript only - the one
-  continuous recording is finalized at Stop and belongs to the FINAL note. Resuming a note seeds its
-  id, paragraphs, timings, folder, and (when present) its existing recording; `saveCurrentNote`
-  prefers a NEWLY captured recording when armed, else keeps the existing one. So a text-only note
-  recorded into with `recordsAudio: true` (spec 0013 - `StreamListView`'s note-page record action
-  passes `!note.hasAudio && audioRetention.recordsAudio`) adopts the new audio: the newly spoken tail
+  (spec 0007), so every thought mutation (commit, remove-sentence/paragraph, fold-partial) updates
+  both, and builds the saved `Thought` with its recording (adopted from the service's temp file into
+  the store) and timings at `finish()`. Mid-session "new thought" saves the transcript only - the one
+  continuous recording is finalized at Stop and belongs to the FINAL thought. Resuming a thought seeds its
+  id, paragraphs, timings, folder, and (when present) its existing recording; `saveCurrentThought`
+  prefers a NEWLY captured recording when armed, else keeps the existing one. So a text-only thought
+  recorded into with `recordsAudio: true` (spec 0013 - `StreamListView`'s thought-page record action
+  passes `!thought.hasAudio && audioRetention.recordsAudio`) adopts the new audio: the newly spoken tail
   keeps its real range and the original typed paragraphs get zero-length timing placeholders (TTS on
-  playback). A note that already has audio keeps `recordsAudio: false` (text-only append, original
+  playback). A thought that already has audio keeps `recordsAudio: false` (text-only append, original
   recording preserved). In-session read-back
   speaks via the `Speaker` (the live recording is not yet finalized); it pauses capture and resumes
-  on `readBackDidFinish`, so the spoken audio never feeds back into recognition. `NotePlaybackModel`
-  drives the detail view's simple play / stop of a SAVED note's recording via `AudioNotePlayer` -
-  where the file is finalized - and hides the affordance (through `NoteStoring.audioExists`) when a
-  note has no readable recording. `NoteStoreDriver` (headless, `@MainActor`, no SwiftUI) owns
-  the notes list: it loads through the store on a detached task (the iCloud store's `loadAll()` can
+  on `readBackDidFinish`, so the spoken audio never feeds back into recognition. `ThoughtPlaybackModel`
+  drives the detail view's simple play / stop of a SAVED thought's recording via `AudioThoughtPlayer` -
+  where the file is finalized - and hides the affordance (through `ThoughtStoring.audioExists`) when a
+  thought has no readable recording. `ThoughtStoreDriver` (headless, `@MainActor`, no SwiftUI) owns
+  the thoughts list: it loads through the store on a detached task (the iCloud store's `loadAll()` can
   block on coordinated IO, so it must not run on the main actor) and, on iCloud, wires the
-  `UbiquitousNoteObserving` observer once (`start`/`stop`, `onChange` -> reload) so the list
+  `UbiquitousThoughtObserving` observer once (`start`/`stop`, `onChange` -> reload) so the list
   refreshes on synced-in / external edits without restarting the query on navigation. The load and
   observe logic lives in the driver so any consumer can run it - the CarPlay browser as well as
   SwiftUI. `StreamFeed` (`@MainActor ObservableObject`) is a thin projection over the driver,
-  republishing its `notes`/`didLoad` so a view can bind. `NoteStoring: Sendable`, so the detached
+  republishing its `thoughts`/`didLoad` so a view can bind. `ThoughtStoring: Sendable`, so the detached
   load is sound under strict concurrency.
   - **Folder navigation model (spec 0010, PR B).** The driver/feed also expose the folder seams -
     `childFolders(at:)`, `createFolder`/`renameFolder`/`deleteFolder`, and `move(_:to:)` (a re-save with
-    a new `folderPath`) - each on a detached task then a reload, so the whole notes list stays the one
+    a new `folderPath`) - each on a detached task then a reload, so the whole thoughts list stays the one
     source. The list PROJECTION is pure and testable in `FolderListModel` (`@MainActor`): it takes the
-    driver's flat `notes`, the child folder names the store reported at a path, the current path, and the
-    chosen `NoteSortOrder`, and returns an ordered `[FolderListItem]` (`.folder(name:path:)` or
-    `.note`). Notes are filtered to those whose `folderPath` EQUALS the current path; each folder gets a
-    `SortKey` whose date is its newest descendant note (recursively, `.distantPast` when empty) and whose
-    title is its name, so folders and notes interleave through the SAME `NoteSortOrder.areInIncreasingOrder`
+    driver's flat `thoughts`, the child folder names the store reported at a path, the current path, and the
+    chosen `ThoughtSortOrder`, and returns an ordered `[FolderListItem]` (`.folder(name:path:)` or
+    `.thought`). Thoughts are filtered to those whose `folderPath` EQUALS the current path; each folder gets a
+    `SortKey` whose date is its newest descendant thought (recursively, `.distantPast` when empty) and whose
+    title is its name, so folders and thoughts interleave through the SAME `ThoughtSortOrder.areInIncreasingOrder`
     comparator - no second copy of the ordering. `FolderMoveTargets` is a second pure builder: driven by a
     `children` closure (`store.folders(at:)`), it flattens the tree pre-order with depth for the
-    move-to-folder picker, so an empty folder (never in any note's `folderPath`) is still offered.
-  - **Shared playback + CarPlay browser (spec 0008).** `NotePlaybackController` (`@MainActor
-    ObservableObject`) is the ONE audio path: it owns an `AudioNotePlayer`, an `AudioURLResolving`
+    move-to-folder picker, so an empty folder (never in any thought's `folderPath`) is still offered.
+  - **Shared playback + CarPlay browser (spec 0008).** `ThoughtPlaybackController` (`@MainActor
+    ObservableObject`) is the ONE audio path: it owns an `AudioThoughtPlayer`, an `AudioURLResolving`
     (lazy off-main resolution at play time, as 0007's model did), and the Now Playing / remote-command
     seams, exposing play / pause / resume / stop / skip and one writer of `MPNowPlayingInfoCenter`.
-    Both the phone detail view (through `NotePlaybackModel`, now a thin projection over the controller
+    Both the phone detail view (through `ThoughtPlaybackModel`, now a thin projection over the controller
     that keeps the simple play / stop button) and the CarPlay scene drive it. **Queue (spec 0015):** the
-    controller also owns an internal ordered `queue: [Note]` + index. `playQueue(_:)` filters to
-    `hasAudio` notes and plays the first through the shared start path; the NATURAL end-of-track path
+    controller also owns an internal ordered `queue: [Thought]` + index. `playQueue(_:)` filters to
+    `hasAudio` thoughts and plays the first through the shared start path; the NATURAL end-of-track path
     (`handleFinish`) advances to the next until the queue is exhausted, then clears. The advance is
     distinguished from a user stop by the same `suppressFinish` flag the single-play teardown uses - a
     user `stop()` sets `suppressFinish` (via `clearPlayback`) and clears the queue, so `handleFinish`
-    returns early and never advances; only a real end reaches the advance. A direct `play(note:)` (a
-    note swipe, the detail button) clears any prior queue so an orphaned queue never resumes. Published
-    `currentNote` / `hasNext` (and `currentTitle`) drive the now-playing bar. `RecordingsListModel`
+    returns early and never advances; only a real end reaches the advance. A direct `play(thought:)` (a
+    thought swipe, the detail button) clears any prior queue so an orphaned queue never resumes. Published
+    `currentThought` / `hasNext` (and `currentTitle`) drive the now-playing bar. `RecordingsListModel`
     (`@MainActor`, callback-observable like the driver, not SwiftUI - the CarPlay delegate is UIKit)
-    projects `NoteStoreDriver.notes` to only notes with a recording, newest first, each with a
+    projects `ThoughtStoreDriver.thoughts` to only thoughts with a recording, newest first, each with a
     formatted duration (`recordingDuration` = the tail of the last-ending timing range), and refreshes
     on driver change; its duration formatting is a pure, unit-tested static.
   - **Undoable delete (spec 0020).** The driver/feed route delete through the store's soft-delete:
-    `delete(id:)` calls `softDelete` and RETURNS the `DeletedNote` token (nil on failure/nothing),
+    `delete(id:)` calls `softDelete` and RETURNS the `DeletedThought` token (nil on failure/nothing),
     `restore(_:)` and `purge(_:)` undo/commit it, and `purgeAllTrash()` is the launch sweep - each on a
-    detached task then a reload, like the other store ops. `NoteDeletionController` (`@MainActor
+    detached task then a reload, like the other store ops. `ThoughtDeletionController` (`@MainActor
     ObservableObject`, owned by `StreamListView`) is the ONE undoable-delete coordinator: every delete
-    entry point (list swipe, list-row context menu, note-detail "..." menu) calls it, so the delete is
+    entry point (list swipe, list-row context menu, thought-detail "..." menu) calls it, so the delete is
     soft, registered with the scene's `UndoManager` (undo -> restore, redo -> re-delete, action named
-    "Delete" so the system prompt reads "Undo Delete"), and shown with the in-app "Note deleted - Undo"
+    "Delete" so the system prompt reads "Undo Delete"), and shown with the in-app "Thought deleted - Undo"
     affordance. It holds the pending token and a monotonic `deleteTrigger`; the affordance's ~5s window
     is lifecycle-tied (a `.task(id:)` on the trigger, same shape as the copied-confirmation chip - no
     detached timer), and on expiry it `purge`s (commits the delete). The controller takes the scene
     `UndoManager` from SwiftUI's `@Environment(\.undoManager)`; `applicationSupportsShakeToEdit` stays
     at its default so the shake surfaces the registered action.
 - `Views/` - SwiftUI screens. `StreamListView` is the ROOT of the Thoughts `NavigationStack` whose
-  path is an enum route `StreamRoute { case folder([String]); case note(Note); case newNote(Note) }`:
+  path is an enum route `StreamRoute { case folder([String]); case thought(Thought); case newThought(Thought) }`:
   it owns the shared session/settings/playback wiring and the sort-order state, and renders
   `FolderContentsView(path: [])` as the root with a `navigationDestination` for the routes.
   `FolderContentsView` renders the same folder-list screen at ANY path (so a pushed `.folder` recurses
   into another instance), projecting its rows through `FolderListModel`; it owns the folder-CRUD alerts,
   the sort menu, swipe/context actions, the `MoveToFolderSheet`, and the empty states. **Swipe to play
-  (spec 0015):** a leading swipe adds a Play action - `controller.play(note:)` on a recorded note row
-  (no Play on a text-only note), and `controller.playQueue(...)` on a folder row, built from the feed's
-  notes filtered to that folder's subtree (`FolderListModel.isDescendant`) with a recording, ordered by
-  the current `NoteSortOrder`. **Persistent bottom bar + search (spec 0021):** the shared `BottomBar`
+  (spec 0015):** a leading swipe adds a Play action - `controller.play(thought:)` on a recorded thought row
+  (no Play on a text-only thought), and `controller.playQueue(...)` on a folder row, built from the feed's
+  thoughts filtered to that folder's subtree (`FolderListModel.isDescendant`) with a recording, ordered by
+  the current `ThoughtSortOrder`. **Persistent bottom bar + search (spec 0021):** the shared `BottomBar`
   (a Canopy capsule: a wide search field on the left, an icon-only trailing action slot the caller
-  fills - `BottomBarIconButton`/`BottomBarRecordButton` for new-note + record, dropping text labels but
+  fills - `BottomBarIconButton`/`BottomBarRecordButton` for new-thought + record, dropping text labels but
   keeping accessibility labels) lives in the bottom safe-area inset. `FolderContentsView` renders one of
   four states chosen by the PURE `FolderScreenState.select(...)`: `.emptyStore` (a centered
-  `FolderEmptyStateCTA` with the LABELED record + new-note buttons, and no bottom bar - the CTA carries
-  the actions), `.searchResults` (a flat GLOBAL result list from `NoteSearch.results` over `feed.notes`,
+  `FolderEmptyStateCTA` with the LABELED record + new-thought buttons, and no bottom bar - the CTA carries
+  the actions), `.searchResults` (a flat GLOBAL result list from `ThoughtSearch.results` over `feed.thoughts`,
   ignoring `folderPath`), `.noMatches` (a message, search field kept visible), or `.normal` (the
   interleaved `FolderListModel` list). The `searchQuery` is a `@Binding` owned by `StreamListView` (so a
-  search started on the note page can pop to root and land here). The `NowPlayingBar` still sits above
+  search started on the thought page can pop to root and land here). The `NowPlayingBar` still sits above
   the bottom bar in the same inset, and the transient undo-delete chip (spec 0020) now renders at the
   TOP of that same VStack (its ~5s window timer moved here, lifecycle-tied and keyed on
-  `NoteDeletionController.deleteTrigger`, replacing the old root overlay + hardcoded clearance), so the
-  three bottom affordances compose without overlap. `NoteDetailView`'s bottom bar reuses the SAME
+  `ThoughtDeletionController.deleteTrigger`, replacing the old root overlay + hardcoded clearance), so the
+  three bottom affordances compose without overlap. `ThoughtDetailView`'s bottom bar reuses the SAME
   `BottomBar` with a resume icon (shown only when `resumeApplies` per the audio-retention setting,
   computed at the root); its search field routes to the global results on SUBMIT (via `onSearch`, which
   pops to root and sets the shared query) rather than per keystroke. **Folder dialogs (feedback 0018):**
@@ -389,45 +389,45 @@ How the system is built and why.
   separate `@State` so editing it does not churn the enum identity. **Contextual record (feedback
   0018):** the record/new-thought action carries the current folder path (`onNewThought([String])`), the
   root captures it at tap time (`newThoughtFolderPath`) and passes it to `DictationViewModel(folderPath:)`
-  so a thought recorded inside a folder is filed there, not at the root; the note page passes its note's
+  so a thought recorded inside a folder is filed there, not at the root; the thought page passes its thought's
   `folderPath`, and hands-free entry points pass `[]`. Both the root and folder titles use a large title
   below the toolbar (feedback 0018, superseding feedback 0016's inline title). `FolderRow` mirrors
-  `NoteCard`'s surface with a folder glyph, item count, and chevron. `UndoManagerHost` (a
+  `ThoughtCard`'s surface with a folder glyph, item count, and chevron. `UndoManagerHost` (a
   `UIViewControllerRepresentable` embedding a zero-size first-responder `UIViewController` that vends a
-  STABLE `UndoManager`) is overlaid at the root and its manager injected into `NoteDeletionController`,
+  STABLE `UndoManager`) is overlaid at the root and its manager injected into `ThoughtDeletionController`,
   so Shake to Undo works (feedback 0018) - `@Environment(\.undoManager)` is frequently nil in plain
   SwiftUI, so the delete had nothing registered for the shake to reach. The host RE-CLAIMS first
   responder on keyboard-hide / text end-editing / app-active (not just on appear), because the
   now-omnipresent search field steals first responder and would otherwise break the shake after the first
-  text focus. The note-detail bottom bar's "search / resume / hidden-while-editing" choice is the pure,
-  tested `NoteDetailBottomBar.decide(...)` (hidden entirely while editing so the search field never
-  renders under the keyboard and a new note does not show two competing fields); the folder screen
+  text focus. The thought-detail bottom bar's "search / resume / hidden-while-editing" choice is the pure,
+  tested `ThoughtDetailBottomBar.decide(...)` (hidden entirely while editing so the search field never
+  renders under the keyboard and a new thought does not show two competing fields); the folder screen
   computes its search results ONCE per render (a single `resolveContent()` feeds both the state selection
   and the results list, scanning only when a search is active) instead of rescanning per keystroke.
-  `DictationView` binds to `DictationViewModel`; `NoteCard`,
-  `NoteDetailView` stay presentational. On a committed edit, `StreamListView`'s `onCommitEdit` runs
-  the note through the pure `TranscriptCleanup.refinedForSave(note, refine: settingsStore.refineTranscript)`
+  `DictationView` binds to `DictationViewModel`; `ThoughtCard`,
+  `ThoughtDetailView` stay presentational. On a committed edit, `StreamListView`'s `onCommitEdit` runs
+  the thought through the pure `TranscriptCleanup.refinedForSave(thought, refine: settingsStore.refineTranscript)`
   before saving (spec 0016): when the flag is on it reflows continuation lines, rebuilding via
-  `Note.editedCopy` so the title, recording, timings, and folder are preserved, and returns the note
+  `Thought.editedCopy` so the title, recording, timings, and folder are preserved, and returns the thought
   unchanged when off or when nothing merges. That pure gate is the SINGLE enforcement of "reflow on
-  edit-save when refine is on, never on load" - no load path calls it, so an untouched loaded note is
+  edit-save when refine is on, never on load" - no load path calls it, so an untouched loaded thought is
   never silently rewritten (unit-tested off/on/no-op). `SettingsView` edits the injected
   `SettingsStoring` instance directly (control-phrase field with validation hint, a command-aliases
   editable list below it - spec 0018: an add field + plus button gated by the same
   `ControlPhrase.validatedAlias` rule the store uses, so an empty/multi-word/duplicate/primary-colliding
   entry cannot be added, plus swipe-to-delete rows - a "Refine transcript"
-  toggle, add/edit/delete override rows, a read-only storage-status row from `NoteStoreKind`). The chosen `NoteSortOrder` persists through
-  `SettingsStoring.noteSortOrder` (a stable string tag; unknown -> `.newest`).
+  toggle, add/edit/delete override rows, a read-only storage-status row from `ThoughtStoreKind`). The chosen `ThoughtSortOrder` persists through
+  `SettingsStoring.thoughtSortOrder` (a stable string tag; unknown -> `.newest`).
 - `DesignSystem/` - vendored `Tokens.swift` from Canopy and a small `RelativeTime` helper.
 - `Assets.xcassets/` - single 1024 universal `AppIcon`.
 
-Tests live in `ios/ThoughtStreamTests/` (a `bundle.unit-test` target): `NoteStore`, `Note`
+Tests live in `ios/ThoughtStreamTests/` (a `bundle.unit-test` target): `ThoughtStore`, `Thought`
 Markdown, `DictationViewModel` save/reload, the `MiraCommandParser` grammar, `SentenceTokenizer`,
-Mira command execution (note mutations, new note, read-back via a `Speaker` stub, and
-`TextProcessor` result routing via stub capture/speaker doubles), the `ICloudNoteStore` coordinated
+Mira command execution (thought mutations, new thought, read-back via a `Speaker` stub, and
+`TextProcessor` result routing via stub capture/speaker doubles), the `ICloudThoughtStore` coordinated
 round-trip against a temp dir (plus cross-store file compatibility and the bare-markdown fallback
-path), `NoteStoreFactory` selection and lossless fallback via a stub `UbiquityContainerProviding`,
-the `UbiquitousNoteMapping` metadata-to-notes logic via stub items, and the driver's load +
+path), `ThoughtStoreFactory` selection and lossless fallback via a stub `UbiquityContainerProviding`,
+the `UbiquitousThoughtMapping` metadata-to-thoughts logic via stub items, and the driver's load +
 observer wiring (start/stop, onChange -> reload, local no-observer path, no-reload-after-stop) via
 stub store/observer through the `StreamFeed` projection, and the hands-free session-start seam (the
 `PendingSessionRoute` request/consume lifecycle, both App Intents requesting a start through a stub
@@ -440,28 +440,28 @@ factory building the parser from the full alias set),
 `SpellingOverrideProcessor` whole-word/case/multi-override/no-substring-corruption, and
 `CompositeTextProcessor` ordering (a command is detected and not spelling-mangled; the configured
 control word changes matching; a normal segment gets overrides), plus the CarPlay Audio surface
-(spec 0008): the shared `NotePlaybackController` (play / pause / resume / stop / skip via a stubbed
+(spec 0008): the shared `ThoughtPlaybackController` (play / pause / resume / stop / skip via a stubbed
 player, `MPNowPlayingInfoCenter` populated via a spy, remote-command handlers calling back into the
 controller via a spy), the `RecordingsListModel` (audio-only filter, newest-first order, duration
 formatting, and driver-change -> list refresh via a stub store + observer), and the CarPlay Start row
 routing through the shared `SessionStarter`, plus the folder UI models (spec 0010, PR B):
-`FolderListModel` (filter-by-path, folder/note interleave for each sort order, folder date = newest
+`FolderListModel` (filter-by-path, folder/thought interleave for each sort order, folder date = newest
 descendant recursively, empty-folder-to-the-end), `FolderMoveTargets` (pre-order + depth flatten,
-empty folder still offered, sibling A-Z, subtree exclusion), and `noteSortOrder` persistence /
+empty folder still offered, sibling A-Z, subtree exclusion), and `thoughtSortOrder` persistence /
 unknown-tag fallback in `UserDefaultsSettingsStore`, plus the recoverable delete (spec 0020): both
 stores' `softDelete`/`restore`/`purge`/`purgeAllTrash` (audio sibling moved + restored, restore to
 root when the original folder is gone, trash stays inside the store root, purge is permanent), and
-the same seam driven through `StreamFeed`/`NoteStoreDriver` (delete returns a restorable token,
-restore re-inserts the note and audio, purge removes it). The system `UndoManager`/shake gesture is
+the same seam driven through `StreamFeed`/`ThoughtStoreDriver` (delete returns a restorable token,
+restore re-inserts the thought and audio, purge removes it). The system `UndoManager`/shake gesture is
 verified manually, not in tests. Plus the full-text search + bottom-bar redesign (spec 0021):
-`NoteSearch` (title match, body-paragraph match, substring, case- and diacritic-insensitivity, no-match,
+`ThoughtSearch` (title match, body-paragraph match, substring, case- and diacritic-insensitivity, no-match,
 empty/whitespace query returns all, GLOBAL multi-folder results in preserved order) and `FolderScreenState`
 (empty-store-regardless-of-search, normal, results, no-matches selection, plus search-field visibility).
 The bottom-bar/now-playing/undo composition, the live search field, the empty-state CTA, and the
-note-page search routing are UI-only and verified on device. Plus the feedback-0018 fixes:
-`FolderRenameDriverTests` (rename through `StreamFeed` renames on disk, moves notes, returns the name,
+thought-page search routing are UI-only and verified on device. Plus the feedback-0018 fixes:
+`FolderRenameDriverTests` (rename through `StreamFeed` renames on disk, moves thoughts, returns the name,
 republishes; conflict + invalid-name rejection), the injected-UndoManager registration
-(`NoteDeletionControllerTests` - a delete registers "Undo Delete" on the injected manager; the shake
+(`ThoughtDeletionControllerTests` - a delete registers "Undo Delete" on the injected manager; the shake
 gesture and the undo-through-the-manager restore stay manual-verify), and contextual folder filing
 (`DictationViewModelTests` - a session created from path `[X]` files its thought in `[X]`; the default
 files at the root).

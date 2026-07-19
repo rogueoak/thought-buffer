@@ -9,12 +9,12 @@ import XCTest
 @MainActor
 final class FillerGroupingViewModelTests: XCTestCase {
     private var tempDir: URL!
-    private var store: NoteStore!
+    private var store: ThoughtStore!
 
     override func setUpWithError() throws {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FillerGroupingVM-\(UUID().uuidString)", isDirectory: true)
-        store = NoteStore(directory: tempDir)
+        store = ThoughtStore(directory: tempDir)
     }
 
     override func tearDownWithError() throws {

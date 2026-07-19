@@ -3,7 +3,7 @@ import XCTest
 
 /// `FolderMoveTargets` (spec 0010): flattens the whole folder tree into a pre-order, depth-tagged list
 /// for the move-to-folder picker, driven by a `children` closure so empty folders (which never appear
-/// in a note's `folderPath`) are still offered.
+/// in a thought's `folderPath`) are still offered.
 final class FolderMoveTargetsTests: XCTestCase {
     /// A tree stub: maps a path to its child folder names.
     private func children(_ tree: [[String]: [String]]) -> ([String]) -> [String] {
@@ -39,7 +39,7 @@ final class FolderMoveTargetsTests: XCTestCase {
     }
 
     func testEmptyFolderIsStillOffered() {
-        // "Empty" has no notes anywhere, but the children closure reports it, so it must appear.
+        // "Empty" has no thoughts anywhere, but the children closure reports it, so it must appear.
         let tree: [[String]: [String]] = [[]: ["Empty"]]
         let targets = FolderMoveTargets.all(children: children(tree))
         XCTAssertEqual(targets.map(\.path), [["Empty"]])

@@ -7,10 +7,10 @@ What the product does, feature by feature.
 The first buildable milestone: a SwiftUI app that runs in the simulator with the River Mist
 palette, the app icon, and mock data. No speech, CarPlay, or persistence yet.
 
-- **Stream list** - a scrollable feed of note cards (title, two-line snippet, timestamp,
+- **Stream list** - a scrollable feed of thought cards (title, two-line snippet, timestamp,
   word count, primary accent dot) on the themed background, with a mic + gear toolbar and
   a floating Record button that opens dictation.
-- **Note detail** - a read-only view of a note's paragraphs and timestamp.
+- **Thought detail** - a read-only view of a thought's paragraphs and timestamp.
 - **Dictation (mock)** - the live-capture screen with a streaming sample string, a blinking
   caret, an animated waveform, a "Mira - removed last sentence" command chip, and a
   Pause / Mira record / New dock. Purely visual.
@@ -21,33 +21,33 @@ All screens follow the system light/dark appearance automatically through the to
 ## On-device dictation (spec 0002)
 
 Real dictation replaces the mock. Tap Record, grant microphone and speech access, and your words
-stream into a note on device.
+stream into a thought on device.
 
 - **Live capture** - `SFSpeechRecognizer` with `requiresOnDeviceRecognition` turns speech into
   text with no network. Finalized phrases become paragraphs; the in-progress phrase shows live
   with a blinking caret. The waveform rides the real microphone level.
 - **Continuous feed** - a recognition task ends on its own after a while; the service starts a
   fresh task on the same audio so dictation never stops, without losing committed text.
-- **Pause / resume** - halts and continues capture without losing the note.
-- **Save** - stopping writes the note as a Markdown file and returns to the Stream list with the
-  new note on top.
-- **Stream list + detail** - now load real saved notes (newest first) instead of mock data; an
-  empty state invites the first recording. Opening a note shows its saved paragraphs.
+- **Pause / resume** - halts and continues capture without losing the thought.
+- **Save** - stopping writes the thought as a Markdown file and returns to the Stream list with the
+  new thought on top.
+- **Stream list + detail** - now load real saved thoughts (newest first) instead of mock data; an
+  empty state invites the first recording. Opening a thought shows its saved paragraphs.
 - **Permission states** - denied or unavailable speech/mic shows a clear in-app message, not a
   crash or silence.
 
-Voice editing (Mira), CarPlay, sync, Siri, and spelling overrides are still out; the `Note`
+Voice editing (Mira), CarPlay, sync, Siri, and spelling overrides are still out; the `Thought`
 model keeps room for them.
 
 ## Mira control words (spec 0003)
 
 Hands-free voice editing. Mid-dictation, say the control word "Mira" and a command and the app
-acts on it instead of writing it into the note.
+acts on it instead of writing it into the thought.
 
 - **Remove the last sentence** - "Mira remove the last sentence" drops the last sentence of the
-  note; if a paragraph empties, it goes too, so the note stays coherent.
+  thought; if a paragraph empties, it goes too, so the thought stays coherent.
 - **Remove the last paragraph** - "Mira remove the last paragraph" drops the last paragraph.
-- **New note** - "Mira new note" saves the current note and starts a fresh one while the session
+- **New thought** - "Mira new thought" saves the current thought and starts a fresh one while the session
   keeps recording.
 - **Read that back** - "Mira read that back" speaks the last paragraph aloud. Capture pauses
   while Mira speaks so the audio does not feed back into recognition, then resumes.
@@ -65,26 +65,26 @@ The control word is configurable (Settings, default "Mira"); CarPlay, Siri, and 
 
 ## iCloud Drive storage (spec 0004)
 
-Notes can live in the user's iCloud Drive so they sync across devices and appear in the Files app,
+Thoughts can live in the user's iCloud Drive so they sync across devices and appear in the Files app,
 delivering the "markdown files in an iCloud folder, automatically synced" promise - while still
 working offline-first when iCloud is not available.
 
 - **iCloud when available** - at launch the app resolves its iCloud Drive ubiquity container. When
-  it resolves (signed in, provisioned), notes read and write as `<id>.md` files in the container's
+  it resolves (signed in, provisioned), thoughts read and write as `<id>.md` files in the container's
   `Documents/ThoughtStream/` folder, which shows up in the Files app as "Thought Stream" and syncs
   across the user's devices.
 - **Coordinated IO** - every read, write, and delete goes through `NSFileCoordinator` so the app
   never races the iCloud sync daemon on the same file.
-- **Live refresh** - an `NSMetadataQuery` watches the folder, triggers downloads for notes synced
+- **Live refresh** - an `NSMetadataQuery` watches the folder, triggers downloads for thoughts synced
   in from other devices, and refreshes the Stream list on external edits without a manual reload.
 - **Graceful fallback** - when iCloud is unavailable (not signed in, no provisioning, or the
   Simulator with no account), the app falls back to local `Documents/ThoughtStream/` and behaves
   exactly as before. The choice is made once and is observable, so a later Settings status can show
-  where notes live. Both backends share `Note`'s Markdown format, so switching never loses notes.
+  where thoughts live. Both backends share `Thought`'s Markdown format, so switching never loses thoughts.
 
 Real cross-device sync needs a physical device with an Apple Developer team and an iCloud account
 (the capability auto-provisions the container). A Settings toggle/status UI and automatic import
-of pre-existing local notes into iCloud are still out.
+of pre-existing local thoughts into iCloud are still out.
 
 ## CarPlay and Siri hands-free start (spec 0005)
 
@@ -92,10 +92,10 @@ Start a dictation session without touching the phone - the reason the product ex
 whose hands are busy driving.
 
 - **Siri (shippable).** "Hey Siri, start a stream in Thought Stream" (and friendly variants -
-  "start dictating", "new thought", "new note in Thought Stream") launches the app straight into a
+  "start dictating", "new thought", "new thought in Thought Stream") launches the app straight into a
   fresh dictation session with capture starting. Siri works through the phone and through CarPlay's
   Siri button, so this is the real hands-free-in-car path today. Backed by `StartThoughtStreamIntent`
-  / `NewNoteIntent` (`AppIntent`, `openAppWhenRun`) and an `AppShortcutsProvider` that registers the
+  / `NewThoughtIntent` (`AppIntent`, `openAppWhenRun`) and an `AppShortcutsProvider` that registers the
   phrases on install.
 - **One shared session start.** The Record button, the Siri intent, and CarPlay all request a start
   through one seam (`SessionStarter` / `PendingSessionRoute` on the composition root), so every entry
@@ -103,19 +103,19 @@ whose hands are busy driving.
 - **CarPlay (scaffolded, gated).** A `CPTemplateApplicationSceneDelegate` presents a list template
   with a "Start a thought stream" row that calls the same starter. It is wired via the CarPlay scene
   role in the scene manifest but is DORMANT: Apple grants the CarPlay entitlement only for specific
-  app categories (audio, navigation, communication, EV, parking, ...), and a dictation / notes app is
+  app categories (audio, navigation, communication, EV, parking, ...), and a dictation / thoughts app is
   not one of them, so no CarPlay entitlement is declared. Without it the system never creates the
   scene, so the default unsigned build and the App Store build are unaffected. Activating CarPlay
   needs Apple's entitlement plus a CarPlay head unit or the CarPlay simulator - pending approval.
 
 Parameterized intents ("start a stream about X"), a fully in-CarPlay live-capture UI, and Shortcuts
-actions beyond start / new note are still out.
+actions beyond start / new thought are still out.
 
 ## Settings (spec 0006)
 
 The Settings stub becomes real: two things a user configures, plus a read-only storage status.
 Reachable from the gear in the Stream toolbar. Changes apply to the next dictation session started
-(the text processor is built per session from current settings), noted in the UI copy.
+(the text processor is built per session from current settings), thoughtd in the UI copy.
 
 - **Custom control phrase.** Name the assistant whatever you like (default "Mira"). Type "Nova" and
   "Nova remove the last sentence" fires the remove command while "Mira ..." no longer does; the
@@ -123,7 +123,7 @@ Reachable from the gear in the Stream toolbar. Changes apply to the next dictati
   over-long value falls back to "Mira", so clearing the field is a valid reset.
 - **Command aliases (spec 0018).** Register extra single-word spellings that ALSO fire command mode,
   so a recognizer mishearing of the control word ("mirror" for "Mira") still triggers a command
-  instead of being written into the note. An editable list under the control-word field adds (a field
+  instead of being written into the thought. An editable list under the control-word field adds (a field
   + a plus button) and deletes (swipe) aliases; each alias is fully equivalent to the control word.
   A fresh install ships a default set for "Mira" ("mirra", "meera", "mirror"). Validation keeps only
   single tokens, de-duplicates case-insensitively, and never lets an alias shadow the primary word;
@@ -134,16 +134,16 @@ Reachable from the gear in the Stream toolbar. Changes apply to the next dictati
   before commit: whole-word and case-insensitive, so "shay"/"Shay" both become "Shea" while "Shayla"
   is untouched; multiple overrides apply together and never corrupt a substring. A control phrase is
   never spelling-mangled - commands are detected first, on the raw segment.
-- **Storage status.** A read-only row shows whether notes live on iCloud or on this device, read
+- **Storage status.** A read-only row shows whether thoughts live on iCloud or on this device, read
   from the backend the app resolved at launch.
 
-Settings persist in `UserDefaults` across relaunch. Cloud sync of settings, per-note settings, and
+Settings persist in `UserDefaults` across relaunch. Cloud sync of settings, per-thought settings, and
 importing / exporting override lists are out; changes take effect next session, not mid-session.
 
 ## Dual-capture recording and playback (spec 0007)
 
 Dictation now keeps the real voice, not just the words. While a session runs, the same microphone
-feed that drives recognition is teed to a compressed `.m4a` recording for that note, on device.
+feed that drives recognition is teed to a compressed `.m4a` recording for that thought, on device.
 Recognition is unchanged and nothing leaves the phone.
 
 - **One continuous recording.** One tap, forked to two sinks: the recognizer and an audio-file
@@ -152,21 +152,21 @@ Recognition is unchanged and nothing leaves the phone.
   restart and across pause/resume.
 - **Paragraph timing.** Each finalized paragraph knows its time range in the recording, captured
   from the recognizer's segment timestamps and anchored to absolute recording time across restarts.
-  The timings persist with the note (frontmatter, tolerant and backward compatible - a note with no
+  The timings persist with the thought (frontmatter, tolerant and backward compatible - a thought with no
   audio loads exactly as before).
-- **Playback in your own voice.** A saved note plays back in full (simple play / stop) from its
-  detail view, in the voice that recorded it. When a note has no recording (transcript-only, older
-  notes, or auto-deleted), the play affordance is simply not shown. In-session "Mira read that back"
+- **Playback in your own voice.** A saved thought plays back in full (simple play / stop) from its
+  detail view, in the voice that recorded it. When a thought has no recording (transcript-only, older
+  thoughts, or auto-deleted), the play affordance is simply not shown. In-session "Mira read that back"
   speaks the last paragraph aloud - the current session's recording is still being written, so it is
   not finalized to play yet - reusing the pause-capture handshake so it never feeds back into the
   mic. The recording + timings model is left ready for a future recordings browser to seek per
   paragraph.
 - **Retention you control.** Settings offers keep recordings (default), transcript-only (never
   record), or auto-delete after N days. Transcript-only skips the file writer entirely; auto-delete
-  sweeps expired recordings at launch, keeping the note's text.
-- **Lifecycle.** The recording is a sibling `<id>.m4a` next to the note's `<id>.md`. It saves,
+  sweeps expired recordings at launch, keeping the thought's text.
+- **Lifecycle.** The recording is a sibling `<id>.m4a` next to the thought's `<id>.md`. It saves,
   syncs, and deletes through the same storage layer with the same coordination and file protection;
-  deleting a note deletes its recording.
+  deleting a thought deletes its recording.
 
 Real mic capture and playback quality need a physical device (the Simulator mic produces no useful
 audio); the pipeline is proven structurally and by tests. A recordings list, a waveform scrubber,
@@ -174,57 +174,57 @@ parameterized playback controls, and the CarPlay Audio surface / entitlement are
 
 ## CarPlay Audio surface, shared playback, and system Now Playing (spec 0008)
 
-The recordings from spec 0007 become a real Audio-app experience: browse and play your voice notes
+The recordings from spec 0007 become a real Audio-app experience: browse and play your voice thoughts
 in CarPlay Now Playing and on the phone lock screen. This is the concrete basis for requesting
 Apple's CarPlay **Audio** entitlement.
 
-- **CarPlay recordings browser + Now Playing.** The CarPlay root is a `CPListTemplate` listing notes
+- **CarPlay recordings browser + Now Playing.** The CarPlay root is a `CPListTemplate` listing thoughts
   that HAVE a recording (title, relative date, duration), newest first, driven by the headless
-  `NoteStoreDriver` through a `RecordingsListModel`. A top "Start a thought stream" row still begins
+  `ThoughtStoreDriver` through a `RecordingsListModel`. A top "Start a thought stream" row still begins
   a hands-free session through the shared `SessionStarter`. Tapping a recording plays its `.m4a` and
-  pushes `CPNowPlayingTemplate` with working play / pause and skip (+/-15s over the note). The list
-  refreshes live when a session saves or a note syncs in.
-- **System Now Playing + remote commands (phone AND CarPlay).** Playing a note populates
+  pushes `CPNowPlayingTemplate` with working play / pause and skip (+/-15s over the thought). The list
+  refreshes live when a session saves or a thought syncs in.
+- **System Now Playing + remote commands (phone AND CarPlay).** Playing a thought populates
   `MPNowPlayingInfoCenter` (title, duration, elapsed) and wires `MPRemoteCommandCenter`
-  (play / pause / stop / skip), and the app declares the `audio` background mode, so a note played on
+  (play / pause / stop / skip), and the app declares the `audio` background mode, so a thought played on
   the phone shows on the lock screen and in Control Center and keeps playing in the background - a
   real Audio-app trait that needs no entitlement.
-- **One shared playback path.** A single headless `NotePlaybackController` owns the player, the lazy
+- **One shared playback path.** A single headless `ThoughtPlaybackController` owns the player, the lazy
   off-main URL resolution, and the Now Playing / remote-command wiring; both the phone detail view
-  (through `NotePlaybackModel`) and the CarPlay scene drive it, so there is one audio path and one
+  (through `ThoughtPlaybackModel`) and the CarPlay scene drive it, so there is one audio path and one
   writer of `MPNowPlayingInfoCenter`. `AVAudioSession` `.playback` coexists with the record session
   used during dictation (dictation deactivates playback before recording, as spec 0007 established).
 - **Entitlement gating.** The CarPlay scene stays dormant without the CarPlay Audio entitlement,
   exactly like the 0005 scaffold: the unsigned Simulator build and the App Store build stay green
   with an empty `DEVELOPMENT_TEAM` and no CarPlay entitlement declared.
   `docs/carplay-audio-entitlement-request.md` records the honest justification (on-device, records
-  and plays the user's voice notes, low-distraction browse + Now Playing) and the exact steps to
+  and plays the user's voice thoughts, low-distraction browse + Now Playing) and the exact steps to
   enable it once Apple grants it.
 
 CarPlay itself needs the Audio entitlement plus a CarPlay head unit / the CarPlay simulator, so it is
 proven structurally and by tests. The lock-screen Now Playing render needs a device; the wiring is
 covered by unit tests. A waveform scrubber, per-paragraph seek, in-CarPlay live capture, and a
-"play my last note" Siri intent are out.
+"play my last thought" Siri intent are out.
 
 ## On-device feedback fixes (feedback 0005)
 
 Fixes from real device testing:
 
 - **Continuous feed survives a natural pause** - a recognition task that ends on a no-speech
-  timeout now commits its in-progress words as a paragraph before restarting, so a pause mid-note
+  timeout now commits its in-progress words as a paragraph before restarting, so a pause mid-thought
   never loses text.
 - **Keyword-led command mode** - anything that leads with the control word is treated as a command
   and never transcribed; an unrecognized keyword-led phrase is dropped with a chip (see Mira above).
 - **Swipe to delete** - the Stream list is a `List` with iOS-standard swipe-to-delete. As of spec
-  0020 the delete is UNDOABLE (see "Undoable delete" below): the note and its recording are moved to
+  0020 the delete is UNDOABLE (see "Undoable delete" below): the thought and its recording are moved to
   the store's trash, an Undo affordance shows, and shaking the device offers "Undo Delete".
-- **Word count** - note cards and the detail header show a word count ("12 words" / "1 word")
+- **Word count** - thought cards and the detail header show a word count ("12 words" / "1 word")
   instead of a paragraph count.
 - **Louder waveform** - the mic-level -> bar-height mapping is tuned (perceptual curve, higher gain)
   so normal speech visibly moves the bars.
 - **Record button never overlaps content** - it lives in the bottom safe-area inset, clear of the
   empty state and the list.
-- **Playback discovery** - notes with a recording show a small play affordance on the card; tapping
+- **Playback discovery** - thoughts with a recording show a small play affordance on the card; tapping
   the card opens the detail Play control.
 
 ## Device speech accumulation fixes (feedback 0006)
@@ -232,7 +232,7 @@ Fixes from real device testing:
 Two device-only bugs the 0005 fix missed because the simulator/tests did not model how a real device
 feeds speech (one task accumulates the whole passage and finalizes only on end):
 
-- **A long pause no longer resets the note** - a task can end with an error and a NIL result, holding
+- **A long pause no longer resets the thought** - a task can end with an error and a NIL result, holding
   the words only as the in-progress partial. The service now tracks that partial and commits the best
   available text (result, else the partial) on ANY end, so the last-heard words survive the restart.
 - **Mira commands fire mid-utterance** - the control word is detected ANYWHERE in a finalized
@@ -249,15 +249,15 @@ Fixes and refinements from a round of on-device testing:
   before committing the remainder.
 - **Cheat sheet** - a Commands button by Stop opens a bottom drawer listing the control word, each
   voice command with what it does, and a pause-to-think tip.
-- **Thoughts list** - the list is titled "Thoughts"; note cards have no disclosure chevron and are
+- **Thoughts list** - the list is titled "Thoughts"; thought cards have no disclosure chevron and are
   tappable across their full width.
-- **Keyboard editing** - the saved-note page has an Edit/Done toggle to correct text with the
+- **Keyboard editing** - the saved-thought page has an Edit/Done toggle to correct text with the
   keyboard; the record screen offers Edit while paused.
-- **Resume a note** - a saved note's page offers Resume, reopening it into a dictation session that
-  continues the same note. Appended text is added; the original recording is preserved (the resumed
+- **Resume a thought** - a saved thought's page offers Resume, reopening it into a dictation session that
+  continues the same thought. Appended text is added; the original recording is preserved (the resumed
   portion is text-only on playback).
 - **Find recordings on the phone** - a waveform toggle in the Thoughts toolbar filters the list to
-  notes that have a kept recording (previously browsable only on CarPlay).
+  thoughts that have a kept recording (previously browsable only on CarPlay).
 - **Debug panel removed** - the on-record DEBUG diagnostic scaffolding is gone now that capture is
   verified on device.
 
@@ -268,53 +268,53 @@ Fixes and refinements from a round of on-device testing:
   updates in place instead of splitting into two paragraphs. Reset detection compares on normalized
   text (spacing/punctuation removed) and treats containment or start/end overlap as a revision.
 - **Transcript auto-scrolls** while recording, keeping the newest words and the live caret in view.
-- **Resume** on a saved note is a centered pill pinned to the bottom of the screen, clear of the
-  scrolling note body.
+- **Resume** on a saved thought is a centered pill pinned to the bottom of the screen, clear of the
+  scrolling thought body.
 
-## Home and note UX polish (feedback 0010)
+## Home and thought UX polish (feedback 0010)
 
 Three UI-clarity refinements from using the app (no capture or storage change):
 
 - **Labeled recordings filter** - the Thoughts toolbar's leading control keeps its waveform icon but
   now reads "Recordings", so it no longer looks like a record button. Recording still starts from the
   top-right mic or the bottom Record pill.
-- **Duration instead of word count** - a note's at-a-glance stat is its recording duration ("1:24")
-  when it has audio, falling back to the word count for a text-only note (transcript-only retention,
-  resumed/edited notes, older files). Shown on the note card and the detail header. The duration
-  formatter lives on `Note` as the single source of truth; the CarPlay recordings browser reuses it.
-- **Tap to edit** - the saved-note page has no Edit button; tapping the note's text starts editing and
+- **Duration instead of word count** - a thought's at-a-glance stat is its recording duration ("1:24")
+  when it has audio, falling back to the word count for a text-only thought (transcript-only retention,
+  resumed/edited thoughts, older files). Shown on the thought card and the detail header. The duration
+  formatter lives on `Thought` as the single source of truth; the CarPlay recordings browser reuses it.
+- **Tap to edit** - the saved-thought page has no Edit button; tapping the thought's text starts editing and
   a Done button (shown only while editing) commits. The record-screen paused-Edit affordance is
   unchanged.
 
-## Home and note UX polish, round 2 (feedback 0011)
+## Home and thought UX polish, round 2 (feedback 0011)
 
 Three more refinements from using the app (no capture or storage change):
 
 - **Recordings filter removed** - the Thoughts toolbar no longer carries the recordings-only toggle
   (added feedback 0008, labeled feedback 0010); it was a rarely-used mode switch on the home screen.
-  Recorded notes are still obvious inline (each shows its play affordance and duration), and the
+  Recorded thoughts are still obvious inline (each shows its play affordance and duration), and the
   CarPlay recordings browser is unchanged.
-- **Mic + gear on the note page** - a note's detail page now has the same mic (start a new thought)
+- **Mic + gear on the thought page** - a thought's detail page now has the same mic (start a new thought)
   and gear (Settings) as the Stream list, so a new thought is one tap from anywhere. The mic requests
   a session through the shared route the list uses; both are hidden while editing text.
-- **Timestamp no longer goes stale** - the note card's "x mins ago" used to freeze at render (it read
-  roughly the note's own recording length right after saving) because a SwiftUI label built from the
+- **Timestamp no longer goes stale** - the thought card's "x mins ago" used to freeze at render (it read
+  roughly the thought's own recording length right after saving) because a SwiftUI label built from the
   current time has no wall-clock dependency to refresh on. It is now wrapped in a `TimelineView` that
   recomputes every minute against a live reference, and sits tighter to its clock glyph.
 
-## Editable note titles (spec 0009)
+## Editable thought titles (spec 0009)
 
-Notes get a real, editable title instead of an always-derived one.
+Thoughts get a real, editable title instead of an always-derived one.
 
-- **First-sentence default.** A new note's title is its first sentence - what you said before your
+- **First-sentence default.** A new thought's title is its first sentence - what you said before your
   first pause - not the whole first line. Derived through the existing `SentenceTokenizer`, capped and
   tidied; a single-sentence opening is unchanged.
-- **Edit the title, separate from the body.** On a saved note's page the title is a prominent header
+- **Edit the title, separate from the body.** On a saved thought's page the title is a prominent header
   you tap to edit (matching the body's tap-to-edit). A custom title sticks: later body edits no longer
   overwrite it. Clearing the title to empty resets it to the derived first sentence.
 - **Persistence.** A user title is marked with a `titleCustom: true` frontmatter key, written only for
-  a custom title so a derived-title note (and every existing file) serializes and loads exactly as
-  before. Resuming a titled note keeps its title rather than re-deriving it.
+  a custom title so a derived-title thought (and every existing file) serializes and loads exactly as
+  before. Resuming a titled thought keeps its title rather than re-deriving it.
 
 ## Animated launch cover (spec 0012)
 
@@ -345,53 +345,53 @@ navigation changes.
 ## Folders and sorting (spec 0010)
 
 The flat, newest-first Thoughts stream becomes a browsable tree with a chosen sort order. Folders are
-real directories on disk (visible in Files / iCloud Drive), not tags - a note in a folder lives at
+real directories on disk (visible in Files / iCloud Drive), not tags - a thought in a folder lives at
 `Documents/ThoughtStream/<folder>/.../<id>.md` with its `<id>.m4a` beside it.
 
 - **Nested folders.** Create a folder from the Thoughts toolbar (the folder-plus button); open it to
-  see its notes and subfolders; create a folder inside a folder. The Thoughts screen is a navigation
-  stack: tapping a folder pushes into it (the same folder-list screen at a deeper path), tapping a note
+  see its thoughts and subfolders; create a folder inside a folder. The Thoughts screen is a navigation
+  stack: tapping a folder pushes into it (the same folder-list screen at a deeper path), tapping a thought
   opens its detail page, and Back walks the tree.
 - **Interleaved, sorted list.** At any folder path the screen shows that folder's child folders AND the
-  notes that live directly there, INTERLEAVED into one list ordered by the chosen sort. A folder sorts
-  among notes by the same key: its "date" is its newest note anywhere underneath (recursively) and its
+  thoughts that live directly there, INTERLEAVED into one list ordered by the chosen sort. A folder sorts
+  among thoughts by the same key: its "date" is its newest thought anywhere underneath (recursively) and its
   "title" is its name, so an active folder rises to the top under newest-first and an empty folder sinks
   to the bottom.
 - **Sort control.** A toolbar menu (the up/down arrows) offers newest-first (default), oldest-first,
   title A-Z, and title Z-A. The choice is global, persisted across launches, and the list re-sorts live
   when changed.
-- **Move a note.** A note's leading swipe or context menu offers "Move to folder", opening a picker with
+- **Move a thought.** A thought's leading swipe or context menu offers "Move to folder", opening a picker with
   "New folder...", "Top level", and every existing folder indented by depth. Picking one re-saves the
-  note there; a recorded note keeps its recording (the store relocates the `.m4a` with the `.md`). Notes
+  thought there; a recorded thought keeps its recording (the store relocates the `.m4a` with the `.md`). Thoughts
   are always created at the top level and filed afterward.
 - **Folder create / rename / delete.** A new folder is named in an alert (an unusable name - empty,
   `.`/`..`, hidden, or containing a separator - is rejected with a brief message). A folder row's
   context menu / swipe offers Rename (reports a name conflict) and Delete. Delete is a confirming,
-  destructive cascade: it removes the folder, its notes, their recordings, and its subfolders.
-- **Empty states.** The empty root reads "No notes yet - tap Record"; an empty folder reads "This folder
-  is empty - move a note here, or create a folder inside it".
-- **CarPlay unaffected.** The CarPlay recordings browser still lists every recorded note regardless of
+  destructive cascade: it removes the folder, its thoughts, their recordings, and its subfolders.
+- **Empty states.** The empty root reads "No thoughts yet - tap Record"; an empty folder reads "This folder
+  is empty - move a thought here, or create a folder inside it".
+- **CarPlay unaffected.** The CarPlay recordings browser still lists every recorded thought regardless of
   which folder it lives in.
 
-## Keyboard notes (spec 0013)
+## Keyboard thoughts (spec 0013)
 
-Not every note starts by talking. You can now make a note with the keyboard, and add voice to a note
+Not every thought starts by talking. You can now make a thought with the keyboard, and add voice to a thought
 that began as text.
 
-- **New note button.** A compose button (the pencil-in-square) on the Thoughts toolbar, next to the
-  mic, creates a blank note and opens it straight into the keyboard editor - type a title and body,
+- **New thought button.** A compose button (the pencil-in-square) on the Thoughts toolbar, next to the
+  mic, creates a blank thought and opens it straight into the keyboard editor - type a title and body,
   tap Done. It is filed in the folder you are currently browsing.
-- **Discard-if-empty.** A brand-new note is not saved until the first non-empty commit. Backing out of
-  a fresh note without typing anything - no title, no body - leaves nothing behind; the blank note is
+- **Discard-if-empty.** A brand-new thought is not saved until the first non-empty commit. Backing out of
+  a fresh thought without typing anything - no title, no body - leaves nothing behind; the blank thought is
   discarded rather than littering the list.
-- **Record onto a text note.** The note page's record affordance is labeled **Record** when the note
-  has no recording yet and **Resume** when it does. Recording into a text-only note captures real
-  audio: the note becomes a true voice note (a Play control appears). The originally-typed paragraphs
-  play back via text-to-speech; the newly spoken tail plays its recording. Recording into a note that
+- **Record onto a text thought.** The thought page's record affordance is labeled **Record** when the thought
+  has no recording yet and **Resume** when it does. Recording into a text-only thought captures real
+  audio: the thought becomes a true voice thought (a Play control appears). The originally-typed paragraphs
+  play back via text-to-speech; the newly spoken tail plays its recording. Recording into a thought that
   already has audio stays a text-only append, so the original recording is never corrupted. Real audio
   capture is subject to the transcript-only retention setting.
-- **Just a normal note.** A keyboard note is an ordinary `Note` on disk (no storage or format change),
-  so it works with folders, sort, editing, and delete exactly like any other note.
+- **Just a normal thought.** A keyboard thought is an ordinary `Thought` on disk (no storage or format change),
+  so it works with folders, sort, editing, and delete exactly like any other thought.
 
 ## Natural text-to-speech voice (spec 0014)
 
@@ -405,28 +405,28 @@ available. The selection order lives in the pure, unit-tested `VoiceSelector`.
 
 ## Swipe to play and folder queue (spec 0015)
 
-Playing a recording no longer means opening the note first. You can start a recording - or a whole
+Playing a recording no longer means opening the thought first. You can start a recording - or a whole
 folder of them - with one gesture, and see what is playing without leaving the list.
 
-- **Swipe a note right to play it.** A full leading swipe on a note that has a recording starts playing
+- **Swipe a thought right to play it.** A full leading swipe on a thought that has a recording starts playing
   it immediately through the shared playback controller, so the lock screen, Control Center, and
-  CarPlay light up as they already do. A text-only note offers no Play swipe (only Move).
+  CarPlay light up as they already do. A text-only thought offers no Play swipe (only Move).
 - **Swipe a folder right to play the folder.** A full leading swipe on a folder plays its recordings as
-  a queue: every recorded note anywhere in that folder's subtree, in the current sort order, one at a
-  time, auto-advancing to the next when one finishes. Text-only notes are skipped, and an empty or
+  a queue: every recorded thought anywhere in that folder's subtree, in the current sort order, one at a
+  time, auto-advancing to the next when one finishes. Text-only thoughts are skipped, and an empty or
   all-text folder plays nothing.
 - **A now-playing bar.** While something plays from the list, a compact bar sits above the Record
   button on every folder screen: the current title, a play/pause button, and a stop button; when a
-  queue is running it also shows Next. Tapping the title opens that note. The bar disappears when
+  queue is running it also shows Next. Tapping the title opens that thought. The bar disappears when
   playback stops or the queue ends.
-- **One audio path.** The swipe, the bar, the note detail Play control, and CarPlay all drive the same
+- **One audio path.** The swipe, the bar, the thought detail Play control, and CarPlay all drive the same
   shared controller and the same single system Now Playing item (spec 0008) - a queue only changes
-  which note is current, never opening a second player or a second Now Playing writer.
+  which thought is current, never opening a second player or a second Now Playing writer.
 
 ## Transcript refinement (spec 0016)
 
-Spoken notes carry disfluencies and the recognizer splits sentences on short pauses. Refinement makes
-the saved text read like written notes without changing what you said in substance, and adds a
+Spoken thoughts carry disfluencies and the recognizer splits sentences on short pauses. Refinement makes
+the saved text read like written thoughts without changing what you said in substance, and adds a
 hands-free way to drop the last thing said. It is on by default (a Settings toggle turns it off) and is
 NON-DESTRUCTIVE to audio - only the transcript text is refined; playback still plays the original
 recording.
@@ -452,17 +452,17 @@ recording.
   lines in edited or imported text - a paragraph with no terminal punctuation followed by one that
   begins lowercase is joined with a space. It never merges across a deliberate break and never splits (a
   dictated list of adjacent lowercase items does merge by design - the escape hatch is a deliberate blank
-  line between them). The pure `TranscriptCleanup.refinedForSave(note, refine:)` is the single gate: it
+  line between them). The pure `TranscriptCleanup.refinedForSave(thought, refine:)` is the single gate: it
   runs the merge only when refine is on AND on the edit-save path (never on load), so an untouched old
-  note is never silently rewritten.
+  thought is never silently rewritten.
 - **Settings.** A "Refine transcript" toggle (default on) persists in `UserDefaults` and gates both the
   filler stage (built into the per-session text processor, so it takes effect next session) and the
-  edit-save reflow. When off, text is committed verbatim (the pre-0016 behavior). The subtitle notes
+  edit-save reflow. When off, text is committed verbatim (the pre-0016 behavior). The subtitle thoughts
   that audio is never changed. All refinement is local, deterministic, and rule-based - no cloud / LLM.
 
 ## Automatic dead-air removal (spec 0019)
 
-Spoken notes collect long thinking pauses. When a recording finishes, Thought Stream trims the long
+Spoken thoughts collect long thinking pauses. When a recording finishes, Thought Stream trims the long
 silences so playback is tighter and the file smaller, WITHOUT changing a word of the transcript. It
 is on by default and applies only to NEW recordings on save.
 
@@ -472,14 +472,14 @@ is on by default and applies only to NEW recordings on save.
 - **Replace the recording, safely.** The trim is non-reversible (the removed silence is not kept), so
   the rewrite is atomic-safe: the trimmed audio is written to a temp file, verified to be a valid
   non-empty recording, and only THEN does it atomically replace the original. ANY failure (unreadable
-  file, nothing to trim, a write/verify slip) leaves the original recording untouched and the note
+  file, nothing to trim, a write/verify slip) leaves the original recording untouched and the thought
   still saves. Runs off the main actor, so a slow trim never freezes the UI.
 - **Timings stay accurate.** Paragraph time ranges reference absolute recording time, so after
   trimming each paragraph's start is remapped left by the removed silence before it. This is exact
   because of a load-bearing invariant: the 2.0s trim floor stays strictly ABOVE the 1.5s paragraph-gap
   threshold, so a trimmable silence is always a paragraph BOUNDARY, never inside a paragraph - trimming
   only ever removes time between paragraphs, so durations are unchanged and only starts shift.
-- **Settings.** A "Trim silences" toggle (default on) persists in `UserDefaults`; the subtitle notes
+- **Settings.** A "Trim silences" toggle (default on) persists in `UserDefaults`; the subtitle thoughts
   the text is unaffected and a natural gap is kept. When OFF, NO code path touches the audio - the
   recording is the byte-for-byte untrimmed capture (the pre-0019 behavior). Fully on-device; no cloud.
 
@@ -494,12 +494,12 @@ iOS 26.
   self-correction bugs (feedback 0005-0009) cannot occur.
 - **Still fully on-device.** Transcription runs on the phone; audio never leaves it. The language
   model installs once (a one-time download), then works offline.
-- **Same everywhere else.** Notes, storage, iCloud, Mira commands, CarPlay, recording + playback, and
+- **Same everywhere else.** Thoughts, storage, iCloud, Mira commands, CarPlay, recording + playback, and
   editing/resume are unchanged - the swap sits behind the existing capture protocol.
 
-## Flowing, Notes-style paragraph breaks (feedback 0012)
+## Flowing, Thoughts-style paragraph breaks (feedback 0012)
 
-Dictation now flows like the native Notes app instead of breaking a paragraph on every finalized
+Dictation now flows like the native Thoughts app instead of breaking a paragraph on every finalized
 result. The iOS 26 transcriber finalizes on a short mid-thought breath, so the previous "one
 finalized result = one paragraph" rule split a single spoken sentence into several paragraphs.
 
@@ -519,36 +519,36 @@ finalized result = one paragraph" rule split a single spoken sentence into sever
   be tuned there. Final latency tuning is deferred to that device session (release builds carry no
   instrumentation overhead).
 
-## Note share and copy actions (spec 0017)
+## Thought share and copy actions (spec 0017)
 
-A note's text can leave the app: send it to another app or copy it to the clipboard.
+A thought's text can leave the app: send it to another app or copy it to the clipboard.
 
-- **"..." actions menu on the note page.** The note detail toolbar carries an ellipsis menu (beside
+- **"..." actions menu on the thought page.** The thought detail toolbar carries an ellipsis menu (beside
   the mic and gear, shown in the normal non-editing state) with **Share** and **Copy text**. Share
-  opens the system share sheet (`ShareLink`) so the note can go to Messages, Mail, Notes, etc.; Copy
+  opens the system share sheet (`ShareLink`) so the thought can go to Messages, Mail, Thoughts, etc.; Copy
   text puts the same text on the pasteboard and flashes a brief "Copied to clipboard" confirmation.
-- **Long-press a note in the list.** A note row's context menu also offers **Share** and **Copy
-  text** (alongside "Move to folder"), so a note can be shared without opening it. Folder rows get no
-  share/copy - only notes have shareable text.
+- **Long-press a thought in the list.** A thought row's context menu also offers **Share** and **Copy
+  text** (alongside "Move to folder"), so a thought can be shared without opening it. Folder rows get no
+  share/copy - only thoughts have shareable text.
 - **One plain-text form.** Both surfaces build the shared string from the pure, unit-tested
-  `Note.shareableText`: the title on its own line, a blank line, then the body paragraphs joined by
-  blank lines. A note with no custom title shares its derived title; a note with no body shares just
+  `Thought.shareableText`: the title on its own line, a blank line, then the body paragraphs joined by
+  blank lines. A thought with no custom title shares its derived title; a thought with no body shares just
   its title. Audio is never shared here - text only.
 
-## Note UX polish, round 3 (feedback 0013-0016)
+## Thought UX polish, round 3 (feedback 0013-0016)
 
-Small consistency fixes to the note card, detail page, and Thoughts header, from a round of device
+Small consistency fixes to the thought card, detail page, and Thoughts header, from a round of device
 use:
 
-- **Tighter timer spacing (0013).** The note card's timer/duration glyph sits as close to its label
+- **Tighter timer spacing (0013).** The thought card's timer/duration glyph sits as close to its label
   as the clock glyph does to its relative time, both using the same `CanopySpacing.x1` token.
-- **Tap out to save a title (0014).** Editing a note's title and tapping anywhere outside the field
+- **Tap out to save a title (0014).** Editing a thought's title and tapping anywhere outside the field
   (the background, or into the body) now commits the title and resigns focus, just like the Done
   button - no Done tap required. The commit reads the live edited text, and title/body editing stay
   mutually exclusive (tapping into the body commits the title first).
-- **Matching duration on the detail page (0015).** The note detail header shows the recording
+- **Matching duration on the detail page (0015).** The thought detail header shows the recording
   duration with the same timer glyph and spacing as the list card, not a dash. Both the card and the
-  detail header now render one shared `NoteMetaStats` component, so their metadata line cannot drift.
+  detail header now render one shared `ThoughtMetaStats` component, so their metadata line cannot drift.
 - **Inline Thoughts header (0016).** The top-level "Thoughts" title sits on the same navigation-bar
   row as the mic and gear buttons (inline title) instead of on its own large-title row below them.
   SUPERSEDED by spec 0021: the title moved back to a large title below the toolbar, consistent with the
@@ -556,19 +556,19 @@ use:
 
 ## Undoable delete (spec 0020)
 
-Deleting a note is recoverable, matching the iOS "Shake to Undo" expectation and adding a Delete
-action to the note's actions menu:
+Deleting a thought is recoverable, matching the iOS "Shake to Undo" expectation and adding a Delete
+action to the thought's actions menu:
 
-- **Delete in the menus.** The shared `NoteActionsMenu` "..." menu (note detail) and the list-row
+- **Delete in the menus.** The shared `ThoughtActionsMenu` "..." menu (thought detail) and the list-row
   long-press context menu both carry a destructive **Delete**. The list-row swipe deletes through the
   same path. Deleting from the detail page pops back to the list, where the undo affordance shows.
-- **Soft delete (trash + restore).** A delete does not destroy files: it MOVES the note's `<id>.md`
+- **Soft delete (trash + restore).** A delete does not destroy files: it MOVES the thought's `<id>.md`
   (and sibling `<id>.m4a`) into a hidden `.trash/<id>/` directory inside the store root, returning a
-  lightweight `DeletedNote` token. Restore moves the files back to their original folder - or to the
+  lightweight `DeletedThought` token. Restore moves the files back to their original folder - or to the
   root if that folder was deleted meanwhile (never a failure). The trash never escapes the store root
-  and is skipped by the notes list.
-- **Undo affordance.** A brief, non-blocking "Note deleted - Undo" chip (~5s, styled like the
-  "Copied to clipboard" confirmation) appears after any delete; tapping Undo restores the note.
+  and is skipped by the thoughts list.
+- **Undo affordance.** A brief, non-blocking "Thought deleted - Undo" chip (~5s, styled like the
+  "Copied to clipboard" confirmation) appears after any delete; tapping Undo restores the thought.
 - **Shake to Undo.** The delete is registered with the system `UndoManager`, so shaking the device
   offers "Undo Delete" (and redo re-deletes). Nothing else about shake-to-edit changes.
 - **Purge.** When the undo window elapses the delete is committed (the trashed files are purged), and
@@ -576,24 +576,24 @@ action to the note's actions menu:
 
 ## Full-text search and bottom-bar redesign (spec 0021)
 
-The bottom of every screen becomes a persistent bar with a wide search field, and search finds notes
+The bottom of every screen becomes a persistent bar with a wide search field, and search finds thoughts
 by their whole text, not just the title.
 
-- **Persistent bottom bar.** A shared bar across the list, folder, and note-detail screens: a SEARCH
+- **Persistent bottom bar.** A shared bar across the list, folder, and thought-detail screens: a SEARCH
   FIELD filling most of the width on the left, ICON-ONLY action buttons on the right (text labels
-  dropped to make room). List/folder screens show new-note + record; the note-detail screen shows
+  dropped to make room). List/folder screens show new-thought + record; the thought-detail screen shows
   resume (only when resuming applies per the audio-retention setting). The record/resume icon keeps its
   prominent affordance without a text label, and every now-unlabeled button keeps its accessibility
-  label ("New note", "Record", "Resume recording", "Search notes"). The bar is ONE component; each
+  label ("New thought", "Record", "Resume recording", "Search thoughts"). The bar is ONE component; each
   screen passes in its own right-side actions rather than forking it.
-- **Full-text search.** Typing filters to notes whose TITLE or ANY body paragraph contains the query -
+- **Full-text search.** Typing filters to thoughts whose TITLE or ANY body paragraph contains the query -
   case-insensitive AND diacritic-insensitive, substring (not title-only). Search is GLOBAL across the
-  whole folder tree, shown as a flat result list; tapping a result opens that note, and clearing the
-  field restores the normal folder view. It reuses the notes the store already loads (no separate
-  index). Searching from the note-detail bar performs the same global search and routes to the results,
-  so search is reachable from anywhere. The match logic is the pure, unit-tested `NoteSearch`.
-- **Empty state.** A list or folder with no notes shows a centered call to action instead of an empty
-  list: the RECORD button in the middle WITH its text label and a NEW-NOTE button directly below it
+  whole folder tree, shown as a flat result list; tapping a result opens that thought, and clearing the
+  field restores the normal folder view. It reuses the thoughts the store already loads (no separate
+  index). Searching from the thought-detail bar performs the same global search and routes to the results,
+  so search is reachable from anywhere. The match logic is the pure, unit-tested `ThoughtSearch`.
+- **Empty state.** A list or folder with no thoughts shows a centered call to action instead of an empty
+  list: the RECORD button in the middle WITH its text label and a NEW-THOUGHT button directly below it
   (the one place these keep labels). A non-empty store filtered to zero matches shows a "no matches"
   state with the search field still visible. The state selection (empty / results / no-matches /
   normal) is the pure, unit-tested `FolderScreenState`.

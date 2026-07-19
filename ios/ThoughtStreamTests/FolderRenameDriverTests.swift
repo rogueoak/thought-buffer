@@ -2,20 +2,20 @@ import XCTest
 @testable import ThoughtStream
 
 /// Folder rename through the async seam the UI calls (spec 0021 bug fix). The store-level rename is
-/// already covered (`NoteStoreTests`/`ICloudNoteStoreTests`); these prove that driving it through
+/// already covered (`ThoughtStoreTests`/`ICloudThoughtStoreTests`); these prove that driving it through
 /// `StreamFeed.renameFolder(at:to:)` - the exact call the folder screen makes - renames the folder on
-/// disk, moves its notes with it, RETURNS the applied name, and republishes so the list reflects the
+/// disk, moves its thoughts with it, RETURNS the applied name, and republishes so the list reflects the
 /// new location. A regression here would be the rename appearing to do nothing in the UI.
 @MainActor
 final class FolderRenameDriverTests: XCTestCase {
     private var tempDir: URL!
-    private var store: NoteStore!
+    private var store: ThoughtStore!
     private var feed: StreamFeed!
 
     override func setUpWithError() throws {
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("FolderRenameDriverTests-\(UUID().uuidString)", isDirectory: true)
-        store = NoteStore(directory: tempDir)
+        store = ThoughtStore(directory: tempDir)
         feed = StreamFeed(store: store)
     }
 
@@ -25,12 +25,12 @@ final class FolderRenameDriverTests: XCTestCase {
         }
     }
 
-    private func note(_ title: String, folder: [String]) -> Note {
-        Note(title: title, paragraphs: ["body"], createdAt: Date(), folderPath: folder)
+    private func thought(_ title: String, folder: [String]) -> Thought {
+        Thought(title: title, paragraphs: ["body"], createdAt: Date(), folderPath: folder)
     }
 
     func testRenameFolderThroughFeedRenamesOnDiskAndReturnsName() async throws {
-        try store.save(note("in old", folder: ["Old"]))
+        try store.save(thought("in old", folder: ["Old"]))
         await feed.start()
 
         let applied = await feed.renameFolder(at: ["Old"], to: "New")
@@ -40,16 +40,16 @@ final class FolderRenameDriverTests: XCTestCase {
         // ... the folder is renamed on disk (old gone, new present) ...
         XCTAssertFalse(store.folders(at: []).contains("Old"))
         XCTAssertTrue(store.folders(at: []).contains("New"))
-        // ... the note moved with it (its folderPath is now the new name) ...
+        // ... the thought moved with it (its folderPath is now the new name) ...
         let moved = try XCTUnwrap(store.loadAll().first)
         XCTAssertEqual(moved.folderPath, ["New"])
         // ... and the feed republished so the list reflects the move.
-        XCTAssertEqual(feed.notes.first?.folderPath, ["New"])
+        XCTAssertEqual(feed.thoughts.first?.folderPath, ["New"])
     }
 
     func testRenameToTakenSiblingReturnsNilAndDoesNotClobber() async throws {
-        try store.save(note("in old", folder: ["Old"]))
-        try store.save(note("in taken", folder: ["Taken"]))
+        try store.save(thought("in old", folder: ["Old"]))
+        try store.save(thought("in taken", folder: ["Taken"]))
         await feed.start()
 
         let applied = await feed.renameFolder(at: ["Old"], to: "Taken")
@@ -62,7 +62,7 @@ final class FolderRenameDriverTests: XCTestCase {
     }
 
     func testRenameToInvalidNameReturnsNil() async throws {
-        try store.save(note("in old", folder: ["Old"]))
+        try store.save(thought("in old", folder: ["Old"]))
         await feed.start()
 
         // A name that sanitizes to empty (a bare separator) is rejected; the folder is untouched.

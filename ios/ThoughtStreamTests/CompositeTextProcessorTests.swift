@@ -36,8 +36,8 @@ final class CompositeTextProcessorTests: XCTestCase {
     func testCommandAtEndSplitsAndCommitsPreText() {
         let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [])
         XCTAssertEqual(
-            processor.process("here is my note Mira new note"),
-            .split(preText: "here is my note", command: .command(.newNote))
+            processor.process("here is my thought Mira new thought"),
+            .split(preText: "here is my thought", command: .command(.newThought))
         )
     }
 
@@ -50,7 +50,7 @@ final class CompositeTextProcessorTests: XCTestCase {
             SpellingOverride(from: "Nova", to: "SHOULD_NOT_APPEAR"),
             SpellingOverride(from: "last", to: "SHOULD_NOT_APPEAR"),
             SpellingOverride(from: "new", to: "SHOULD_NOT_APPEAR"),
-            SpellingOverride(from: "note", to: "SHOULD_NOT_APPEAR"),
+            SpellingOverride(from: "thought", to: "SHOULD_NOT_APPEAR"),
         ]
         let processor = CompositeTextProcessor(controlWord: "Nova", overrides: overrides)
         XCTAssertEqual(
@@ -68,17 +68,17 @@ final class CompositeTextProcessorTests: XCTestCase {
     // MARK: - Spelling applies to the PRE-KEYWORD dictation but never the command (feedback 0006 (f))
 
     func testSpellingAppliesToPreTextButNotCommand() {
-        // "Shay" -> "Shea" applies to the dictation before the control word. "new"/"note" overrides
+        // "Shay" -> "Shea" applies to the dictation before the control word. "new"/"thought" overrides
         // (bogus, to prove the point) must NOT touch the command portion.
         let overrides = [
             SpellingOverride(from: "Shay", to: "Shea"),
             SpellingOverride(from: "new", to: "MANGLED"),
-            SpellingOverride(from: "note", to: "MANGLED"),
+            SpellingOverride(from: "thought", to: "MANGLED"),
         ]
         let processor = CompositeTextProcessor(controlWord: "Mira", overrides: overrides)
         XCTAssertEqual(
-            processor.process("Call Shay tomorrow Mira new note"),
-            .split(preText: "Call Shea tomorrow", command: .command(.newNote))
+            processor.process("Call Shay tomorrow Mira new thought"),
+            .split(preText: "Call Shea tomorrow", command: .command(.newThought))
         )
     }
 
@@ -118,8 +118,8 @@ final class CompositeTextProcessorTests: XCTestCase {
         let overrides = [SpellingOverride(from: "Shay", to: "Shea")]
         let processor = CompositeTextProcessor(controlWord: "Mira", overrides: overrides, removesFillers: true)
         XCTAssertEqual(
-            processor.process("um call Shay Mira new note"),
-            .split(preText: "Call Shea", command: .command(.newNote))
+            processor.process("um call Shay Mira new thought"),
+            .split(preText: "Call Shea", command: .command(.newThought))
         )
     }
 
@@ -138,8 +138,8 @@ final class CompositeTextProcessorTests: XCTestCase {
         // the view model's "command only" case); the whole segment is NOT dropped.
         let processor = CompositeTextProcessor(controlWord: "Mira", overrides: [], removesFillers: true)
         XCTAssertEqual(
-            processor.process("um uh Mira new note"),
-            .split(preText: "", command: .command(.newNote))
+            processor.process("um uh Mira new thought"),
+            .split(preText: "", command: .command(.newThought))
         )
     }
 

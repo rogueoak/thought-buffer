@@ -21,9 +21,9 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Thought Stream uses the microphone to hear you and turn your words into notes. Audio stays on your device.</string>
+	<string>Thought Stream uses the microphone to hear you and turn your words into thoughts. Audio stays on your device.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Thought Stream turns your speech into notes on device. Nothing you say leaves your phone.</string>
+	<string>Thought Stream turns your speech into thoughts on device. Nothing you say leaves your phone.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
