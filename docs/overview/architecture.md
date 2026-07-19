@@ -130,7 +130,16 @@ How the system is built and why.
   behind the unchanged `SpeechCaptureService` protocol, so the view model and its tests did not
   change. The transcriber reports VOLATILE results (in-progress, mapped to `.partial`) and FINALIZED
   results (stable, immutable, each mapped to a `.finalizedSegment` with its audio `CMTimeRange`), so
-  there is NO utterance-boundary guessing: one finalized result is one paragraph. The old heuristic
+  there is NO utterance-boundary guessing. A finalized result is NOT its own paragraph, though
+  (feedback 0012): the `.finalizedSegment` event also carries the raw analysis-relative
+  `startSeconds` / `durationSeconds` and an `isAnalysisStart` flag (true for the first finalized result
+  of each analysis - set in `beginAnalysis`, cleared after the first finalized emit - so a pause/resume
+  seam, where analysis time resets to ~0, forces a paragraph break instead of a bogus negative gap).
+  The view model's pure `ParagraphGrouper` groups consecutive segments into paragraphs by the SILENCE
+  GAP between them (default 1.5s, a device-tunable constant): a mid-thought breath flows into the
+  current paragraph, a real pause breaks. Lightweight `#if DEBUG` emit-timestamp instrumentation and a
+  named tap-buffer constant (`tapBufferSize`) leave a device latency pass a measurement hook and a
+  tuning lever. The old heuristic
   layer it replaced (`isReset`, `strippingCommittedPrefix`, `committedThisTask`, `resolveEnd`,
   `resolveTaskEndCommit`, task restart) is gone. The mic is tapped so buffers can be teed to the
   recording writer and level meter and converted into the analyzer's format for an
@@ -197,7 +206,11 @@ How the system is built and why.
 - `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
   logic: it drives `DictationView` from the speech service, routes finalized segments through the
   `TextProcessor`, executes `MiraCommand`s (note mutations, new note save+reset, read-back), and
-  saves through the store. It keeps a `paragraphTimings` array in lockstep with `paragraphs`
+  saves through the store. Finalized dictation text is grouped into paragraphs by a pure
+  `ParagraphGrouper` (feedback 0012) rather than one-paragraph-per-result: the view model calls
+  `grouper.decide(...)` with the segment's raw analysis-relative seconds and analysis-start flag and
+  either commits a new paragraph or appends to the current one (joined with a space, timings merged so
+  the range spans first-start-through-last-end). It keeps a `paragraphTimings` array in lockstep with `paragraphs`
   (spec 0007), so every note mutation (commit, remove-sentence/paragraph, fold-partial) updates
   both, and builds the saved `Note` with its recording (adopted from the service's temp file into
   the store) and timings at `finish()`. Mid-session "new note" saves the transcript only - the one

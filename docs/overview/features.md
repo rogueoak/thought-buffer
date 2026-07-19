@@ -423,3 +423,25 @@ iOS 26.
   model installs once (a one-time download), then works offline.
 - **Same everywhere else.** Notes, storage, iCloud, Mira commands, CarPlay, recording + playback, and
   editing/resume are unchanged - the swap sits behind the existing capture protocol.
+
+## Flowing, Notes-style paragraph breaks (feedback 0012)
+
+Dictation now flows like the native Notes app instead of breaking a paragraph on every finalized
+result. The iOS 26 transcriber finalizes on a short mid-thought breath, so the previous "one
+finalized result = one paragraph" rule split a single spoken sentence into several paragraphs.
+
+- **Pause-based grouping.** A pure `ParagraphGrouper` decides, per finalized segment, whether it
+  FLOWS into the current paragraph or STARTS a new one, based on the silence gap between the previous
+  segment's end and the new one's start (from the recognizer's time range, present even for a
+  text-only session). Below the threshold (default 1.5s, a single device-tunable constant) the text
+  joins the current paragraph with a space; at or above it, a new paragraph begins. A mid-thought
+  breath stays in one paragraph; a real pause between distinct thoughts still breaks.
+- **Resume-seam breaks.** A pause/resume restarts analysis (its time resets to ~0), so the first
+  segment after a resume always starts a new paragraph rather than mis-merging across the seam.
+- **Merged timings.** When segments merge into one paragraph, their recorded ranges merge into one
+  contiguous range (first start through last end), so playback still seeks the paragraph correctly
+  and the per-paragraph timing invariant holds.
+- **Latency.** Lightweight `#if DEBUG` timestamp instrumentation at each partial/final emit gives a
+  later device pass a way to measure real cadence; the mic tap buffer is a named constant so it can
+  be tuned there. Final latency tuning is deferred to that device session (release builds carry no
+  instrumentation overhead).

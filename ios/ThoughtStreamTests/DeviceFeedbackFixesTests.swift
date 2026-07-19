@@ -137,14 +137,14 @@ final class PauseRestartPreservationTests: XCTestCase {
     func testPriorParagraphsAndDanglingPartialSurviveLongPause() {
         let model = makeModel()
         // Two paragraphs already committed.
-        service.emit(.finalizedSegment("P1", range: nil))
-        service.emit(.finalizedSegment("P2", range: nil))
+        service.emitFinalized("P1", range: nil)
+        service.emitFinalized("P2", range: nil)
         // The current task accumulates a growing partial, then ends with error+nil result: the
         // service commits the tracked partial "hello world" as a finalized segment.
         service.emit(.partial("he"))
         service.emit(.partial("hello"))
         service.emit(.partial("hello world"))
-        service.emit(.finalizedSegment("hello world", range: nil))
+        service.emitFinalized("hello world", range: nil)
         XCTAssertEqual(model.paragraphs, ["P1", "P2", "hello world"],
                        "prior paragraphs and the dangling partial all survive the long-pause restart")
     }
@@ -180,7 +180,7 @@ final class PauseRestartPreservationTests: XCTestCase {
         // Natural pause: the recognition task ENDS. Post-fix the service emits the in-progress text
         // as a finalized segment (the bug emitted it as a partial, so the next task's empty partial
         // wiped it out).
-        service.emit(.finalizedSegment("Remember to call the supplier", range: nil))
+        service.emitFinalized("Remember to call the supplier", range: nil)
         XCTAssertEqual(model.paragraphs, ["Remember to call the supplier"])
         XCTAssertEqual(model.partial, "", "committing a paragraph clears the live partial")
 
@@ -190,7 +190,7 @@ final class PauseRestartPreservationTests: XCTestCase {
                        "the fresh task's partial must not lose the committed paragraph")
 
         // Finalize the second segment too.
-        service.emit(.finalizedSegment("and draft the email", range: nil))
+        service.emitFinalized("and draft the email", range: nil)
         XCTAssertEqual(model.paragraphs, [
             "Remember to call the supplier",
             "and draft the email",
@@ -210,7 +210,7 @@ final class PauseRestartPreservationTests: XCTestCase {
         model.simulatePartial("P1")
         XCTAssertEqual(model.partial, "P1")
         // The same segment finalizes as "P1 Mira new note": commit "P1" once, then start a new note.
-        service.emit(.finalizedSegment("P1 Mira new note", range: nil))
+        service.emitFinalized("P1 Mira new note", range: nil)
 
         // The just-saved note is "P1" ONCE (not ["P1","P1"]), and a fresh empty note is now running.
         let saved = try XCTUnwrap(store.notes.last)
@@ -232,7 +232,7 @@ final class PauseRestartPreservationTests: XCTestCase {
         model.simulatePartial("remember the milk")
         XCTAssertEqual(model.partial, "remember the milk")
         // The accumulating segment finalizes with the command tail.
-        service.emit(.finalizedSegment("remember the milk Mira read that back to me", range: nil))
+        service.emitFinalized("remember the milk Mira read that back to me", range: nil)
 
         // Committed exactly once, and read-back spoke THAT paragraph (not a stale duplicate).
         XCTAssertEqual(model.paragraphs, ["remember the milk"],
@@ -245,9 +245,9 @@ final class PauseRestartPreservationTests: XCTestCase {
     func testCommittedTextAcrossRestartSurvivesSave() throws {
         let model = makeModel()
         service.emit(.partial("First thought"))
-        service.emit(.finalizedSegment("First thought", range: nil))
+        service.emitFinalized("First thought", range: nil)
         service.emit(.partial("Second thought"))
-        service.emit(.finalizedSegment("Second thought", range: nil))
+        service.emitFinalized("Second thought", range: nil)
 
         let note = try XCTUnwrap(try model.finish())
         XCTAssertEqual(note.paragraphs, ["First thought", "Second thought"])
@@ -262,14 +262,14 @@ final class PauseRestartPreservationTests: XCTestCase {
         let model = makeModel()
 
         // Two paragraphs are already committed to the note.
-        service.emit(.finalizedSegment("P1", range: nil))
-        service.emit(.finalizedSegment("P2", range: nil))
+        service.emitFinalized("P1", range: nil)
+        service.emitFinalized("P2", range: nil)
         XCTAssertEqual(model.paragraphs, ["P1", "P2"])
 
         // The user keeps speaking; the recognition task then ENDS at a natural pause and emits the
         // in-progress words as a finalized segment (the commit-on-end fix).
         service.emit(.partial("P3"))
-        service.emit(.finalizedSegment("P3", range: nil))
+        service.emitFinalized("P3", range: nil)
         XCTAssertEqual(model.paragraphs, ["P1", "P2", "P3"],
                        "the pause-seam paragraph must append, not replace committed text")
 
@@ -289,14 +289,14 @@ final class PauseRestartPreservationTests: XCTestCase {
     /// no words never appends an empty paragraph.
     func testEmptyErrorEndDoesNotCreateBlankParagraph() {
         let model = makeModel()
-        service.emit(.finalizedSegment("P1", range: nil))
+        service.emitFinalized("P1", range: nil)
         XCTAssertEqual(model.paragraphs, ["P1"])
 
         // An error-ended task with no usable text arrives as an (empty / whitespace) finalized
         // segment. It must be dropped, not appended as a blank paragraph.
-        service.emit(.finalizedSegment("", range: nil))
-        service.emit(.finalizedSegment("   ", range: nil))
-        service.emit(.finalizedSegment("\n\t ", range: nil))
+        service.emitFinalized("", range: nil)
+        service.emitFinalized("   ", range: nil)
+        service.emitFinalized("\n\t ", range: nil)
 
         XCTAssertEqual(model.paragraphs, ["P1"], "an empty error-end must not append a blank paragraph")
     }
@@ -373,6 +373,25 @@ private final class EventDrivingCaptureService: SpeechCaptureService {
     var onEvent: ((SpeechCaptureEvent) -> Void)?
 
     func emit(_ event: SpeechCaptureEvent) { onEvent?(event) }
+
+    /// Emit a finalized segment. `isAnalysisStart` defaults to true and the raw seconds to non-finite,
+    /// so each emitted segment is its own paragraph (the pre-0012 "one finalized = one paragraph"
+    /// behavior) unless a grouping test passes real gap timing (feedback 0012).
+    func emitFinalized(
+        _ text: String,
+        range: ParagraphTiming? = nil,
+        startSeconds: Double = .nan,
+        durationSeconds: Double = .nan,
+        isAnalysisStart: Bool = true
+    ) {
+        onEvent?(.finalizedSegment(
+            text,
+            range: range,
+            startSeconds: startSeconds,
+            durationSeconds: durationSeconds,
+            isAnalysisStart: isAnalysisStart
+        ))
+    }
 
     func requestAuthorization() async -> SpeechCaptureError? { nil }
     func availabilityError() -> SpeechCaptureError? { nil }
@@ -491,7 +510,7 @@ final class ResumeAndEditTests: XCTestCase {
         XCTAssertEqual(model.paragraphs, ["Alpha", "Beta"], "resume seeds the existing paragraphs")
 
         // Continue dictating one more paragraph, then stop and save.
-        service.emit(.finalizedSegment("Gamma", range: nil))
+        service.emitFinalized("Gamma", range: nil)
         let saved = try XCTUnwrap(try model.finish())
 
         XCTAssertEqual(saved.id, original.id, "resume continues the same note")
@@ -507,8 +526,8 @@ final class ResumeAndEditTests: XCTestCase {
 
     func testApplyEditedTranscriptReplacesParagraphsAndClearsPartial() {
         let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
-        service.emit(.finalizedSegment("First", range: nil))
-        service.emit(.finalizedSegment("Second", range: nil))
+        service.emitFinalized("First", range: nil)
+        service.emitFinalized("Second", range: nil)
         service.emit(.partial("in progress"))
 
         model.applyEditedTranscript("First edited\n\nSecond\n\nThird")
@@ -519,15 +538,15 @@ final class ResumeAndEditTests: XCTestCase {
 
     func testEditableTranscriptJoinsParagraphsAndPartialWithBlankLines() {
         let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
-        service.emit(.finalizedSegment("Para one", range: nil))
+        service.emitFinalized("Para one", range: nil)
         service.emit(.partial("still typing"))
         XCTAssertEqual(model.editableTranscript, "Para one\n\nstill typing")
     }
 
     func testEditableTranscriptWithNoPartialIsJustParagraphs() {
         let model = DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
-        service.emit(.finalizedSegment("Para one", range: nil))
-        service.emit(.finalizedSegment("Para two", range: nil))
+        service.emitFinalized("Para one", range: nil)
+        service.emitFinalized("Para two", range: nil)
         XCTAssertEqual(model.editableTranscript, "Para one\n\nPara two")
     }
 
@@ -540,7 +559,7 @@ final class ResumeAndEditTests: XCTestCase {
         let model = DictationViewModel(
             service: service, store: store, processor: PassthroughTextProcessor(),
             recordsAudio: false, resuming: original)
-        service.emit(.finalizedSegment("Gamma", range: nil))
+        service.emitFinalized("Gamma", range: nil)
 
         let saved = try XCTUnwrap(try model.finish())
         XCTAssertEqual(saved.paragraphs, ["Alpha", "Beta", "Gamma"])
@@ -581,9 +600,9 @@ final class ResumeAndEditTests: XCTestCase {
             service: service, store: store, processor: MiraTextProcessor(),
             recordsAudio: false, resuming: original)
         // "new note" saves the resumed note (keeping its audio) and starts a fresh one.
-        service.emit(.finalizedSegment("Mira new note", range: nil))
+        service.emitFinalized("Mira new note", range: nil)
         // The fresh note now captures new text and stops.
-        service.emit(.finalizedSegment("Totally new", range: nil))
+        service.emitFinalized("Totally new", range: nil)
         let fresh = try XCTUnwrap(try model.finish())
 
         XCTAssertEqual(fresh.paragraphs, ["Totally new"])
@@ -654,5 +673,111 @@ final class SpeechAnalyzerMappingTests: XCTestCase {
         XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 0, inputRate: 48000, outputRate: 16000), 0)
         XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 0, outputRate: 16000), 0)
         XCTAssertEqual(SpeechAnalyzerService.convertedCapacity(frameLength: 4800, inputRate: 48000, outputRate: 0), 0)
+    }
+}
+
+// MARK: - Feedback 0012: pause-based paragraph grouping in the view model
+
+/// Proves the flowing, Notes-style paragraph grouping at the service->view-model event seam: a
+/// mid-thought breath (small inter-segment gap) lands in ONE paragraph; a real pause (large gap)
+/// breaks into two; a resume-seam segment (analysis start) always starts a new paragraph. Driven
+/// through the injected event seam, no live audio.
+@MainActor
+final class ParagraphGroupingViewModelTests: XCTestCase {
+    private var store: MemoryNoteStore!
+    private var service: EventDrivingCaptureService!
+
+    override func setUp() {
+        super.setUp()
+        store = MemoryNoteStore()
+        service = EventDrivingCaptureService()
+    }
+
+    private func makeModel() -> DictationViewModel {
+        DictationViewModel(service: service, store: store, processor: PassthroughTextProcessor())
+    }
+
+    /// Two finalized segments with a SMALL inter-gap flow into ONE paragraph, joined by a single space.
+    /// (The precise merged TIMING - first start through last end - is asserted in
+    /// `DualCaptureViewModelTests.testSmallGapMergesParagraphsAndTimings`, which has the recording stub.)
+    func testSmallGapMergesIntoOneParagraph() {
+        let model = makeModel()
+        // First segment: 0.0..2.0 (analysis start).
+        service.emitFinalized(
+            "Remember to call the supplier", range: nil,
+            startSeconds: 0.0, durationSeconds: 2.0, isAnalysisStart: true)
+        // A breath: next starts at 2.5 (0.5s gap), ends at 3.5 -> same paragraph.
+        service.emitFinalized(
+            "before noon", range: nil,
+            startSeconds: 2.5, durationSeconds: 1.0, isAnalysisStart: false)
+
+        XCTAssertEqual(model.paragraphs, ["Remember to call the supplier before noon"],
+                       "a mid-thought breath stays in one paragraph")
+    }
+
+    /// A small-gap merge keeps paragraphs and timings in lockstep: after two merged segments there is
+    /// still exactly ONE paragraph, and a text-only save round-trips it intact.
+    func testSmallGapKeepsTimingsAndParagraphsInLockstep() throws {
+        let model = makeModel()
+        service.emitFinalized(
+            "One", range: ParagraphTiming(start: 0.0, duration: 1.0),
+            startSeconds: 0.0, durationSeconds: 1.0, isAnalysisStart: true)
+        service.emitFinalized(
+            "two", range: ParagraphTiming(start: 1.2, duration: 1.0),
+            startSeconds: 1.2, durationSeconds: 1.0, isAnalysisStart: false)
+        // One paragraph after a small-gap merge; a text-only finish keeps it as one paragraph.
+        XCTAssertEqual(model.paragraphs, ["One two"])
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.paragraphs, ["One two"], "arrays stay in lockstep: one merged paragraph")
+    }
+
+    /// Two finalized segments with a LARGE inter-gap land in TWO paragraphs.
+    func testLargeGapStartsNewParagraph() {
+        let model = makeModel()
+        service.emitFinalized(
+            "First thought", range: nil,
+            startSeconds: 0.0, durationSeconds: 1.0, isAnalysisStart: true)
+        // A clear pause: next starts at 3.0 (2.0s gap) -> new paragraph.
+        service.emitFinalized(
+            "Second thought", range: nil,
+            startSeconds: 3.0, durationSeconds: 1.0, isAnalysisStart: false)
+
+        XCTAssertEqual(model.paragraphs, ["First thought", "Second thought"],
+                       "a clear pause breaks into two paragraphs")
+    }
+
+    /// A resume-seam segment (analysis start, even with a tiny raw gap that would otherwise merge)
+    /// starts a new paragraph, so a pause/resume never mis-merges across the seam.
+    func testResumeSeamStartsNewParagraph() {
+        let model = makeModel()
+        // A paragraph in the first analysis, ending at 10.0.
+        service.emitFinalized(
+            "Before pause", range: nil,
+            startSeconds: 9.0, durationSeconds: 1.0, isAnalysisStart: true)
+        // Resume: analysis time resets to ~0.1. Its raw gap against 10.0 is a large negative, but the
+        // analysis-start flag must force a NEW paragraph, not an append.
+        service.emitFinalized(
+            "After resume", range: nil,
+            startSeconds: 0.1, durationSeconds: 1.0, isAnalysisStart: true)
+
+        XCTAssertEqual(model.paragraphs, ["Before pause", "After resume"],
+                       "a resume seam always starts a fresh paragraph")
+    }
+
+    /// A merged (small-gap) paragraph whose last timing was nil (recording off / no range) leaves the
+    /// timing nil - it plays back via text-to-speech - and never grows the timings array out of step.
+    func testMergeWithNilTimingLeavesTimingNilAndArraysAligned() throws {
+        let model = makeModel()
+        service.emitFinalized(
+            "One", range: nil,
+            startSeconds: 0.0, durationSeconds: 1.0, isAnalysisStart: true)
+        service.emitFinalized(
+            "two", range: nil,
+            startSeconds: 1.2, durationSeconds: 1.0, isAnalysisStart: false)
+        XCTAssertEqual(model.paragraphs, ["One two"])
+        // A text-only save proves the merged paragraph is intact and singular.
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.paragraphs, ["One two"])
+        XCTAssertNil(saved.audioFileName, "no recording means the merged paragraph stays text-only")
     }
 }

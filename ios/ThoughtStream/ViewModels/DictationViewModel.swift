@@ -159,6 +159,12 @@ final class DictationViewModel: ObservableObject {
     /// aligned. Trailing nils are trimmed when the note is built.
     private var paragraphTimings: [ParagraphTiming?] = []
 
+    /// Decides whether a finalized segment flows into the current paragraph or starts a new one, by the
+    /// silence gap between segments (feedback 0012). All the policy lives in the pure grouper; the view
+    /// model only routes on its decision. Kept per session (never reset mid-note) so the running gap
+    /// spans the whole dictation; a pause/resume seam is handled by the service's analysis-start flag.
+    private var grouper = ParagraphGrouper()
+
     /// How long the command chip stays up before auto-dismissing.
     private let bannerDuration: Duration = .seconds(2)
     private var bannerTask: Task<Void, Never>?
@@ -466,8 +472,14 @@ final class DictationViewModel: ObservableObject {
         switch event {
         case .partial(let text):
             partial = partialText(from: processor.process(text))
-        case .finalizedSegment(let text, let range):
-            handleFinalized(text, range: range)
+        case .finalizedSegment(let text, let range, let startSeconds, let durationSeconds, let isAnalysisStart):
+            handleFinalized(
+                text,
+                range: range,
+                startSeconds: startSeconds,
+                durationSeconds: durationSeconds,
+                isAnalysisStart: isAnalysisStart
+            )
         case .level(let value):
             // Simple smoothing so bars glide rather than jump.
             level = level * 0.6 + value * 0.4
@@ -481,11 +493,36 @@ final class DictationViewModel: ObservableObject {
     /// SPLIT it into a leading dictation paragraph plus a command (feedback 0006). On device a whole
     /// passage accumulates into one segment, so a spoken command lands mid/end of it, not at its
     /// start; the split commits the pre-keyword words and then runs (or drops) the command.
-    private func handleFinalized(_ text: String, range: ParagraphTiming?) {
+    ///
+    /// Feedback 0012: dictation text no longer becomes one paragraph per finalized result. The pure
+    /// `ParagraphGrouper` decides, from the silence gap between segments, whether the text FLOWS into
+    /// the current paragraph or STARTS a new one, so a mid-thought breath stays in one paragraph and
+    /// only a real pause breaks. The grouper is advanced for EVERY finalized segment (so its running gap
+    /// stays honest across a command split too), but its decision is used only for plain dictation text;
+    /// a command split is always its own boundary. `startSeconds` / `durationSeconds` default to a
+    /// non-finite value and `isAnalysisStart` to true so the injection test hooks and any caller without
+    /// timing keep the old "one segment = one paragraph" behavior.
+    private func handleFinalized(
+        _ text: String,
+        range: ParagraphTiming?,
+        startSeconds: Double = .nan,
+        durationSeconds: Double = .nan,
+        isAnalysisStart: Bool = true
+    ) {
+        let decision = grouper.decide(
+            startSeconds: startSeconds,
+            durationSeconds: durationSeconds,
+            isAnalysisStart: isAnalysisStart
+        )
         let segment = processor.process(text)
         switch segment {
         case .text(let value):
-            commitParagraph(value, range: range)
+            switch decision {
+            case .newParagraph:
+                commitParagraph(value, range: range)
+            case .appendToCurrent:
+                appendToCurrentParagraph(value, range: range)
+            }
             partial = ""
         case .split(let preText, let outcome):
             // The dictation before the control word is a real paragraph; commit it (guarded empty).
@@ -542,6 +579,35 @@ final class DictationViewModel: ObservableObject {
         // Keep timings in lockstep with paragraphs: append the range (or a nil placeholder) so the
         // two arrays never drift, even for a paragraph committed without a recording range.
         paragraphTimings.append(range)
+    }
+
+    /// Flow a finalized segment into the CURRENT (last) paragraph rather than starting a new one
+    /// (feedback 0012), joining with a single space so a mid-thought breath reads as one paragraph.
+    /// With no current paragraph yet (an append decision on an empty note - defensive; the grouper
+    /// forces a new paragraph for the first segment) it falls back to committing a new paragraph.
+    ///
+    /// Timings merge to stay in lockstep with `paragraphs`: when BOTH the last paragraph's timing and
+    /// this segment's absolute range are present, the last timing is EXTENDED so its duration spans from
+    /// its own start through this segment's absolute end - one contiguous range for the merged paragraph,
+    /// so playback still seeks correctly. If the last paragraph had no timing (a folded partial, or
+    /// recording off), it is left nil (this text-only append plays back via text-to-speech), and the
+    /// arrays never grow apart - an append never adds a timing slot.
+    private func appendToCurrentParagraph(_ text: String, range: ParagraphTiming?) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let lastIndex = paragraphs.indices.last else {
+            commitParagraph(trimmed, range: range)
+            return
+        }
+        paragraphs[lastIndex] = paragraphs[lastIndex] + " " + trimmed
+        // Extend the merged paragraph's timing through this segment's end, when both are present.
+        if paragraphTimings.indices.contains(lastIndex),
+           let last = paragraphTimings[lastIndex],
+           let range {
+            let mergedEnd = range.start + range.duration
+            paragraphTimings[lastIndex] = ParagraphTiming(
+                start: last.start, duration: mergedEnd - last.start)
+        }
     }
 
     // MARK: - Command execution

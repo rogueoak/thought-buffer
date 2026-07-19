@@ -60,6 +60,26 @@ final class SpeechAnalyzerService: SpeechCaptureService {
     /// time (same role as the old request offset).
     private var analyzerAudioOffset: Double = 0
 
+    /// True until the FIRST finalized result of the current analysis is emitted, then false. Set in
+    /// `beginAnalysis` and cleared after the first finalized emit, so the view model's grouper can treat
+    /// a pause/resume seam (where analysis time resets to ~0) as an unconditional paragraph break rather
+    /// than measuring a bogus negative gap across it (feedback 0012).
+    private var awaitingFirstFinal = false
+
+    /// Microphone tap buffer size, in frames. ~256 ms at 16 kHz. Named so a later device latency pass
+    /// can tune it in one place; the feedback doc (0012) defers that tuning to a device session, so the
+    /// value is unchanged here. A smaller buffer trims capture latency at the cost of more tap wakeups.
+    static let tapBufferSize: AVAudioFrameCount = 4096
+
+    /// Compile-time gate for the lightweight latency instrumentation (feedback 0012): a timestamped log
+    /// at each partial / final emit so a device pass can measure real cadence. DEBUG-only, so release
+    /// builds carry zero runtime overhead.
+    #if DEBUG
+    private static let logsEmitLatency = true
+    #else
+    private static let logsEmitLatency = false
+    #endif
+
     // MARK: - Authorization
 
     func requestAuthorization() async -> SpeechCaptureError? {
@@ -172,6 +192,9 @@ final class SpeechAnalyzerService: SpeechCaptureService {
             // This analysis starts at the current recording position, so finalized-result time ranges
             // map to absolute recording time across a pause/resume seam.
             analyzerAudioOffset = recordingWriter?.elapsedSeconds ?? 0
+            // The next finalized result is the FIRST of this analysis: flag it so the view model's
+            // grouper forces a paragraph break at the pause/resume seam (analysis time reset to ~0).
+            awaitingFirstFinal = true
 
             // Consume results (transcriber is Sendable). Volatile -> partial, final -> paragraph.
             let resultsTask = Task { [weak self] in
@@ -230,6 +253,7 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         deactivateSession()
         recordingWriter?.finish()
         analyzerAudioOffset = 0
+        awaitingFirstFinal = false
     }
 
     /// Synchronously stop the engine and tap, finish the input stream, and hand back the current
@@ -296,7 +320,7 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         let inputFormat = inputNode.outputFormat(forBus: 0)
         let converter = analyzerFormat.flatMap { AVAudioConverter(from: inputFormat, to: $0) }
         inputNode.removeTap(onBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        inputNode.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: inputFormat) { [weak self] buffer, _ in
             // Tee to the recording first (unchanged), then feed recognition.
             writer?.append(buffer)
             if let level = Self.rmsLevel(buffer) {
@@ -322,10 +346,33 @@ final class SpeechAnalyzerService: SpeechCaptureService {
         let text = String(result.text.characters)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         if result.isFinal {
-            emit(.finalizedSegment(text, range: paragraphTiming(for: result.range)))
+            // Carry the RAW analysis-relative seconds (present even without a recording) and the
+            // first-of-analysis flag so the view model's grouper can decide flow vs. break by the
+            // silence gap and force a break at a pause/resume seam (feedback 0012).
+            let isAnalysisStart = awaitingFirstFinal
+            awaitingFirstFinal = false
+            logEmit("final", startSeconds: result.range.start.seconds)
+            emit(.finalizedSegment(
+                text,
+                range: paragraphTiming(for: result.range),
+                startSeconds: result.range.start.seconds,
+                durationSeconds: result.range.duration.seconds,
+                isAnalysisStart: isAnalysisStart
+            ))
         } else {
+            logEmit("partial", startSeconds: result.range.start.seconds)
             emit(.partial(text))
         }
+    }
+
+    /// Lightweight latency instrumentation (feedback 0012): timestamp each partial / final emit so a
+    /// device pass can measure real cadence. Compiled out in release (`logsEmitLatency` is false), so it
+    /// adds no runtime overhead there. Do NOT tune latency from this - the feedback doc defers the final
+    /// tuning to a device session; this only measures.
+    private func logEmit(_ kind: String, startSeconds: Double) {
+        guard Self.logsEmitLatency else { return }
+        let now = Date().timeIntervalSince1970
+        print(String(format: "[dictation-latency] %@ emit at wall=%.3f rangeStart=%.3f", kind, now, startSeconds))
     }
 
     /// Map a finalized result's audio `CMTimeRange` to a `ParagraphTiming` in absolute recording time.

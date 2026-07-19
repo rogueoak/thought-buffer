@@ -57,6 +57,31 @@ final class DualCaptureViewModelTests: XCTestCase {
         XCTAssertEqual(note.timing(forParagraphAt: 1)?.duration, 3.5)
     }
 
+    /// Feedback 0012: two small-gap segments merge into ONE paragraph, and their timings merge into one
+    /// contiguous range - the first segment's start through the second segment's absolute end - so
+    /// playback still seeks the merged paragraph correctly and the arrays stay in lockstep.
+    func testSmallGapMergesParagraphsAndTimings() throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let model = DictationViewModel(service: service, store: store, recordsAudio: true)
+
+        // First segment 0.0..2.0 (analysis start), then a breath: 2.5..3.5 (0.5s gap) -> same paragraph.
+        service.emitFinalized(
+            "Remember to call the supplier", range: ParagraphTiming(start: 0.0, duration: 2.0),
+            startSeconds: 0.0, durationSeconds: 2.0, isAnalysisStart: true)
+        service.emitFinalized(
+            "before noon", range: ParagraphTiming(start: 2.5, duration: 1.0),
+            startSeconds: 2.5, durationSeconds: 1.0, isAnalysisStart: false)
+
+        let note = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(note.paragraphs, ["Remember to call the supplier before noon"],
+                       "a mid-thought breath stays in one paragraph")
+        XCTAssertEqual(note.timings.count, 1, "one timing per merged paragraph")
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.start, 0.0)
+        // Merged duration spans the first start (0.0) through the second's end (3.5).
+        XCTAssertEqual(note.timing(forParagraphAt: 0)?.duration, 3.5)
+    }
+
     func testSaveAdoptsRecordingIntoStore() throws {
         let service = RecordingStubCaptureService()
         let tempURL = try makeTempRecordingURL()
@@ -319,8 +344,23 @@ private final class RecordingStubCaptureService: SpeechCaptureService {
     func resume() { resumeCount += 1 }
     func stop() {}
 
-    func emitFinalized(_ text: String, range: ParagraphTiming?) {
-        onEvent?(.finalizedSegment(text, range: range))
+    /// Emit a finalized segment. `isAnalysisStart` defaults to true and the raw seconds to non-finite,
+    /// so each emitted segment is its own paragraph (the pre-0012 "one finalized = one paragraph"
+    /// behavior these dual-capture tests assert) unless a grouping test passes real gap timing.
+    func emitFinalized(
+        _ text: String,
+        range: ParagraphTiming?,
+        startSeconds: Double = .nan,
+        durationSeconds: Double = .nan,
+        isAnalysisStart: Bool = true
+    ) {
+        onEvent?(.finalizedSegment(
+            text,
+            range: range,
+            startSeconds: startSeconds,
+            durationSeconds: durationSeconds,
+            isAnalysisStart: isAnalysisStart
+        ))
     }
 }
 
