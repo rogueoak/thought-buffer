@@ -89,6 +89,62 @@ final class RecordingWriterTests: XCTestCase {
         XCTAssertNil(RecordingTiming.absolute(offset: 4.0, relative: nil))
     }
 
+    // MARK: - RecordingTiming: resume timing offset (feedback 0022)
+
+    func testOffsetResumedTimingsShiftsOnlyNewParagraphsPastExisting() {
+        // Two pre-existing paragraphs (timed against the original recording), then two newly-recorded
+        // paragraphs timed against the NEW segment (starting at ~0). After concatenation the original
+        // occupies 12.0s, so only the two new paragraphs shift right by 12.0; the old ones are untouched.
+        let timings = [
+            ParagraphTiming(start: 0.0, duration: 5.0),   // existing #1
+            ParagraphTiming(start: 5.0, duration: 7.0),   // existing #2
+            ParagraphTiming(start: 0.0, duration: 3.0),   // new #1 (new-segment-relative)
+            ParagraphTiming(start: 3.0, duration: 2.0),   // new #2
+        ]
+        let offset = RecordingTiming.offsetResumedTimings(
+            timings, existingParagraphCount: 2, existingDuration: 12.0)
+
+        XCTAssertEqual(offset.count, timings.count, "count and 1:1 alignment preserved")
+        // Pre-existing timings unchanged.
+        XCTAssertEqual(offset[0], ParagraphTiming(start: 0.0, duration: 5.0))
+        XCTAssertEqual(offset[1], ParagraphTiming(start: 5.0, duration: 7.0))
+        // New timings anchored after the existing audio (12.0 + relative start).
+        XCTAssertEqual(offset[2], ParagraphTiming(start: 12.0, duration: 3.0))
+        XCTAssertEqual(offset[3], ParagraphTiming(start: 15.0, duration: 2.0))
+    }
+
+    func testOffsetResumedTimingsLeavesZeroLengthPlaceholderInPlace() {
+        // A new paragraph that is a zero-length placeholder (text-only, e.g. a folded partial) has no real
+        // position, so shifting it would fabricate one. It stays put; a real new paragraph still shifts.
+        let timings = [
+            ParagraphTiming(start: 0.0, duration: 4.0),   // existing
+            ParagraphTiming(start: 0.0, duration: 0.0),   // new, text-only placeholder
+            ParagraphTiming(start: 1.0, duration: 2.0),   // new, real range
+        ]
+        let offset = RecordingTiming.offsetResumedTimings(
+            timings, existingParagraphCount: 1, existingDuration: 4.0)
+
+        XCTAssertEqual(offset[0], ParagraphTiming(start: 0.0, duration: 4.0), "existing untouched")
+        XCTAssertEqual(offset[1], ParagraphTiming(start: 0.0, duration: 0.0), "placeholder not fabricated")
+        XCTAssertEqual(offset[2], ParagraphTiming(start: 5.0, duration: 2.0), "real new range shifted")
+    }
+
+    func testOffsetResumedTimingsIsNoOpForNonPositiveExistingDuration() {
+        // No existing audio to sit past (a degenerate/zero duration): nothing shifts.
+        let timings = [ParagraphTiming(start: 0.0, duration: 2.0), ParagraphTiming(start: 2.0, duration: 1.0)]
+        XCTAssertEqual(
+            RecordingTiming.offsetResumedTimings(timings, existingParagraphCount: 1, existingDuration: 0),
+            timings)
+    }
+
+    func testOffsetResumedTimingsWithNoNewParagraphsIsUnchanged() {
+        // existingParagraphCount == timings.count: every paragraph pre-dates the resume, nothing to shift.
+        let timings = [ParagraphTiming(start: 0.0, duration: 2.0), ParagraphTiming(start: 2.0, duration: 1.0)]
+        XCTAssertEqual(
+            RecordingTiming.offsetResumedTimings(timings, existingParagraphCount: 2, existingDuration: 9.0),
+            timings)
+    }
+
     /// Build a buffer of `seconds` of silence at the writer's expected format.
     private func makeBuffer(seconds: Double) throws -> AVAudioPCMBuffer {
         let format = try XCTUnwrap(AVAudioFormat(

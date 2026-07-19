@@ -36,4 +36,38 @@ enum RecordingTiming {
         guard let relative else { return nil }
         return ParagraphTiming(start: offset + relative.start, duration: relative.duration)
     }
+
+    /// Offset the timings of paragraphs recorded AFTER a resume so they sit past the existing recording
+    /// on the ONE concatenated timeline (feedback 0022).
+    ///
+    /// When a thought that already has audio is resumed with recording on, the new audio is captured to
+    /// its OWN segment file (its analysis clock starts at ~0) and then concatenated onto the thought's
+    /// existing `.m4a`. So the newly-recorded paragraphs are timed relative to the NEW segment's start,
+    /// but after concatenation they actually begin `existingDuration` seconds into the combined file.
+    /// This shifts each NEW timing right by `existingDuration`; the PRE-EXISTING paragraphs' timings are
+    /// untouched (they still point at the original audio, which sits unchanged at the front of the
+    /// concatenation). A zero-length placeholder (a text-only paragraph, `duration == 0`) is left exactly
+    /// where it is - it carries no real position, so shifting it would fabricate one and mislead playback.
+    ///
+    /// Pure and count-preserving: `timings.count` in == out and each index maps to the same paragraph, so
+    /// the caller's `paragraphs`/`timings` 1:1 alignment invariant is preserved. `existingDuration` is the
+    /// original recording's `recordingDuration`; a non-positive value is a no-op (nothing to shift past).
+    ///
+    /// - Parameters:
+    ///   - timings: the full paragraph timings, pre-existing paragraphs FIRST then the newly-recorded ones.
+    ///   - existingParagraphCount: how many leading paragraphs pre-date the resume (kept as-is).
+    ///   - existingDuration: the seconds the pre-existing recording occupies at the front of the join.
+    static func offsetResumedTimings(
+        _ timings: [ParagraphTiming],
+        existingParagraphCount: Int,
+        existingDuration: Double
+    ) -> [ParagraphTiming] {
+        guard existingDuration > 0, existingParagraphCount >= 0 else { return timings }
+        return timings.enumerated().map { index, timing in
+            guard index >= existingParagraphCount else { return timing }
+            // A zero-length placeholder has no real position - leave it, do not fabricate one.
+            guard timing.duration > 0 else { return timing }
+            return ParagraphTiming(start: timing.start + existingDuration, duration: timing.duration)
+        }
+    }
 }

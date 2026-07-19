@@ -662,3 +662,38 @@ Renaming notes -> thoughts made `NewThoughtIntent`'s "New thought in <app>" phra
 ## To fold text but keep a match's range, fold PER CHARACTER, not the whole string (spec 0025)
 
 In-thought find highlights the ranges where a query matches, so each match's range must index the ORIGINAL rendered text. The global `ThoughtSearch` folds a whole string at once (`.folding(options: [.caseInsensitive, .diacriticInsensitive])`) and only asks a yes/no `contains` - it never needs a position back. Reusing that folding for RANGES is a trap: `String.folding` is not guaranteed length-preserving (a ligature or some scripts fold to a different character count), so a match found in the folded string maps to the WRONG offset in the original, and the highlight lands off the matched word. The fix keeps the SAME folding options (so the two search seams agree on what "matches") but applies them PER CHARACTER, carrying each folded character alongside its original `String.Index`: a run of N consecutive folded characters then maps straight back to a range of the original, because each folded character keeps a 1:1 tie to its source `Character`. A folded character can be EMPTY (a lone combining mark folds away) - it cannot start or belong to a match, so skip empties when comparing but still let the scan advance past them. Two supports made it provable without UI: the whole locator (`ThoughtFind.matches`) is pure and returns `Range<String.Index>` values, and a test asserts the highlighted substring equals the ORIGINAL accented text ("cafe" query -> the range covers "caf\u{00E9}", accent included), which is exactly what a whole-string fold would get wrong. Generalizes to any "find, then act on the location in the source" over normalized text (highlight, replace, annotate, link): normalize on a PER-ELEMENT basis so the normalized position maps back, and never take a range from a whole-string transform whose length you did not prove invariant - the yes/no `contains` seam and the give-me-the-range seam are different contracts even when they share the same normalization.
+
+## A resume over a continuous artifact must CONTINUE it, not restart or append beside it (feedback 0022)
+
+Resuming a recorded thought appended TEXT but not AUDIO: the newly spoken words became paragraphs while
+the thought kept exactly its original `.m4a`. The root was a simplification from feedback 0008 ("a
+resumed session records no new audio") baked into two places - the cover forced `recordsAudio` false for
+any thought that already had audio, and the view model had no path to record a new segment and join it
+onto the existing recording (its save would have OVERWRITTEN the original with just the new segment).
+The fix RECORDS a new segment and CONCATENATES it onto the existing recording as one continuous file,
+offsetting the new paragraphs' timings past the original so playback seeks correctly across the seam.
+Three shape choices made it safe and provable, and each generalizes. First, the timeline math is a pure,
+count-preserving function (`RecordingTiming.offsetResumedTimings`): the new segment's analysis clock
+starts at ~0, so its paragraphs must shift right by the ORIGINAL recording's measured duration while the
+pre-existing paragraphs stay put - and a zero-length text-only placeholder is left untouched, because
+shifting a non-position fabricates one. Second, the join reused the EXACT safety envelope spec 0019's
+dead-air trim already established for a non-reversible audio rewrite: a thin AVFoundation seam
+(`AudioConcatenating`) produces and VERIFIES a protected temp without touching either input, the caller
+swaps it in only through the store's COORDINATED `replaceAudio` (never a bare replace that races iCloud's
+sync daemon), the work runs OFF-main in a detached task so `finish()` returns immediately, and the thought
+is re-read fresh and confirmed to still exist before any swap (a soft-delete during the join must not
+orphan a raw-voice copy). Third - and the load-bearing one - the SYNCHRONOUS result of `finish()` IS the
+safe fallback (original recording kept, new paragraphs text-only, exactly the pre-0022 behavior), so the
+concatenation is a background UPGRADE, not a precondition: every failure path (unreadable input, EMPTY new
+segment that must not corrupt the original, incompatible format, verify failure, a delete that races the
+swap) simply leaves that fallback standing, and the original is never lost. A subtle correctness trap fell
+out of the two-phase design: the fallback save must ZERO the new paragraphs' timings (they are relative to
+a new segment NOT in the saved recording, so pointing them into the original would seek to the wrong
+audio), while the background success path must offset the REAL committed ranges - so the two phases need
+DIFFERENT timings for the same paragraphs, and the real ranges have to be captured before the fallback
+zeroes them. And the trim interaction: the original was already trimmed on its first save, so only the NEW
+segment is trimmed before the join - never re-trim an artifact you already processed. Generalizes to any
+"resume / continue" over a continuous, non-reversible artifact (a recording, an append-only log, a
+streamed export): CONTINUE the one artifact by joining onto it through the coordinated seam, re-anchor any
+positions onto the combined timeline with pure math, make the safe no-op the synchronous result and the
+join a background upgrade, and process only the new part, never the part already finalized.
