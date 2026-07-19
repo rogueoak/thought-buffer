@@ -31,6 +31,21 @@ final class SystemSpeaker: NSObject, Speaker, AVSpeechSynthesizerDelegate {
 
     private let synthesizer = AVSpeechSynthesizer()
 
+    /// The best installed voice for the user's language (premium > enhanced > default), resolved once
+    /// from the system catalog (spec 0014). Nil when no same-language voice exists, so an utterance
+    /// keeps the system default. Lazy because the catalog lookup is only needed the first time we
+    /// speak, and it does not change within a run.
+    private lazy var preferredVoice: AVSpeechSynthesisVoice? = {
+        let options = AVSpeechSynthesisVoice.speechVoices().map {
+            VoiceOption(identifier: $0.identifier, language: $0.language, quality: $0.quality)
+        }
+        let languageCode = AVSpeechSynthesisVoice.currentLanguageCode()
+        guard let identifier = VoiceSelector.bestVoiceIdentifier(from: options, languageCode: languageCode) else {
+            return nil
+        }
+        return AVSpeechSynthesisVoice(identifier: identifier)
+    }()
+
     override init() {
         super.init()
         synthesizer.delegate = self
@@ -49,6 +64,11 @@ final class SystemSpeaker: NSObject, Speaker, AVSpeechSynthesizerDelegate {
         try? session.setActive(true)
 
         let utterance = AVSpeechUtterance(string: trimmed)
+        // Use the best installed voice when there is one; otherwise leave it nil so the system picks
+        // its default (spec 0014).
+        if let preferredVoice {
+            utterance.voice = preferredVoice
+        }
         synthesizer.speak(utterance)
     }
 
