@@ -446,7 +446,7 @@ per-thought nil-resolving stub), not just start/first-item failure.
 "One finalized `SpeechTranscriber.Result` = one paragraph" read cleanly (the iOS 26 API hands you an
 explicit finalized boundary, so it looked like the paragraph boundary), but it was the WRONG grain:
 the transcriber finalizes on a SHORT mid-thought breath, so a single spoken sentence split into
-several paragraphs and dictation felt nothing like the native Thoughts app. The right paragraph boundary
+several paragraphs and dictation felt nothing like the native Notes app. The right paragraph boundary
 is a real SILENCE gap, not a finalization event - a coarser signal that has to be COMPUTED from the
 finer one. The fix reads the recognizer's `CMTimeRange` (which is analysis-relative and present even
 for a text-only session, because it is independent of the audio tee) and groups consecutive segments

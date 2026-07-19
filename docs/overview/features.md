@@ -497,9 +497,9 @@ iOS 26.
 - **Same everywhere else.** Thoughts, storage, iCloud, Mira commands, CarPlay, recording + playback, and
   editing/resume are unchanged - the swap sits behind the existing capture protocol.
 
-## Flowing, Thoughts-style paragraph breaks (feedback 0012)
+## Flowing, Notes-style paragraph breaks (feedback 0012)
 
-Dictation now flows like the native Thoughts app instead of breaking a paragraph on every finalized
+Dictation now flows like the native Notes app instead of breaking a paragraph on every finalized
 result. The iOS 26 transcriber finalizes on a short mid-thought breath, so the previous "one
 finalized result = one paragraph" rule split a single spoken sentence into several paragraphs.
 

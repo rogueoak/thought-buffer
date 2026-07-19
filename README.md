@@ -3,7 +3,7 @@
 **Hands-free, on-device dictation thoughts for iPhone and CarPlay.**
 
 Thought Stream is an iOS app for capturing your thinking out loud. Tap once (or ask Siri, or
-press Start in CarPlay) and just talk. Unlike the built-in Thoughts app, Thought Stream is a
+press Start in CarPlay) and just talk. Unlike the built-in Notes app, Thought Stream is a
 continuous feed of your thoughts that lets you pause to think and, importantly, edit entirely by
 voice using a control word, so you never have to touch the screen.
 
