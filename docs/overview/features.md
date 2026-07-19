@@ -423,3 +423,19 @@ iOS 26.
   model installs once (a one-time download), then works offline.
 - **Same everywhere else.** Notes, storage, iCloud, Mira commands, CarPlay, recording + playback, and
   editing/resume are unchanged - the swap sits behind the existing capture protocol.
+
+## Note share and copy actions (spec 0017)
+
+A note's text can leave the app: send it to another app or copy it to the clipboard.
+
+- **"..." actions menu on the note page.** The note detail toolbar carries an ellipsis menu (beside
+  the mic and gear, shown in the normal non-editing state) with **Share** and **Copy text**. Share
+  opens the system share sheet (`ShareLink`) so the note can go to Messages, Mail, Notes, etc.; Copy
+  text puts the same text on the pasteboard and flashes a brief "Copied to clipboard" confirmation.
+- **Long-press a note in the list.** A note row's context menu also offers **Share** and **Copy
+  text** (alongside "Move to folder"), so a note can be shared without opening it. Folder rows get no
+  share/copy - only notes have shareable text.
+- **One plain-text form.** Both surfaces build the shared string from the pure, unit-tested
+  `Note.shareableText`: the title on its own line, a blank line, then the body paragraphs joined by
+  blank lines. A note with no custom title shares its derived title; a note with no body shares just
+  its title. Audio is never shared here - text only.

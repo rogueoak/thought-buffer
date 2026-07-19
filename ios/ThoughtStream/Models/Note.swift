@@ -293,6 +293,25 @@ extension Note {
     }
 }
 
+// MARK: - Sharing (spec 0017)
+
+extension Note {
+    /// The note as plain text for sharing / copying (spec 0017): the title on its own line, a blank
+    /// line, then the body paragraphs joined by blank lines. This is what the detail page's share
+    /// sheet sends and the Copy action puts on the pasteboard, so the two are identical by
+    /// construction. Empty paragraphs are dropped and each paragraph is trimmed (mirroring
+    /// `bodyMarkdown`'s joining), but the output is plain text - no Markdown, no frontmatter. A note
+    /// with no body shares just its title (no trailing blank line). Pure so it is unit-testable
+    /// across custom/derived title and single/multi/empty body.
+    var shareableText: String {
+        let body = bodyMarkdown
+        if body.isEmpty {
+            return title
+        }
+        return title + "\n\n" + body
+    }
+}
+
 // MARK: - Markdown serialization
 
 extension Note {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Detail for a single note: its paragraphs and timestamp, themed. When the note carries a recording
 /// (spec 0007), a simple Play / Stop control plays it back in full. The text is editable with the
@@ -51,6 +52,11 @@ struct NoteDetailView: View {
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @FocusState private var titleFocused: Bool
+
+    /// Whether the "copied to clipboard" confirmation chip is currently shown (spec 0017). Set true
+    /// when Copy text runs, cleared after a brief delay so the chip is transient like the dictation
+    /// command chips.
+    @State private var showCopiedConfirmation = false
 
     /// Build the detail view. Prefers the ONE shared `NotePlaybackController` (so the phone and
     /// CarPlay drive the same media center and never race); when none is supplied - a preview, a
@@ -158,7 +164,21 @@ struct NoteDetailView: View {
                 )
                 .padding(CanopySpacing.x4)
             }
+
+            // The transient "Copied to clipboard" confirmation (spec 0017), styled like the dictation
+            // command chips (muted capsule). Pinned near the bottom so it does not cover the note text
+            // or the toolbar; it fades in on Copy and out after a moment.
+            if showCopiedConfirmation {
+                VStack {
+                    Spacer()
+                    copiedConfirmationChip
+                        .padding(.bottom, CanopySpacing.x8)
+                }
+                .transition(.opacity)
+                .allowsHitTesting(false)
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: showCopiedConfirmation)
         // Resume sits centered at the bottom of the screen (feedback 0008), clear of the scrolling
         // note body. Hidden while editing text, and only when a call site can reopen a session.
         .safeAreaInset(edge: .bottom) {
@@ -203,6 +223,24 @@ struct NoteDetailView: View {
                         .tint(CanopyColor.primary)
                         .accessibilityLabel("Settings")
                     }
+                }
+                // The "..." actions menu (spec 0017): Share sends the note's plain text through the
+                // system share sheet, Copy text puts the same text on the pasteboard. Both read
+                // `currentNote.shareableText` so they are identical and reflect any in-view edits
+                // already folded into `currentNote`. Only shown in the normal (non-editing) state.
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        ShareLink(item: currentNote.shareableText) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                        Button(action: copyNoteText) {
+                            Label("Copy text", systemImage: "doc.on.doc")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                    }
+                    .tint(CanopyColor.primary)
+                    .accessibilityLabel("Note actions")
                 }
             }
         }
@@ -314,6 +352,35 @@ struct NoteDetailView: View {
             .clipShape(Capsule())
         }
         .accessibilityLabel(playback.isPlaying ? "Stop recording" : "Play recording")
+    }
+
+    /// The transient "Copied to clipboard" confirmation chip (spec 0017), reusing the muted-capsule
+    /// styling of the dictation command chips so the app's feedback looks consistent.
+    private var copiedConfirmationChip: some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Image(systemName: "doc.on.doc")
+            Text("Copied to clipboard")
+                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+        }
+        .font(.system(size: CanopyFont.sizeSm))
+        .foregroundStyle(CanopyColor.mutedForeground)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.muted)
+        .clipShape(Capsule())
+        .shadow(color: CanopyColor.overlay.opacity(0.2), radius: 8, y: 4)
+        .accessibilityLabel("Copied to clipboard")
+    }
+
+    /// Copy the note's shareable plain text to the system pasteboard and flash the confirmation chip
+    /// (spec 0017). Uses the SAME `currentNote.shareableText` the share sheet sends, so Share and Copy
+    /// never diverge. The chip auto-hides after a short delay.
+    private func copyNoteText() {
+        UIPasteboard.general.string = currentNote.shareableText
+        showCopiedConfirmation = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            showCopiedConfirmation = false
+        }
     }
 
     private func beginEdit() {

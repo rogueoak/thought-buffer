@@ -39,7 +39,12 @@ struct NoteCard: View {
                     }
                 }
                 // Duration for a recorded note (timer glyph), word count otherwise (feedback 0010).
-                Label(note.metaStatLabel, systemImage: note.hasAudio ? "timer" : "text.alignleft")
+                // Paired with the SAME tight `x1` gap as the clock pair above (feedback 0013) instead
+                // of the looser default `Label` spacing, so the two metadata pairs stay in sync.
+                HStack(spacing: CanopySpacing.x1) {
+                    Image(systemName: note.hasAudio ? "timer" : "text.alignleft")
+                    Text(note.metaStatLabel)
+                }
                 // A small play affordance so a note with a recording is discoverable at a glance
                 // (feedback 0005); tapping the card still navigates to the detail view to play.
                 if note.hasAudio {

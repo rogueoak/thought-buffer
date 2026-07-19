@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The folder-aware Thoughts screen at ONE folder path (spec 0010). Root is `path: []`; a folder
 /// pushed on the stack renders another instance at its own path, so this view recurses.
@@ -52,6 +53,9 @@ struct FolderContentsView: View {
     // A transient message for a rejected/conflicting folder name.
     @State private var folderError: String?
 
+    // Whether the "Copied to clipboard" confirmation is shown after a note-row Copy text (spec 0017).
+    @State private var showCopiedConfirmation = false
+
     /// The interleaved, sorted rows for this screen: child folders + notes at this path.
     private var items: [FolderListItem] {
         FolderListModel.items(
@@ -100,10 +104,14 @@ struct FolderContentsView: View {
                         try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
                         self.folderError = nil
                     }
+            } else if showCopiedConfirmation {
+                CopiedConfirmationBanner()
+                    .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
         .animation(.easeInOut(duration: 0.2), value: folderError)
+        .animation(.easeInOut(duration: 0.2), value: showCopiedConfirmation)
         .toolbar { toolbarContent }
         .alert("New folder", isPresented: $showNewFolderAlert) {
             TextField("Name", text: $newFolderName)
@@ -228,6 +236,17 @@ struct FolderContentsView: View {
         return sortOrder.sort(inSubtree)
     }
 
+    /// Copy a note's shareable plain text to the pasteboard from the list context menu (spec 0017),
+    /// using the SAME `Note.shareableText` helper Share and the detail view use, then flash a brief
+    /// confirmation banner. The banner auto-hides after a moment.
+    private func copyNoteText(_ note: Note) {
+        UIPasteboard.general.string = note.shareableText
+        showCopiedConfirmation = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+            showCopiedConfirmation = false
+        }
+    }
+
     private func noteRow(note: Note) -> some View {
         Button {
             onOpenNote(note)
@@ -237,6 +256,16 @@ struct FolderContentsView: View {
         .buttonStyle(.plain)
         .rowInsets()
         .contextMenu {
+            // Long-press a note row to Share or Copy its text (spec 0017), reusing the SAME pure
+            // `Note.shareableText` the detail-view "..." menu uses. Folder rows get no share/copy.
+            ShareLink(item: note.shareableText) {
+                Label("Share", systemImage: "square.and.arrow.up")
+            }
+            Button {
+                copyNoteText(note)
+            } label: {
+                Label("Copy text", systemImage: "doc.on.doc")
+            }
             Button {
                 moveNote = note
             } label: {
@@ -394,6 +423,25 @@ private struct FolderErrorBanner: View {
         .padding(.horizontal, CanopySpacing.x4)
         .padding(.vertical, CanopySpacing.x2)
         .background(CanopyColor.warning)
+        .clipShape(Capsule())
+        .shadow(color: CanopyColor.overlay.opacity(0.2), radius: 8, y: 4)
+        .padding(.top, CanopySpacing.x2)
+    }
+}
+
+/// A brief, non-blocking confirmation that a note's text was copied to the clipboard from the list
+/// context menu (spec 0017), styled with the muted-capsule look the dictation command chips use.
+private struct CopiedConfirmationBanner: View {
+    var body: some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Image(systemName: "doc.on.doc")
+            Text("Copied to clipboard")
+                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+        }
+        .foregroundStyle(CanopyColor.mutedForeground)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.muted)
         .clipShape(Capsule())
         .shadow(color: CanopyColor.overlay.opacity(0.2), radius: 8, y: 4)
         .padding(.top, CanopySpacing.x2)

@@ -20,6 +20,14 @@ existing gear/mic actions, containing:
    (`UIPasteboard.general`) and shows brief confirmation (reuse the existing chip /
    banner feedback pattern if one exists; otherwise a lightweight transient label).
 
+### List-row long-press
+
+The same two actions are also reachable from the notes list without opening a note:
+long-pressing a NOTE row opens its context menu with **Share** and **Copy text**
+(alongside the existing "Move to folder"), both reusing the same pure
+`Note.shareableText`. FOLDER rows do not get share/copy - only notes have shareable
+text.
+
 ### Shared text format
 
 One pure helper (e.g. `Note.shareableText` or a small `NoteExport` type) builds the
@@ -45,6 +53,8 @@ string so share and copy are identical and it is unit-testable:
 ## Acceptance
 
 - The note detail screen shows a "..." menu with Share and Copy text.
+- Long-pressing a note row in the list opens a context menu with Share and Copy text;
+  folder rows do not.
 - Share presents the system share sheet with the note's title + body as plain text.
 - Copy places the same text on the pasteboard and confirms.
 - `Note.shareableText` (or equivalent) is pure and unit-tested: custom title,
