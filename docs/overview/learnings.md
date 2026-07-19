@@ -408,3 +408,35 @@ reconstructs it (`TypeName(` with an existing instance in scope, `.init(`, "edit
 carry the field through; and prefer a single `editedCopy(changing:)`-style mutator on the type over
 ad-hoc `Note(...)` rebuilds scattered across views, so there is ONE place that must know all the
 fields. Generalizes to any immutable model that is copied-with-changes in more than one place.
+
+## A shared teardown that clears everything is wrong when one caller must keep some state (spec 0015)
+
+`NotePlaybackController.play(note:)` calls `clearPlayback()` before loading a note - it stops the
+player and drops Now Playing / remote wiring so no stale playback survives a switch. Adding a queue
+(a folder swipe that auto-advances) meant the queue had to SURVIVE that same teardown on each advance:
+advancing IS a `play(note:)` under the hood, but it must not wipe the `queue`/`hasNext` it is walking.
+The fix split the start path in two - a public `play(note:)` that clears the queue (a deliberate new
+selection ends any queue) and a private `loadAndPlay(note:)` that does NOT, which the queue advance
+and `playQueue` call. The natural-finish advance is told apart from a user stop by the pre-existing
+`suppressFinish` flag: a user `stop()` sets it (via `clearPlayback`) AND clears the queue, so
+`handleFinish` returns early and cannot advance; only a real end-of-track reaches the advance.
+Generalizes: when a shared "reset everything" helper gains a caller that must preserve a slice of the
+state, do not add flags to the helper - split the entry points by intent (the caller that resets vs.
+the caller that keeps), and keep the "is this a natural event or a deliberate one" distinction on the
+single flag that already gates the synchronous-vs-natural teardown, so the two paths never race.
+
+## The failure path of a state machine must honor the same invariant as the happy path (spec 0015)
+
+The queue advanced on a natural end-of-track (`handleFinish`: next-or-teardown), but the FAILED-play
+branch of `startPlayback` (a nil / unplayable URL for a mid-queue recording) only called
+`clearPlayback()` - not `clearQueue()` - so the queue was left populated with nothing playing:
+hands-free playback silently STALLED on a vanished file instead of skipping to the next. A finish and
+a failure are two ways the current item "is done"; both must move the queue forward or tear it down,
+yet only the finish path had that logic. The fix extracts one `advanceOrFinish()` and calls it from
+BOTH, so there is a single definition of "what happens when the current entry ends, however it ends."
+The tell: a happy-path transition that maintains an invariant (the queue is always either playing or
+empty) paired with an error/early-return branch that quietly drops out without re-establishing it.
+Generalizes to any state machine or iterator with a "success -> next" step and a separate "couldn't
+do this one" branch: route both through the same advance/cleanup, or the error branch strands state
+the success branch would have cleaned. And it needs a test that makes ONE middle item fail (here a
+per-note nil-resolving stub), not just start/first-item failure.

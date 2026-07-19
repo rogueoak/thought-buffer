@@ -382,6 +382,241 @@ final class NotePlaybackControllerTests: XCTestCase {
         XCTAssertEqual(SystemAudioNotePlayer.clampedSeekTime(duration, duration: duration), duration)
     }
 
+    // MARK: - Queue (spec 0015)
+
+    func testPlayQueueFiltersToRecordingsAndPlaysFirst() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let textOnly = Note(title: "text", paragraphs: ["x"], createdAt: Date())
+        let second = recordedNote(title: "second")
+
+        // The text-only note is skipped; the first RECORDED note plays.
+        controller.playQueue([first, textOnly, second])
+        await eventually { player.plays.count == 1 }
+
+        XCTAssertEqual(player.plays.count, 1, "exactly the first recorded note started")
+        XCTAssertTrue(controller.isLoaded(first))
+        XCTAssertTrue(controller.hasNext, "a next recorded entry exists")
+    }
+
+    func testEmptyOrNoRecordingQueueIsNoOp() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+
+        controller.playQueue([])
+        controller.playQueue([Note(title: "text", paragraphs: ["x"], createdAt: Date())])
+        await settle()
+
+        XCTAssertTrue(player.plays.isEmpty, "no recorded note -> nothing plays")
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertNil(controller.currentNote)
+        XCTAssertFalse(controller.hasNext)
+    }
+
+    func testNoRecordingQueueDoesNotDisruptCurrentPlayback() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let playing = recordedNote(title: "playing")
+        controller.play(note: playing)
+        await eventually { player.plays.count == 1 }
+
+        // An all-text queue must not tear down what is already playing (the no-op guard runs first).
+        controller.playQueue([Note(title: "text", paragraphs: ["x"], createdAt: Date())])
+        await settle()
+
+        XCTAssertTrue(controller.isLoaded(playing), "the playing note is untouched")
+        XCTAssertEqual(player.plays.count, 1)
+    }
+
+    func testQueueAutoAdvancesOnNaturalFinish() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let second = recordedNote(title: "second")
+
+        controller.playQueue([first, second])
+        await eventually { player.plays.count == 1 }
+        XCTAssertTrue(controller.isLoaded(first))
+        XCTAssertTrue(controller.hasNext)
+
+        // The first recording ends on its own -> the queue advances to the second.
+        player.finish()
+        await eventually { player.plays.count == 2 }
+
+        XCTAssertTrue(controller.isLoaded(second), "a natural finish advances to the next queued note")
+        XCTAssertFalse(controller.hasNext, "the second is the last -> no next")
+    }
+
+    func testQueueSkipsAnUnplayableRecordingAndAdvances() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let missing = recordedNote(title: "missing")
+        let third = recordedNote(title: "third")
+        // The middle recording cannot be resolved (a vanished / unreadable file).
+        lastResolver?.setNilForIDs([missing.id])
+
+        controller.playQueue([first, missing, third])
+        await eventually { player.plays.count == 1 }
+        XCTAssertTrue(controller.isLoaded(first))
+
+        // First ends -> advance to `missing`, which resolves nil and cannot play -> the queue must SKIP
+        // it to `third` rather than stranding (populated queue, nothing playing).
+        player.finish()
+        await eventually { player.plays.count == 2 }
+        XCTAssertTrue(controller.isLoaded(third), "an unplayable mid-queue recording is skipped, not stranded")
+        XCTAssertFalse(controller.hasNext)
+    }
+
+    func testQueueSurvivesPauseAndResumeThenAdvances() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let second = recordedNote(title: "second")
+
+        controller.playQueue([first, second])
+        await eventually { player.plays.count == 1 }
+        controller.pause()
+        XCTAssertTrue(controller.hasNext, "pause does not disturb the queue")
+        controller.resume()
+
+        // A natural finish after a pause/resume cycle still advances the queue (index intact).
+        player.finish()
+        await eventually { player.plays.count == 2 }
+        XCTAssertTrue(controller.isLoaded(second))
+    }
+
+    func testQueueClearsAfterLastNaturalFinish() async {
+        let player = SpyPlayer()
+        let nowPlaying = SpyNowPlaying()
+        let remote = SpyRemote()
+        let controller = makeController(player: player, nowPlaying: nowPlaying, remote: remote)
+        let first = recordedNote(title: "first")
+        let second = recordedNote(title: "second")
+
+        controller.playQueue([first, second])
+        await eventually { player.plays.count == 1 }
+        player.finish()
+        await eventually { player.plays.count == 2 }
+
+        // The last queued recording ends -> everything clears (no advance, no stale wiring).
+        player.finish()
+
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertNil(controller.currentNote, "the queue is exhausted -> nothing loaded")
+        XCTAssertFalse(controller.hasNext)
+        XCTAssertNil(nowPlaying.last ?? nil, "the end of the queue clears Now Playing")
+        XCTAssertFalse(remote.isRegistered, "the end of the queue drops the remote commands")
+    }
+
+    func testPlayNextSkipsToNextQueuedNote() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let second = recordedNote(title: "second")
+
+        controller.playQueue([first, second])
+        await eventually { player.plays.count == 1 }
+
+        // The user taps Next -> skip straight to the second without waiting for a natural finish.
+        controller.playNext()
+        await eventually { player.plays.count == 2 }
+
+        XCTAssertTrue(controller.isLoaded(second))
+        XCTAssertFalse(controller.hasNext, "the second is the last")
+    }
+
+    func testPlayNextOnLastEntryStops() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let only = recordedNote(title: "only")
+
+        controller.playQueue([only])
+        await eventually { player.plays.count == 1 }
+        XCTAssertFalse(controller.hasNext, "a single-entry queue has no next")
+
+        // Next on the last (here, only) entry stops.
+        controller.playNext()
+
+        XCTAssertFalse(controller.isPlaying)
+        XCTAssertNil(controller.currentNote, "Next past the end stops")
+    }
+
+    func testStopClearsTheQueue() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let first = recordedNote(title: "first")
+        let second = recordedNote(title: "second")
+
+        controller.playQueue([first, second])
+        await eventually { player.plays.count == 1 }
+        XCTAssertTrue(controller.hasNext)
+
+        controller.stop()
+        XCTAssertNil(controller.currentNote)
+        XCTAssertFalse(controller.hasNext, "stop clears the queue")
+
+        // A natural finish AFTER a stop must not resurrect an orphaned queue.
+        player.finish()
+        XCTAssertEqual(player.plays.count, 1, "no queued note plays after a stop")
+    }
+
+    func testDirectPlayClearsAPriorQueue() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        let queued1 = recordedNote(title: "q1")
+        let queued2 = recordedNote(title: "q2")
+        let single = recordedNote(title: "single")
+
+        controller.playQueue([queued1, queued2])
+        await eventually { player.plays.count == 1 }
+        XCTAssertTrue(controller.hasNext)
+
+        // A direct single-note play ends the queue -> a later finish does not advance the old queue.
+        controller.play(note: single)
+        await eventually { player.plays.count == 2 }
+        XCTAssertFalse(controller.hasNext, "a direct play clears the queue")
+
+        player.finish()
+        XCTAssertEqual(player.plays.count, 2, "no orphaned queue advance after a direct play")
+        XCTAssertNil(controller.currentNote)
+    }
+
+    func testQueueUsesOneNowPlayingWriterAcrossAdvance() async {
+        let player = SpyPlayer()
+        let nowPlaying = SpyNowPlaying()
+        let controller = makeController(player: player, nowPlaying: nowPlaying)
+        let first = recordedNote(title: "first")
+        let second = recordedNote(title: "second")
+
+        controller.playQueue([first, second])
+        await eventually { player.plays.count == 1 }
+        XCTAssertEqual(nowPlaying.last??.title, "first", "the first queued note is the Now Playing item")
+
+        player.finish()
+        await eventually { player.plays.count == 2 }
+
+        // The advance goes through the ONE Now Playing writer: the item is now the second note, never a
+        // second concurrent item. (A double writer would leave the first title stranded.)
+        XCTAssertEqual(nowPlaying.last??.title, "second", "the advance retitles the SAME Now Playing item")
+    }
+
+    /// A single-note `play(note:)` must not populate the queue (spec 0015): no next item, so the bar
+    /// shows no Next button, and a natural finish clears rather than advancing.
+    func testSinglePlayLeavesNoQueue() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+
+        controller.play(note: recordedNote())
+        await eventually { player.plays.count == 1 }
+
+        XCTAssertFalse(controller.hasNext, "a single play has no queue and no next")
+        player.finish()
+        XCTAssertEqual(player.plays.count, 1, "a single play's finish does not advance a queue")
+        XCTAssertNil(controller.currentNote)
+    }
+
     /// Poll `condition` until it holds (or the tries run out), yielding AND sleeping a touch between
     /// tries so the lazy off-main resolve+play's detached hop back to the main actor is not raced
     /// under full-suite load. Condition-based rather than a fixed sleep, so a test waits exactly as
@@ -411,11 +646,16 @@ private final class StubResolver: AudioURLResolving, @unchecked Sendable {
     /// resolve having run (thread-safe: resolution runs on a detached task).
     var resolveCount: Int { lock.lock(); defer { lock.unlock() }; return _resolveCount }
 
+    /// Note ids that resolve to nil (a missing / unresolvable recording), so a test can make one entry
+    /// of a queue fail to play and assert the queue skips it.
+    private var _nilForIDs: Set<UUID> = []
+    func setNilForIDs(_ ids: Set<UUID>) { lock.lock(); _nilForIDs = ids; lock.unlock() }
+
     init(url: URL?) { self.url = url }
 
     func resolveAudioURL(for noteID: UUID, audioFileName: String?) -> URL? {
-        lock.lock(); _resolveCount += 1; lock.unlock()
-        return url
+        lock.lock(); _resolveCount += 1; let fails = _nilForIDs.contains(noteID); lock.unlock()
+        return fails ? nil : url
     }
 }
 

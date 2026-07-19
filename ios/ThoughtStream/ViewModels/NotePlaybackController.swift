@@ -25,8 +25,23 @@ final class NotePlaybackController: ObservableObject {
     @Published private(set) var isPaused = false
 
     /// The note currently loaded for playback, or nil when nothing is loaded. CarPlay reads it to
-    /// title its Now Playing template.
-    private(set) var currentNote: Note?
+    /// title its Now Playing template, and the now-playing bar (spec 0015) binds to it to know whether
+    /// to show and what title to render. `@Published` so a SwiftUI surface refreshes when the loaded
+    /// note changes - on a fresh play, a queue advance, or a stop.
+    @Published private(set) var currentNote: Note?
+
+    /// The queued notes a folder swipe started (spec 0015), in play order, and the index of the one
+    /// currently playing. Empty (index 0) when no queue is active - a single-note `play(note:)` does
+    /// not populate it. The natural end-of-track path (`handleFinish`) advances `queueIndex` and starts
+    /// the next entry until the queue is exhausted, then clears both. Kept private so the queue can
+    /// only be driven through `playQueue` / `playNext` / `stop`.
+    private var queue: [Note] = []
+    private var queueIndex = 0
+
+    /// Whether a next queued note exists after the current one (spec 0015): the now-playing bar shows
+    /// its Next button only while this is true. `@Published` so the bar hides Next the instant the
+    /// queue reaches its last entry. False whenever no queue is active.
+    @Published private(set) var hasNext = false
 
     /// An opaque handle to a registered transport-change observer, returned by
     /// `addTransportObserver` and passed back to `removeTransportObserver` to unregister.
@@ -104,6 +119,11 @@ final class NotePlaybackController: ObservableObject {
     /// Whether the controller is loaded for `note` (its recording is the one playing / paused).
     func isLoaded(_ note: Note) -> Bool { currentNote?.id == note.id }
 
+    /// The loaded note's own title for the now-playing bar (spec 0015), or nil when nothing is loaded.
+    /// This is the in-app bar's label and is independent of the lock-screen-title preference, which
+    /// only governs what leaves the device to Now Playing / CarPlay.
+    var currentTitle: String? { currentNote?.title }
+
     /// Start playing `note`'s recording from the top, wiring Now Playing and remote commands. Resolves
     /// the URL off the main actor at play time (coordinated presence can block). Optimistically flips
     /// to "playing" so a button responds immediately; a missing or unplayable file clears it. A no-op
@@ -113,6 +133,18 @@ final class NotePlaybackController: ObservableObject {
         // playing and then bail, which would strand the old note in Now Playing with live remote
         // handlers wired to a stopped controller.
         guard note.hasAudio else { return }
+        // A DIRECT single-note play (a note swipe, the detail button) ends any running queue - it is a
+        // deliberate new selection, not a queue advance - so a later natural finish does not resume an
+        // orphaned queue. `playQueue` / `advanceQueue` call `loadAndPlay` instead, past this line, so
+        // their queue state survives.
+        clearQueue()
+        loadAndPlay(note: note)
+    }
+
+    /// The shared start path used by both a direct `play(note:)` and a queue advance: cancel any
+    /// in-flight resolve, clear the current playback, load `note`, and kick off the off-main resolve.
+    /// Split out so the queue can advance without wiping the queue bookkeeping `play(note:)` clears.
+    private func loadAndPlay(note: Note) {
         pendingPlay?.cancel()
         // Different note (or a fresh start): fully clear the current playback (player, Now Playing,
         // remote) before loading the new one, so no stale metadata or wiring survives the switch.
@@ -133,6 +165,41 @@ final class NotePlaybackController: ObservableObject {
             guard !Task.isCancelled else { return }
             self?.startPlayback(note: note, url: url)
         }
+    }
+
+    /// Start playing an ORDERED queue of notes (spec 0015), one at a time, auto-advancing on each
+    /// natural finish. The list is filtered to notes that actually carry a recording (`hasAudio`), in
+    /// the order given (the caller sorts by the current `NoteSortOrder`); text-only notes are skipped.
+    /// With no recorded note the whole call is a no-op - nothing playing is disturbed. Otherwise it
+    /// sets the queue, wires the bar's `hasNext`, and plays the first entry through the SAME single
+    /// `play(note:)` path (one audio path, one Now Playing writer), so only "which note is current"
+    /// differs from a single play.
+    func playQueue(_ notes: [Note]) {
+        let playable = notes.filter(\.hasAudio)
+        guard !playable.isEmpty else { return }
+        queue = playable
+        queueIndex = 0
+        hasNext = playable.count > 1
+        // `loadAndPlay` clears any prior playback first, then loads the first entry and fires the
+        // transport change so the bar appears. It does NOT clear the queue (unlike the public
+        // `play(note:)`), so the queue we just set survives.
+        loadAndPlay(note: playable[0])
+    }
+
+    /// Skip to the next queued note (spec 0015), or stop when the current one is the last (or no queue
+    /// is active). Distinct from the natural-finish advance in that the USER asked for it: it clears
+    /// the current playback and starts the next entry immediately. A no-op-to-stop when there is no
+    /// next, matching the bar hiding its Next button at the end of the queue.
+    /// Skip to the next queued recording (the now-playing bar's Next button), or stop if this is the
+    /// last. This is a PHONE-BAR-ONLY affordance: the system remote (lock screen / Control Center /
+    /// CarPlay) intentionally maps skip to a 15s SEEK (`skipForward`/`skipBackward`), not a track
+    /// change, so do NOT wire a remote `nextTrackCommand` to this (architect review).
+    func playNext() {
+        guard hasNext, queueIndex + 1 < queue.count else {
+            stop()
+            return
+        }
+        advanceQueue()
     }
 
     /// Toggle for the in-app button: pause if playing, resume if paused, otherwise (re)start the
@@ -181,6 +248,9 @@ final class NotePlaybackController: ObservableObject {
     func stop() {
         pendingPlay?.cancel()
         pendingPlay = nil
+        // A user stop ends the whole queue too (spec 0015), so the natural-finish path has no queue to
+        // advance into afterward and the bar hides.
+        clearQueue()
         clearPlayback()
         notifyTransportChange()
     }
@@ -193,8 +263,10 @@ final class NotePlaybackController: ObservableObject {
     private func startPlayback(note: Note, url: URL?) {
         pendingPlay = nil
         guard let url, player.play(url: url, from: 0, duration: nil) else {
-            clearPlayback()
-            notifyTransportChange()
+            // A nil / unplayable recording must not strand a running queue: skip it to the next entry,
+            // or clear out cleanly when there is nothing more to play - the same advance-or-teardown a
+            // natural end uses (spec 0015 review). With no queue this simply clears, as before.
+            advanceOrFinish()
             return
         }
         isPlaying = true
@@ -240,11 +312,45 @@ final class NotePlaybackController: ObservableObject {
     /// reset moved below the guard so it does not run redundantly on top of the deliberate teardown.
     private func handleFinish() {
         guard !suppressFinish else { return }
+        // Only a NATURAL end reaches here - a user stop sets `suppressFinish` (via `clearPlayback`) and
+        // returned above - so this is exactly "the current recording ended on its own".
+        advanceOrFinish()
+    }
+
+    /// Advance to the next queued recording, or - when there is no queue or it is exhausted - tear
+    /// everything down (state, Now Playing, remote, queue) so the bar hides. Shared by the natural
+    /// end-of-track (`handleFinish`) AND a failed/unplayable resolve (`startPlayback`): a recording
+    /// that ends and one that cannot be played both move the queue forward rather than STRANDING it
+    /// (a folder swipe plays through, skipping a missing file - engineer/tester review).
+    private func advanceOrFinish() {
+        if !queue.isEmpty && queueIndex + 1 < queue.count {
+            advanceQueue()
+            return
+        }
+        clearQueue()
         resetState()
         currentNote = nil
         nowPlaying.update(nil)
         remote.unregisterAll()
         notifyTransportChange()
+    }
+
+    /// Move to the next queued note and start it through the shared `play(note:)` path. `play(note:)`
+    /// clears the current playback (player, Now Playing, remote) and reloads for the next note, but
+    /// leaves `queue` untouched, so we bump the index and recompute `hasNext` around it. Used by both
+    /// the natural-finish advance and the user's Next button.
+    private func advanceQueue() {
+        queueIndex += 1
+        hasNext = queueIndex + 1 < queue.count
+        loadAndPlay(note: queue[queueIndex])
+    }
+
+    /// Drop the active queue so no stale ordering survives a stop or the end of a queue. Leaves the
+    /// player / Now Playing / remote to the caller; this is only the queue bookkeeping the bar reads.
+    private func clearQueue() {
+        queue = []
+        queueIndex = 0
+        hasNext = false
     }
 
     /// Fully clear playback: stop the player, drop the loaded note, and clear the Now Playing item +

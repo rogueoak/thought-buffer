@@ -390,6 +390,26 @@ It stays on-device (`AVSpeechSynthesizer`), and enhanced/premium voices are a on
 (Settings > Accessibility > Spoken Content > Voices). The literal Siri voice is Apple-private and not
 available. The selection order lives in the pure, unit-tested `VoiceSelector`.
 
+## Swipe to play and folder queue (spec 0015)
+
+Playing a recording no longer means opening the note first. You can start a recording - or a whole
+folder of them - with one gesture, and see what is playing without leaving the list.
+
+- **Swipe a note right to play it.** A full leading swipe on a note that has a recording starts playing
+  it immediately through the shared playback controller, so the lock screen, Control Center, and
+  CarPlay light up as they already do. A text-only note offers no Play swipe (only Move).
+- **Swipe a folder right to play the folder.** A full leading swipe on a folder plays its recordings as
+  a queue: every recorded note anywhere in that folder's subtree, in the current sort order, one at a
+  time, auto-advancing to the next when one finishes. Text-only notes are skipped, and an empty or
+  all-text folder plays nothing.
+- **A now-playing bar.** While something plays from the list, a compact bar sits above the Record
+  button on every folder screen: the current title, a play/pause button, and a stop button; when a
+  queue is running it also shows Next. Tapping the title opens that note. The bar disappears when
+  playback stops or the queue ends.
+- **One audio path.** The swipe, the bar, the note detail Play control, and CarPlay all drive the same
+  shared controller and the same single system Now Playing item (spec 0008) - a queue only changes
+  which note is current, never opening a second player or a second Now Playing writer.
+
 ## Modern on-device speech engine (spec 0002)
 
 Dictation moves to Apple's iOS 26 `SpeechAnalyzer` / `SpeechTranscriber`. The app now requires

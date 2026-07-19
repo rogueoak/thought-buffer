@@ -239,7 +239,15 @@ How the system is built and why.
     (lazy off-main resolution at play time, as 0007's model did), and the Now Playing / remote-command
     seams, exposing play / pause / resume / stop / skip and one writer of `MPNowPlayingInfoCenter`.
     Both the phone detail view (through `NotePlaybackModel`, now a thin projection over the controller
-    that keeps the simple play / stop button) and the CarPlay scene drive it. `RecordingsListModel`
+    that keeps the simple play / stop button) and the CarPlay scene drive it. **Queue (spec 0015):** the
+    controller also owns an internal ordered `queue: [Note]` + index. `playQueue(_:)` filters to
+    `hasAudio` notes and plays the first through the shared start path; the NATURAL end-of-track path
+    (`handleFinish`) advances to the next until the queue is exhausted, then clears. The advance is
+    distinguished from a user stop by the same `suppressFinish` flag the single-play teardown uses - a
+    user `stop()` sets `suppressFinish` (via `clearPlayback`) and clears the queue, so `handleFinish`
+    returns early and never advances; only a real end reaches the advance. A direct `play(note:)` (a
+    note swipe, the detail button) clears any prior queue so an orphaned queue never resumes. Published
+    `currentNote` / `hasNext` (and `currentTitle`) drive the now-playing bar. `RecordingsListModel`
     (`@MainActor`, callback-observable like the driver, not SwiftUI - the CarPlay delegate is UIKit)
     projects `NoteStoreDriver.notes` to only notes with a recording, newest first, each with a
     formatted duration (`recordingDuration` = the tail of the last-ending timing range), and refreshes
@@ -250,7 +258,13 @@ How the system is built and why.
   `FolderContentsView(path: [])` as the root with a `navigationDestination` for the routes.
   `FolderContentsView` renders the same folder-list screen at ANY path (so a pushed `.folder` recurses
   into another instance), projecting its rows through `FolderListModel`; it owns the folder-CRUD alerts,
-  the sort menu, swipe/context actions, the `MoveToFolderSheet`, and the empty states. Its toolbar's
+  the sort menu, swipe/context actions, the `MoveToFolderSheet`, and the empty states. **Swipe to play
+  (spec 0015):** a leading swipe adds a Play action - `controller.play(note:)` on a recorded note row
+  (no Play on a text-only note), and `controller.playQueue(...)` on a folder row, built from the feed's
+  notes filtered to that folder's subtree (`FolderListModel.isDescendant`) with a recording, ordered by
+  the current `NoteSortOrder`. `NowPlayingBar` (a Canopy pill observing the shared controller) is hosted
+  in the bottom safe-area inset above the Record button, on every folder screen, shown only while the
+  controller has a `currentNote`; its title tap routes via `onOpenNote`. Its toolbar's
   compose button (spec 0013) calls `onNewNote(currentPath)`, and `StreamListView` pushes a `.newNote`
   route seeded with a fresh `Note(title: "", paragraphs: [], folderPath: currentPath)`. `FolderRow` mirrors `NoteCard`'s surface with a folder
   glyph, item count, and chevron. `DictationView` binds to `DictationViewModel`; `NoteCard`,

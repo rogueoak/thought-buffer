@@ -155,6 +155,14 @@ enum FolderListModel {
         return newest
     }
 
+    /// Whether a note at `notePath` lives anywhere in `folderPath`'s subtree (spec 0015): `folderPath`
+    /// is a prefix of `notePath`, so a note directly in the folder OR in any descendant folder counts.
+    /// Exposed so a folder-swipe play queue can gather a folder's whole subtree with the same
+    /// prefix rule the descendant-note count uses.
+    static func isDescendant(_ notePath: [String], of folderPath: [String]) -> Bool {
+        hasPrefix(notePath, prefix: folderPath)
+    }
+
     /// Whether `path` starts with `prefix` (so a note at `path` lives under the folder `prefix`). A
     /// path is under itself, so a note directly in the folder counts as a descendant.
     private static func hasPrefix(_ path: [String], prefix: [String]) -> Bool {
