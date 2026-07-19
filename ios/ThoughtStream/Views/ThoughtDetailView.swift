@@ -186,10 +186,15 @@ struct ThoughtDetailView: View {
                     )
                     .padding(CanopySpacing.x4)
                 }
-                // Seek the current match into view whenever it changes (a new query, or next/previous).
-                // `currentIndex` is the pure navigation state; scrolling to its region's anchor is the only
-                // UI-side effect, so the actual scroll is device-verifiable while the index math is unit-tested.
-                .onChange(of: findNavigator.currentIndex) { _, _ in
+                // Seek the current match into view whenever it changes (a new query, next/previous, or a
+                // query refinement that moves the first hit to a DIFFERENT region while the index stays 0).
+                // Keyed on `currentMatch` (Equatable: region + range), NOT `currentIndex`: `refreshFind`
+                // rebuilds the navigator to index 0 on every keystroke, so an index-keyed observer would miss
+                // a same-index-different-region change and never re-seek. A `Match?` that stays nil (no
+                // matches) does not fire, so there is no scroll when there is nothing to find. Scrolling to
+                // the region's anchor is the only UI side effect, so it is device-verifiable while the pure
+                // navigation state is unit-tested.
+                .onChange(of: findNavigator.currentMatch) { _, _ in
                     scrollToCurrentMatch(using: proxy)
                 }
             }
