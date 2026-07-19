@@ -42,11 +42,24 @@ enum MiraParseResult: Equatable {
 /// mode, dictation that literally contains the assistant's name mid-sentence is treated as a command
 /// from that point on. The user accepts this and can pick an uncommon control word.
 struct MiraCommandParser {
-    /// The control word that triggers command mode. Injected so Settings can make it configurable.
-    let controlWord: String
+    /// The set of trigger words that switch command mode on, lowercased (spec 0018). It is the
+    /// primary control word PLUS any user aliases (common mishearings like "mirror" for "Mira"). A
+    /// segment splits at the FIRST token matching ANY of these. Every alias is a SINGLE token (the
+    /// match is token-based via `wordRegex`), and matching is case-insensitive because the set is
+    /// pre-lowercased and each candidate token is lowercased before comparison, so token-boundary
+    /// still holds ("admiral" never matches alias "mira").
+    let triggerWords: Set<String>
 
+    /// Build from a single control word - the pre-0018 shape, kept so existing callers/tests do not
+    /// change. Equivalent to a trigger set of just that word.
     init(controlWord: String) {
-        self.controlWord = controlWord
+        self.init(triggerWords: [controlWord])
+    }
+
+    /// Build from a set of trigger words (the primary control word plus its aliases). Words are
+    /// lowercased here, so the caller may pass any casing and the match stays case-insensitive.
+    init(triggerWords: some Sequence<String>) {
+        self.triggerWords = Set(triggerWords.map { $0.lowercased() })
     }
 
     /// Filler words/phrases tolerated at the very start and the very end of the command remainder.
@@ -72,7 +85,7 @@ struct MiraCommandParser {
     /// Parse a finalized segment. Splits at the FIRST control-word token: no control word -> `.text`;
     /// otherwise `.split(preText:command:)` with the dictation before it and the command after it.
     func parse(_ segment: String) -> MiraParseResult {
-        guard let split = Self.splitAtControlWord(segment, controlWord: controlWord) else {
+        guard let split = Self.splitAtControlWord(segment, triggerWords: triggerWords) else {
             return .text
         }
 
@@ -107,19 +120,22 @@ struct MiraCommandParser {
         let commandTokens: [String]
     }
 
-    /// Find the FIRST control-word token in `segment` (case-insensitive). Returns the raw text before
-    /// that token as `preText` (trimmed of trailing whitespace/punctuation) and the tokenized words
-    /// AFTER it as `commandTokens`, or nil when the control word never appears.
+    /// Find the FIRST token in `segment` matching ANY trigger word (case-insensitive). Returns the raw
+    /// text before that token as `preText` (trimmed of trailing whitespace/punctuation) and the
+    /// tokenized words AFTER it as `commandTokens`, or nil when no trigger word appears.
+    ///
+    /// `triggerWords` is already lowercased (see the initializers), so a candidate token is compared
+    /// by lowercasing it and testing set membership - single-token, so token-boundary holds ("admiral"
+    /// does not contain the token "mira").
     ///
     /// Scans the ORIGINAL string so `preText` preserves the user's exact words, casing, and inner
     /// punctuation; only the split boundary is derived from a lowercased token comparison.
-    private static func splitAtControlWord(_ segment: String, controlWord: String) -> Split? {
-        let key = controlWord.lowercased()
+    private static func splitAtControlWord(_ segment: String, triggerWords: Set<String>) -> Split? {
         let ns = segment as NSString
         let matches = wordRegex.matches(in: segment, range: NSRange(location: 0, length: ns.length))
         for match in matches {
             let word = ns.substring(with: match.range)
-            guard word.lowercased() == key else { continue }
+            guard triggerWords.contains(word.lowercased()) else { continue }
             // Found the first control-word token. Pre-text is everything before this token; the
             // command tokens are the words after it.
             // Trim only the trailing whitespace/newlines the recognizer left between the dictation

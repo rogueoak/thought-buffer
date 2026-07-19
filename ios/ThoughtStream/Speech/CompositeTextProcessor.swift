@@ -26,8 +26,16 @@ struct CompositeTextProcessor: TextProcessor {
     /// The filler-removal stage, or nil when the refine setting is off (text commits verbatim).
     private let filler: FillerRemovalProcessor?
 
+    /// Single control word (pre-0018 shape). Kept so existing callers/tests do not change; equivalent
+    /// to a trigger set of just that word.
     init(controlWord: String, overrides: [SpellingOverride], removesFillers: Bool = false) {
-        self.command = MiraTextProcessor(controlWord: controlWord)
+        self.init(triggerWords: [controlWord], overrides: overrides, removesFillers: removesFillers)
+    }
+
+    /// A set of trigger words (spec 0018): the primary control word plus its aliases. Any of them
+    /// switches command mode on. The command portion is still split off first and never refined.
+    init(triggerWords: some Sequence<String>, overrides: [SpellingOverride], removesFillers: Bool = false) {
+        self.command = MiraTextProcessor(triggerWords: triggerWords)
         self.spelling = SpellingOverrideProcessor(overrides: overrides)
         self.filler = removesFillers ? FillerRemovalProcessor() : nil
     }

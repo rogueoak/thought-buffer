@@ -175,6 +175,50 @@ final class MiraCommandParserTests: XCTestCase {
         XCTAssertEqual(custom.parse("Mira new note"), .text)
     }
 
+    // MARK: - Trigger-word aliases (spec 0018)
+
+    func testAliasFiresCommand() {
+        // With aliases {mira, mirror}, "mirror new note" fires newNote and is NOT written to the note.
+        let aliased = MiraCommandParser(triggerWords: ["Mira", "mirror"])
+        XCTAssertEqual(aliased.parse("mirror new note"), .split(preText: "", command: .command(.newNote)))
+        // The primary word still fires.
+        XCTAssertEqual(aliased.parse("Mira new note"), .split(preText: "", command: .command(.newNote)))
+    }
+
+    func testAliasMatchesAnyTriggerAndSplitsAtFirst() {
+        let aliased = MiraCommandParser(triggerWords: ["Mira", "mirra", "meera", "mirror"])
+        // Each alias is fully equivalent to the control word.
+        XCTAssertEqual(aliased.parse("mirra read that back"), .split(preText: "", command: .command(.readThatBack)))
+        XCTAssertEqual(aliased.parse("meera remove the last sentence"),
+                       .split(preText: "", command: .command(.removeLastSentence)))
+        // Pre-text before an alias is committed; the alias splits like the primary word.
+        XCTAssertEqual(aliased.parse("buy milk mirror new note"),
+                       .split(preText: "buy milk", command: .command(.newNote)))
+    }
+
+    func testAliasMatchingIsCaseInsensitive() {
+        let aliased = MiraCommandParser(triggerWords: ["Mira", "Mirror"])
+        XCTAssertEqual(aliased.parse("MIRROR new note"), .split(preText: "", command: .command(.newNote)))
+        XCTAssertEqual(aliased.parse("MiRrOr new note"), .split(preText: "", command: .command(.newNote)))
+    }
+
+    func testRemovedAliasStopsFiring() {
+        // A parser built WITHOUT "mirror" treats a "mirror"-led phrase as ordinary text (the removed
+        // alias no longer triggers).
+        let onlyPrimary = MiraCommandParser(triggerWords: ["Mira"])
+        XCTAssertEqual(onlyPrimary.parse("mirror new note"), .text)
+        XCTAssertEqual(onlyPrimary.parse("Mira new note"), .split(preText: "", command: .command(.newNote)))
+    }
+
+    func testAliasMatchingIsTokenBounded() {
+        // Token-boundary must hold: a longer word CONTAINING an alias must not match it.
+        let aliased = MiraCommandParser(triggerWords: ["Mira", "mirror"])
+        // "admiral" contains "mira" as a substring but not as a token, so it is ordinary text.
+        XCTAssertEqual(aliased.parse("the admiral spoke"), .text)
+        // "mirrored" contains "mirror" as a substring but not as a token.
+        XCTAssertEqual(aliased.parse("the mirrored surface"), .text)
+    }
+
     // MARK: - command(in:) convenience
 
     func testCommandConvenience() {

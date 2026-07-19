@@ -125,6 +125,7 @@ struct ThoughtStreamApp: App {
 /// screenshot mode so the Settings design renders populated without touching real defaults.
 private final class ScreenshotSettings: SettingsStoring {
     var controlPhrase: String = "Nova"
+    var controlPhraseAliases: [String] = ["nofa", "nava"]
     var spellingOverrides: [SpellingOverride] = [
         SpellingOverride(from: "Shay", to: "Shea"),
         SpellingOverride(from: "kwan", to: "Quan"),

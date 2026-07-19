@@ -19,6 +19,9 @@ struct SettingsView: View {
     /// Local editing copies. Written back to the store on change so persistence is immediate and
     /// SwiftUI drives the fields without fighting the protocol's plain properties.
     @State private var controlPhrase: String
+    /// The ordered alias list, and the in-progress text for the "add alias" field (spec 0018).
+    @State private var aliases: [String]
+    @State private var newAlias: String = ""
     @State private var overrides: [SpellingOverride]
     /// The chosen retention mode, plus the day count for the auto-delete mode (kept even while the
     /// mode is not auto-delete, so toggling back restores the last window instead of resetting).
@@ -33,6 +36,7 @@ struct SettingsView: View {
         self.settings = settings
         self.storeKind = storeKind
         _controlPhrase = State(initialValue: settings.controlPhrase)
+        _aliases = State(initialValue: settings.controlPhraseAliases)
         _overrides = State(initialValue: settings.spellingOverrides)
         let retention = settings.audioRetention
         _retentionMode = State(initialValue: RetentionMode(retention))
@@ -48,6 +52,7 @@ struct SettingsView: View {
 
                 List {
                     assistantSection
+                    aliasesSection
                     refineSection
                     overridesSection
                     recordingSection
@@ -81,6 +86,11 @@ struct SettingsView: View {
                 .foregroundStyle(CanopyColor.text)
                 .onChange(of: controlPhrase) { _, newValue in
                     settings.controlPhrase = newValue
+                    // Aliases are validated against the CURRENT primary word on read, so renaming the
+                    // assistant to a word already in the alias list drops that now-colliding alias in
+                    // the store. Sync the displayed list back so the UI shows what actually persisted
+                    // rather than a stale entry the store already rejected.
+                    aliases = settings.controlPhraseAliases
                 }
         } header: {
             Text("Assistant")
@@ -100,6 +110,70 @@ struct SettingsView: View {
     /// depending on any concrete store.
     private var effectiveControlPhrase: String {
         ControlPhrase.validated(controlPhrase)
+    }
+
+    // MARK: - Command-word aliases (spec 0018)
+
+    private var aliasesSection: some View {
+        Section {
+            ForEach(aliases, id: \.self) { alias in
+                Text(alias)
+                    .foregroundStyle(CanopyColor.text)
+            }
+            .onDelete(perform: deleteAliases)
+
+            HStack(spacing: CanopySpacing.x2) {
+                TextField("Add an alias", text: $newAlias)
+                    // A single lowercased token is expected; word-by-word autocapitalization and
+                    // autocorrection fight that, so leave the spelling to the user.
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .foregroundStyle(CanopyColor.text)
+                    .onSubmit(addAlias)
+                Button(action: addAlias) {
+                    Image(systemName: "plus.circle")
+                        .foregroundStyle(canAddAlias ? CanopyColor.primary : CanopyColor.textMuted)
+                }
+                .disabled(!canAddAlias)
+            }
+        } header: {
+            Text("Command aliases")
+                .foregroundStyle(CanopyColor.textMuted)
+        } footer: {
+            Text("Aliases catch mishearings of your command word, e.g. \"mirror\" for \"\(effectiveControlPhrase)\". "
+                + "Each alias is one word. Changes apply to your next session.")
+                .font(.system(size: CanopyFont.sizeXs))
+                .foregroundStyle(CanopyColor.textSubtle)
+        }
+    }
+
+    /// Whether the in-progress alias text is a valid, non-colliding single token to add. Drives the
+    /// Add button's enabled state so an empty, multi-word, or duplicate/primary-colliding entry cannot
+    /// be added (the same rule the store validates on read, so the UI never offers an add the store
+    /// would silently drop).
+    private var canAddAlias: Bool {
+        guard let token = ControlPhrase.validatedAlias(newAlias) else { return false }
+        let key = token.lowercased()
+        guard key != effectiveControlPhrase.lowercased() else { return false }
+        return !aliases.contains { $0.lowercased() == key }
+    }
+
+    /// Add the in-progress alias if it validates, then clear the field. Persists through the shared
+    /// seam, which re-validates against the current primary word.
+    private func addAlias() {
+        guard canAddAlias, let token = ControlPhrase.validatedAlias(newAlias) else { return }
+        aliases.append(token)
+        newAlias = ""
+        persistAliases()
+    }
+
+    private func deleteAliases(at offsets: IndexSet) {
+        aliases.remove(atOffsets: offsets)
+        persistAliases()
+    }
+
+    private func persistAliases() {
+        settings.controlPhraseAliases = aliases
     }
 
     // MARK: - Refine transcript (spec 0016)
