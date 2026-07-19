@@ -10,17 +10,18 @@ Device feedback from Matthew (2026-07-19):
 Spoken notes accumulate long silences (thinking pauses). Trimming them makes
 playback tighter and files smaller, without changing the words.
 
-## Open product decisions (confirm before build)
+## Product decisions (confirmed by Matthew 2026-07-19)
 
-- **Destructive vs. keep-original**: does trimming REPLACE the recording, or keep
-  the original and store a trimmed copy? (Storage vs. reversibility.) DEFAULT
-  assumed here: replace on save, non-reversible - matches "post processing".
-- **Default state + threshold**: "automatic (configurable)" implies default ON.
-  DEFAULT assumed: cut silences longer than 2.0 s down to a 0.5 s natural gap.
-- **Retroactive**: apply only to NEW recordings on save (assumed), with a possible
-  future manual "tidy audio" action for existing notes (out of scope here).
+- **Replace the original**: trimming REPLACES the recording (non-reversible).
+  Smaller files; the removed silence is not retained. There is no kept original.
+- **Default ON**, cut silences longer than **2.0 s** down to a 0.5 s natural gap.
+  The threshold is configurable in Settings.
+- **Retroactive**: apply only to NEW recordings on save. A future manual "tidy
+  audio" action for existing notes is out of scope here.
 
-This spec is written against those defaults; adjust after confirmation.
+Because the trim is non-reversible, the rewrite MUST be safe: write the trimmed
+file to a temp location, verify it is valid and non-empty, and only then atomically
+replace the original. Any failure leaves the original recording untouched.
 
 ## Scope
 
