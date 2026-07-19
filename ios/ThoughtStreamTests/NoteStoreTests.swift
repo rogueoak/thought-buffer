@@ -107,6 +107,34 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(all.first?.folderPath, ["Work"])
     }
 
+    /// Regression (spec 0013): editing a foldered note and re-saving through the same path the detail
+    /// view uses (`Note.editedCopy` -> `store.save`) must NOT relocate it to the root. Before the fix,
+    /// `NoteDetailView.currentNote` dropped `folderPath`, so `save` re-filed every foldered note to the
+    /// root on commit.
+    func testEditingFolderedNoteKeepsItInFolder() throws {
+        let note = Note(title: "In folder", paragraphs: ["Original body."], createdAt: Date(),
+                        folderPath: ["Work"])
+        _ = try store.save(note)
+
+        // Reload from disk so the note carries the folderPath the store tags on load - exactly what the
+        // detail view receives - then edit it the way the view does.
+        let loaded = try XCTUnwrap(store.load(id: note.id))
+        let edited = loaded.editedCopy(
+            paragraphs: ["Original body.", "An added paragraph."],
+            hasCustomTitle: false,
+            customTitle: loaded.title
+        )
+        let url = try store.save(edited)
+
+        XCTAssertEqual(url.deletingLastPathComponent().lastPathComponent, "Work",
+                       "an edited foldered note must stay in its folder, not move to root")
+        let reloaded = try XCTUnwrap(store.load(id: note.id))
+        XCTAssertEqual(reloaded.folderPath, ["Work"])
+        XCTAssertEqual(reloaded.paragraphs, ["Original body.", "An added paragraph."])
+        // Exactly one note on disk: the edit did not leave a second copy at the root.
+        XCTAssertEqual(store.loadAll().count, 1)
+    }
+
     /// The Markdown bytes of a foldered note are IDENTICAL to a top-level note's: the folder is the
     /// file's location, never a frontmatter key (spec 0010 acceptance).
     func testFolderedNoteMarkdownBytesIdenticalToTopLevel() throws {

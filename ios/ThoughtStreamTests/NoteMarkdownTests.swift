@@ -140,6 +140,97 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertTrue(title.hasPrefix("Note "), "expected dated fallback, got \(title)")
     }
 
+    // MARK: isBlankDraft (spec 0013)
+
+    func testIsBlankDraftEmptyIsBlank() {
+        XCTAssertTrue(Note.isBlankDraft(paragraphs: [], hasCustomTitle: false, customTitle: ""))
+    }
+
+    func testIsBlankDraftWhitespaceOnlyBodyIsBlank() {
+        XCTAssertTrue(Note.isBlankDraft(
+            paragraphs: ["   ", "\n\t"],
+            hasCustomTitle: false,
+            customTitle: ""
+        ))
+    }
+
+    func testIsBlankDraftTitleOnlyIsNotBlank() {
+        // A user-entered custom title with no body is real content: keep, do not discard.
+        XCTAssertFalse(Note.isBlankDraft(
+            paragraphs: [],
+            hasCustomTitle: true,
+            customTitle: "My chosen title"
+        ))
+    }
+
+    func testIsBlankDraftBodyOnlyIsNotBlank() {
+        XCTAssertFalse(Note.isBlankDraft(
+            paragraphs: ["Some typed thought."],
+            hasCustomTitle: false,
+            customTitle: ""
+        ))
+    }
+
+    func testIsBlankDraftDerivedTitleWithEmptyBodyIsBlank() {
+        // A non-custom (derived) title is synthesized from the body, so it is not content on its own.
+        XCTAssertTrue(Note.isBlankDraft(
+            paragraphs: [],
+            hasCustomTitle: false,
+            customTitle: "A derived first sentence"
+        ))
+    }
+
+    func testIsBlankDraftWhitespaceOnlyCustomTitleIsBlank() {
+        XCTAssertTrue(Note.isBlankDraft(
+            paragraphs: [],
+            hasCustomTitle: true,
+            customTitle: "   "
+        ))
+    }
+
+    // MARK: editedCopy preserves folder + recording (spec 0013 / folders regression)
+
+    func testEditedCopyKeepsFolderPath() {
+        // Regression: rebuilding a note on edit must preserve its storage location. Without this,
+        // NoteStore.save (which files by folderPath) would relocate a foldered note to the root on
+        // every commit.
+        let original = Note(
+            title: "Original",
+            paragraphs: ["First body."],
+            createdAt: Date(),
+            folderPath: ["Work"]
+        )
+        let edited = original.editedCopy(
+            paragraphs: ["First body.", "A new second paragraph."],
+            hasCustomTitle: false,
+            customTitle: "Original"
+        )
+        XCTAssertEqual(edited.folderPath, ["Work"])
+        XCTAssertEqual(edited.paragraphs, ["First body.", "A new second paragraph."])
+        XCTAssertEqual(edited.id, original.id)
+    }
+
+    func testEditedCopyKeepsNestedFolderAndCapsTimings() {
+        let original = Note(
+            id: UUID(),
+            title: "Recorded",
+            paragraphs: ["One.", "Two."],
+            createdAt: Date(),
+            audioFileName: "abc.m4a",
+            timings: [ParagraphTiming(start: 0, duration: 1), ParagraphTiming(start: 1, duration: 1)],
+            folderPath: ["Work", "Q3"]
+        )
+        // An edit that shrinks the body to one paragraph must keep the nested folder and cap timings.
+        let edited = original.editedCopy(
+            paragraphs: ["One."],
+            hasCustomTitle: false,
+            customTitle: "Recorded"
+        )
+        XCTAssertEqual(edited.folderPath, ["Work", "Q3"])
+        XCTAssertEqual(edited.audioFileName, "abc.m4a")
+        XCTAssertEqual(edited.timings.count, 1)
+    }
+
     func testTolerantParseWithoutFrontmatter() {
         let text = "Just a body.\n\nWith two paragraphs."
         let note = Note(markdown: text)

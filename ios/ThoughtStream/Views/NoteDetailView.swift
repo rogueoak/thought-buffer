@@ -7,6 +7,10 @@ import SwiftUI
 struct NoteDetailView: View {
     let note: Note
     @StateObject private var playback: NotePlaybackModel
+    // This view only EMITS intents (`onCommitEdit`/`onDiscardEmpty`); the composition root
+    // (`StreamListView`) owns the actual store write/delete and the route pop. The draft/editing
+    // `@State` stays local so per-note editing is not reworked into the root.
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Called when the user taps the toolbar mic to start a fresh thought (feedback 0011), so the
     /// composition root requests a new session through the same route the list uses. Nil at
@@ -213,29 +217,30 @@ struct NoteDetailView: View {
             playback.stop()
             if isUnsavedNewNote { finalizeUnsavedNote() }
         }
+        // `onDisappear` covers back-navigation but does NOT fire on app suspend/terminate, so a typed
+        // brand-new note could otherwise be lost if the app is backgrounded before Done or back (spec
+        // 0013). Observe the scene phase: on the way to background/inactive, finalize an unsaved new
+        // note (persist typed content, or discard a still-blank one). `finalizeUnsavedNote` clears
+        // `isUnsavedNewNote` before it acts, so a following back-navigation cannot persist/pop twice.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active, isUnsavedNewNote { finalizeUnsavedNote() }
+        }
     }
 
     /// Whether the user is editing the body OR the title, so read-mode affordances (mic/gear, Resume)
     /// hide and the Done button shows for either.
     private var isEditingAnything: Bool { isEditing || isEditingTitle }
 
-    /// The note as it currently stands (edits applied), with the recording/timings preserved. The
-    /// title is the user's custom one when set, else re-derived from the first sentence so it tracks
-    /// body edits (spec 0009). Handed to `onCommitEdit` and `onResume`.
+    /// The note as it currently stands (edits applied). The rebuild lives in a pure model helper
+    /// (`Note.editedCopy`) so the recording, timings, AND `folderPath` are all preserved in one place:
+    /// dropping `folderPath` here would make `NoteStore.save` re-file every foldered note to the root
+    /// on commit. The title is the user's custom one when set, else re-derived from the first sentence
+    /// so it tracks body edits (spec 0009). Handed to `onCommitEdit` and `onResume`.
     private var currentNote: Note {
-        let effectiveTitle = hasCustomTitle
-            ? customTitleText
-            : Note.deriveTitle(paragraphs: paragraphs, createdAt: note.createdAt)
-        return Note(
-            id: note.id,
-            title: effectiveTitle,
+        note.editedCopy(
             paragraphs: paragraphs,
-            createdAt: note.createdAt,
             hasCustomTitle: hasCustomTitle,
-            audioFileName: note.audioFileName,
-            // An edit can shrink the paragraph count; cap timings so the note never carries more
-            // timings than paragraphs (parity with the record-screen edit; engineer review).
-            timings: Array(note.timings.prefix(paragraphs.count))
+            customTitle: customTitleText
         )
     }
 
@@ -379,13 +384,17 @@ struct NoteDetailView: View {
         persistOrDiscard()
     }
 
-    /// Whether a brand-new note is still empty: no body text and no user-entered custom title. A
-    /// non-custom (derived) title never counts as content, since it is synthesized from the body.
+    /// Whether a brand-new note is still a blank draft: no body text and no user-entered custom title.
+    /// The rule lives in a pure model helper (`Note.isBlankDraft`) so it is unit-tested, not trapped in
+    /// view state (the spec 0009 `resolveTitleEdit` precedent). A title-only new note counts as content
+    /// (kept, not discarded): a user who dismisses the body editor and types only a title still has
+    /// their note saved. That path is reachable because the title stays tappable once `!isEditing`.
     private var isEmptyNewNote: Bool {
-        let hasBody = paragraphs.contains { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let hasTitle = hasCustomTitle
-            && !customTitleText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return !hasBody && !hasTitle
+        Note.isBlankDraft(
+            paragraphs: paragraphs,
+            hasCustomTitle: hasCustomTitle,
+            customTitle: customTitleText
+        )
     }
 }
 
