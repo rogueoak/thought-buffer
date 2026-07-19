@@ -440,3 +440,58 @@ Generalizes to any state machine or iterator with a "success -> next" step and a
 do this one" branch: route both through the same advance/cleanup, or the error branch strands state
 the success branch would have cleaned. And it needs a test that makes ONE middle item fail (here a
 per-note nil-resolving stub), not just start/first-item failure.
+
+## Per-finalization is the wrong grain for a paragraph; group on the signal the platform gives you (feedback 0012)
+
+"One finalized `SpeechTranscriber.Result` = one paragraph" read cleanly (the iOS 26 API hands you an
+explicit finalized boundary, so it looked like the paragraph boundary), but it was the WRONG grain:
+the transcriber finalizes on a SHORT mid-thought breath, so a single spoken sentence split into
+several paragraphs and dictation felt nothing like the native Notes app. The right paragraph boundary
+is a real SILENCE gap, not a finalization event - a coarser signal that has to be COMPUTED from the
+finer one. The fix reads the recognizer's `CMTimeRange` (which is analysis-relative and present even
+for a text-only session, because it is independent of the audio tee) and groups consecutive segments
+by the gap between one's end and the next's start: below a threshold they flow into one paragraph,
+at/above it a new paragraph starts. Two shape choices made it clean and provable. First: ALL the
+policy lives in a pure `ParagraphGrouper` (no Speech / AVFoundation import) that returns a
+`.newParagraph` / `.appendToCurrent` decision, so the gap rule, the device-tunable threshold constant,
+and the degenerate-range guard are unit-tested without audio and the view model is a thin caller.
+Second: a pause/resume seam restarts analysis, so its time resets to ~0 and a naive gap against the
+prior analysis's end goes NEGATIVE and would mis-merge; carry an explicit `isAnalysisStart` flag
+through the capture event (set on the first finalized result of each analysis) and force a break on
+it, rather than trying to detect the seam from the numbers. When segments merge, their timings merge
+too (first start through last end) so the `timings.count <= paragraphs.count` invariant and per-
+paragraph playback survive. Generalizes: when the platform's explicit boundary is at a finer grain
+than the boundary you actually want, derive the coarser one from a continuous signal it also exposes
+(here the time range), keep that derivation pure and tunable, and thread any discontinuity (a restart,
+a resume) through as an explicit flag instead of inferring it from a value that resets across it.
+
+## A perceived-latency complaint is not always a latency bug - separate the fixable from the device-only (feedback 0012)
+
+The same device report bundled "too many newlines" with "text is slow to appear". They share a root
+(text jumping to a new line on every micro-pause makes the stream FEEL laggy), but only the newline
+half is diagnosable and fixable off-device; the raw appear-latency (tap buffer size, the transcriber's
+own volatile cadence) can only be measured and tuned on real hardware. The disciplined move was to
+FIX the pure, testable half now (pause-based grouping, which also improves the perception of
+smoothness) and, for the device-only half, add lightweight `#if DEBUG` timestamp instrumentation at
+each emit and leave the tap buffer as a NAMED constant - so a later device pass has a measurement hook
+and a single tuning lever - rather than blindly shrinking the buffer and calling it fixed. Generalizes:
+when a report mixes a fixable defect with a device-only tuning concern, ship the fixable part behind
+a seam and hand the tuning part a measurement + a lever, do not guess-tune what you cannot measure.
+
+## Merging ranges into one timing is only safe while coupled thresholds keep the merge remappable (feedback 0012)
+
+Pause-based grouping merges several segments' recorded ranges into ONE paragraph timing (first start
+through last end). That merge is only sound because of a load-bearing coupling to a SEPARATE constant:
+the paragraph group threshold (`ParagraphGrouper.defaultGapThreshold`, 1.5s) must stay strictly BELOW
+any dead-air / silence-trim minimum-pause threshold (the transcript-refinement work targets ~2.0s).
+The reasoning: any silence long enough to be trimmed (>= the trim floor) is necessarily >= the group
+threshold, so it is always a PARAGRAPH BOUNDARY, never an interior sub-threshold silence inside a
+merged paragraph. Therefore trimming only ever removes time BETWEEN paragraphs, and a merged
+paragraph's `[start, duration]` stays remappable by shifting paragraph starts. Lift the group threshold
+to or above the trim floor and an interior silence could be trimmed out of a merged paragraph, and its
+stored range would no longer map to the recording. The rule: when a merge (of ranges, offsets, spans)
+is only correct because two constants sit on a particular side of each other, DOCUMENT that coupling
+on the constant itself and record it as a learning, so a later change to either constant is forced to
+reconsider the merge rather than silently break the mapping. Generalizes to any pair of thresholds
+where one governs "what we combine" and the other "what we remove", and the combine is only reversible
+while the remove never reaches inside a combined unit.

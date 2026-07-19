@@ -52,10 +52,34 @@ protocol SpeechCaptureService: AnyObject {
 enum SpeechCaptureEvent {
     /// The in-progress phrase for the current task (replaces the last partial).
     case partial(String)
-    /// A finalized phrase that should be committed to the note as a paragraph, with its time range
-    /// in the recording (spec 0007). `range` is nil when nothing was recorded (recording disabled,
-    /// or the recognizer reported no segment timings) so a text-only session is unaffected.
-    case finalizedSegment(String, range: ParagraphTiming?)
+    /// A finalized phrase that should be committed to the note (spec 0007), carrying both its ABSOLUTE
+    /// recording range and the RAW analysis-relative timing the view model needs to decide paragraph
+    /// grouping (feedback 0012).
+    ///
+    /// NOTE: this one segment carries its timing in TWO coordinate systems, both describing the SAME
+    /// segment: `range` is ABSOLUTE recording time (offset-anchored, for playback seek), while
+    /// `startSeconds` / `durationSeconds` are ANALYSIS-RELATIVE (reset to ~0 at each analysis, for the
+    /// grouper's gap math). They are not interchangeable - use `range` for playback and the raw seconds
+    /// for grouping.
+    ///
+    /// - `range`: the paragraph's absolute range in the recording, nil when nothing was recorded
+    ///   (recording disabled, or the recognizer reported no segment timings), so a text-only session's
+    ///   playback is unaffected.
+    /// - `startSeconds` / `durationSeconds`: the segment's time range RELATIVE to the current analysis
+    ///   start (from the transcriber `CMTimeRange`). Present even for a text-only session because it is
+    ///   relative to analysis, independent of the audio tee. The view model's `ParagraphGrouper` reads
+    ///   these (never `range`, which is nil without a recording) to decide flow vs. break by the silence
+    ///   gap between consecutive segments.
+    /// - `isAnalysisStart`: true for the FIRST finalized result of an analysis. Analysis time resets to
+    ///   ~0 across a pause/resume seam, so this flags a resume seam as an unconditional paragraph break
+    ///   instead of computing a bogus negative gap across it.
+    case finalizedSegment(
+        String,
+        range: ParagraphTiming?,
+        startSeconds: Double,
+        durationSeconds: Double,
+        isAnalysisStart: Bool
+    )
     /// Microphone input level, 0...1, for the waveform.
     case level(Float)
     /// A user-facing failure. Capture has stopped.
