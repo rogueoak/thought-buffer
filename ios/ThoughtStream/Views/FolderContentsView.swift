@@ -54,6 +54,25 @@ struct FolderContentsView: View {
     /// simply omits the chip; the root still owns the UndoManager wiring and the window timer.
     @ObservedObject var deletion: ThoughtDeletionController
 
+    /// Whether THIS screen renders its own bottom stack (search field, now-playing bar, undo chip, record
+    /// actions) in its bottom safe-area inset (spec 0022). True for the compact `NavigationStack`, where
+    /// one folder screen is on-screen at a time. FALSE under the `NavigationSplitView`, where the sidebar
+    /// and content columns are BOTH folder screens at once: the bottom bar + search are lifted to the ONE
+    /// split container above the columns (so there is a single search surface and one results list), and
+    /// each column just renders its list. Defaults true so every existing (compact) call site is unchanged.
+    var showsBottomBar: Bool = true
+
+    /// A pre-resolved search state + results, supplied by the split container so the sidebar and content
+    /// columns share the ONE search projection instead of each re-scanning the shared query (spec 0022).
+    /// Nil on the compact path, where this screen resolves its own content once per render (unchanged).
+    var resolvedContent: StreamSearchProjection.Result?
+
+    /// Fired once this screen's child folders have loaded (spec 0022). The split container uses it to gate
+    /// its lifted projection on "folders loaded" too (matching the compact `feed.didLoad && folderLoaded`
+    /// gate), so the split view does not flash the empty-store CTA mid-load. Nil on the compact path, where
+    /// this screen owns its own `folderLoaded` gate.
+    var onFoldersLoaded: (() -> Void)?
+
     /// The child folder names at this path, loaded off-main (the store walk can coordinate on iCloud)
     /// and refreshed after a folder edit. Kept local to this screen so each path shows its own folders.
     @State private var childFolderNames: [String] = []
@@ -94,23 +113,19 @@ struct FolderContentsView: View {
         )
     }
 
-    /// Resolve the screen state AND the search results in ONE pass (architect review): the search scan is
-    /// `thoughts x paragraphs`, so it must run at most ONCE per render, not once in the body and again inside
-    /// a separate `screenState` computed property (which re-scanned per keystroke). When no search is
-    /// active the scan is skipped entirely. Gated on the initial load so a not-yet-loaded feed does not
-    /// flash the empty CTA. `storeHasThoughts` is the WHOLE store (search is global), so the empty-state CTA
-    /// shows only when there is genuinely nothing anywhere.
-    private func resolveContent() -> (state: FolderScreenState, results: [Thought]) {
-        guard feed.didLoad, folderLoaded else { return (.normal, []) }
-        let active = ThoughtSearch.isActive(searchQuery)
-        // Only scan when a search is active; the normal/empty states never look at results.
-        let results = active ? ThoughtSearch.results(in: feed.thoughts, query: searchQuery) : []
-        let state = FolderScreenState.select(
-            storeHasThoughts: !feed.thoughts.isEmpty,
-            searchActive: active,
-            hasSearchMatches: !results.isEmpty
+    /// Resolve the screen state AND the search results in ONE pass through the pure `StreamSearchProjection`
+    /// seam (spec 0021's single-scan rule, lifted to a testable function for spec 0022): the search scan is
+    /// `thoughts x paragraphs`, so it runs at most ONCE per render and only when a search is active. Gated on
+    /// the initial load so a not-yet-loaded feed does not flash the empty CTA. Under the split view the
+    /// container computes this projection ONCE and injects it via `resolvedContent`, so the sidebar and
+    /// content columns do not each re-scan; on the compact path this screen resolves its own.
+    private func resolveContent() -> StreamSearchProjection.Result {
+        if let resolvedContent { return resolvedContent }
+        return StreamSearchProjection.resolve(
+            didLoad: feed.didLoad && folderLoaded,
+            thoughts: feed.thoughts,
+            searchQuery: searchQuery
         )
-        return (state, results)
     }
 
     var body: some View {
@@ -142,7 +157,25 @@ struct FolderContentsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CanopyColor.bg.ignoresSafeArea())
-        .safeAreaInset(edge: .bottom) { bottomStack(state: screenState) }
+        // The bottom stack renders here only in the compact `NavigationStack` (spec 0022). Under the split
+        // view it is lifted to the ONE container above the columns, so each column omits it - otherwise the
+        // sidebar and content columns would each show their own search field + record actions. Whether this
+        // screen owns its bar is derived from `StreamContainer.folderScreenShowsOwnBottomBar` at the call
+        // site (compact: true, split columns: false), not a raw literal, so the single-bottom-bar invariant
+        // is a tested decision. The stack itself is the SHARED `StreamBottomStack` the split view lifts too.
+        .safeAreaInset(edge: .bottom) {
+            if showsBottomBar {
+                StreamBottomStack(
+                    query: $searchQuery,
+                    screenState: screenState,
+                    deletion: deletion,
+                    playbackController: playbackController,
+                    onOpenThought: onOpenThought,
+                    onNewKeyboardThought: { onNewKeyboardThought(currentPath) },
+                    onNewThought: { onNewThought(currentPath) }
+                )
+            }
+        }
         .overlay(alignment: .top) {
             if feed.deleteFailed {
                 DeleteFailedBanner()
@@ -192,52 +225,6 @@ struct FolderContentsView: View {
             // changes the thought count would miss: a rename, a move between two existing folders, or a
             // synced-in empty folder.
             await reloadFolders()
-        }
-    }
-
-    // MARK: - Bottom stack (spec 0021)
-
-    /// The composed bottom safe-area stack (spec 0021 reconciliation of the three bottom affordances):
-    /// from top to bottom, the transient "Thought deleted - Undo" chip (spec 0020), the now-playing bar
-    /// (spec 0015), then the persistent bottom bar (spec 0021), all in ONE inset so they stack cleanly
-    /// via the SHARED VStack spacing and reserve real layout space - no hardcoded overlay clearance, and
-    /// no overlap. Each element appears only when relevant (undo chip while a delete is pending,
-    /// now-playing bar while something plays), so the stack is just the bottom bar in the common case.
-    /// The bar hides its search field in a truly empty store but still shows Record, so recording is
-    /// always reachable.
-    private func bottomStack(state screenState: FolderScreenState) -> some View {
-        VStack(spacing: CanopySpacing.x3) {
-            if deletion.pending != nil {
-                UndoDeleteAffordance(onUndo: { Task { await deletion.undo() } })
-                    .transition(.opacity)
-            }
-            // In a truly empty store the centered CTA already carries labeled Record + New-thought buttons
-            // (spec 0021), so the bottom bar (which would only duplicate them, with no field to search)
-            // is omitted; the undo chip above can still show while a just-deleted thought is pending.
-            if screenState != .emptyStore {
-                if let controller = playbackController {
-                    NowPlayingBar(controller: controller, onOpenThought: onOpenThought)
-                }
-                BottomBar(query: $searchQuery, showsSearchField: screenState.showsSearchField) {
-                    BottomBarIconButton(
-                        systemImage: "square.and.pencil",
-                        accessibilityLabel: "New thought"
-                    ) { onNewKeyboardThought(currentPath) }
-                    BottomBarRecordButton(accessibilityLabel: "Record") { onNewThought(currentPath) }
-                }
-            }
-        }
-        .padding(.bottom, CanopySpacing.x2)
-        .animation(.easeInOut(duration: 0.2), value: deletion.pending != nil)
-        // The undo window's ~5s timer is lifecycle-tied to THIS view (spec 0020), the same shape as the
-        // copied-confirmation chip: keyed on the monotonic delete trigger so a rapid second delete
-        // re-arms it and navigation cancels it, never a detached timer. On expiry with a still-pending
-        // delete it commits (purges). The root still owns the UndoManager + scene-phase commit.
-        .task(id: deletion.deleteTrigger) {
-            guard deletion.deleteTrigger > 0, deletion.pending != nil else { return }
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard !Task.isCancelled else { return }
-            await deletion.commitWindow()
         }
     }
 
@@ -516,6 +503,9 @@ struct FolderContentsView: View {
     private func reloadFolders() async {
         childFolderNames = await feed.childFolders(at: currentPath)
         folderLoaded = true
+        // Tell the split container this screen's folders have loaded (spec 0022), so its lifted projection
+        // can gate on "folders loaded" like the compact path and not flash the empty CTA mid-load.
+        onFoldersLoaded?()
     }
 
     private func createFolder() async {

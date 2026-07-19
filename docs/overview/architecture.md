@@ -4,9 +4,13 @@ How the system is built and why.
 
 ## App project
 
-- **SwiftUI, iPhone only, min iOS 26.0, Swift 5 language mode.** iOS 26 is required for the
+- **SwiftUI, iPhone AND iPad, min iOS 26.0, Swift 5 language mode.** iOS 26 is required for the
   on-device `SpeechAnalyzer` capture engine (spec 0002). Swift 5 mode avoids strict concurrency
-  friction for the shell; revisit when concurrency-heavy features land.
+  friction for the shell; revisit when concurrency-heavy features land. As of spec 0022 the
+  `TARGETED_DEVICE_FAMILY` is `1,2` (iPhone + iPad): the Thoughts root is an ADAPTIVE navigation
+  container - a `NavigationSplitView` on regular width (iPad, iPhone landscape where it fits), the
+  `NavigationStack` on compact (iPhone portrait) - chosen by the pure `StreamContainer.decide`. iPad
+  supports all orientations; iPhone stays portrait-only (`UISupportedInterfaceOrientations~ipad`).
 - **XcodeGen.** The project is generated from `ios/project.yml`; the `.xcodeproj` is gitignored
   so it never drifts or conflicts. Contributors run `xcodegen generate`. See README.
 - **Bundle id** `com.rogueoak.thoughtstream`, display name "Thought Stream", publisher Rogue Oak.
@@ -356,9 +360,40 @@ How the system is built and why.
     detached timer), and on expiry it `purge`s (commits the delete). The controller takes the scene
     `UndoManager` from SwiftUI's `@Environment(\.undoManager)`; `applicationSupportsShakeToEdit` stays
     at its default so the shake surfaces the registered action.
-- `Views/` - SwiftUI screens. `StreamListView` is the ROOT of the Thoughts `NavigationStack` whose
-  path is an enum route `StreamRoute { case folder([String]); case thought(Thought); case newThought(Thought) }`:
-  it owns the shared session/settings/playback wiring and the sort-order state, and renders
+- `Views/` - SwiftUI screens. `StreamListView` is the ROOT of the Thoughts navigation, an ADAPTIVE
+  container (spec 0022): the pure `StreamContainer.decide(horizontalSizeClass:)` chooses a
+  `NavigationSplitView` on REGULAR width (iPad, iPhone landscape where it fits) or the single
+  `NavigationStack` on COMPACT (iPhone portrait). Both share the SAME enum route
+  `StreamRoute { case folder([String]); case thought(Thought); case newThought(Thought) }`, the same
+  shared session/settings/playback wiring + sort-order state, the same dictation / resume covers and
+  Settings sheet (lifted above the container so neither forks them), and the same `detailView(for:)`
+  builder (so the compact destination and the split detail column construct the thought detail once).
+  The COMPACT `compactStack` is the pre-0022 body verbatim (one `FolderContentsView` at a time, each with
+  its own bottom bar). The SPLIT `splitView` puts the root folder tree in the SIDEBAR, the sidebar-selected
+  folder's thoughts in the CONTENT column (its own `NavigationStack` so nested folders push there), and the
+  `selectedRoute` thought in the DETAIL column (a `SplitDetailPlaceholder` when none). Under the split view
+  the bottom bar + search + now-playing + undo chip are LIFTED to ONE `liftedBottomStack` above the columns
+  (the 0021-review requirement): both folder columns own no bar and share the ONE
+  `StreamSearchProjection.resolve(...)` computed once at the container (a pure, SwiftUI-FREE seam factored
+  out of `FolderContentsView.resolveContent`, so the two columns do not each re-scan the shared query - and
+  reusable by a future Watch target). Whether a folder screen owns its own bottom bar is the tested
+  `StreamContainer.folderScreenShowsOwnBottomBar` decision (compact: true, split: false) driving the call
+  sites, not a raw literal, so the single-bottom-bar invariant cannot silently regress. The lifted bar AND
+  the compact per-screen bar are the SAME extracted `StreamBottomStack` view (one place for the composition
+  + the 5s undo-window timer, de-duped and reusable). Four split-only correctness rules the panel review
+  added: (1) during an active search the SIDEBAR keeps its normal folder tree
+  (`StreamSearchProjection.sidebarProjection` demotes an active-search state to `.normal`), so exactly ONE
+  global results list shows - in the content column, not double-rendered beside the sidebar; (2) the DETAIL
+  selection is reconciled so it never goes stale - `selectSidebarFolder` clears `selectedRoute` on a folder
+  switch, and a delete clears it when the deleted id is the shown thought (the pure `SplitDetailReconcile`);
+  (3) the lifted projection gates on `feed.didLoad && splitFoldersLoaded` (matching the compact
+  `feed.didLoad && folderLoaded` gate, via `FolderContentsView.onFoldersLoaded`) so the split view does not
+  flash the empty CTA mid-load; (4) the split detail column drops its own search field (defers to the
+  always-visible lifted bar). The `UndoManagerHost` gains a `reclaimTrigger` the root bumps on a split-column
+  change (sidebar folder / detail thought selection) so it re-homes first responder and Shake to Undo keeps
+  reaching the deletion controller's manager regardless of active column, PLUS a self-heal on a layout pass
+  (rotate / resize / multitasking, which fire no selection change) and on the orientation notification, gated
+  on a pending delete. It renders
   `FolderContentsView(path: [])` as the root with a `navigationDestination` for the routes.
   `FolderContentsView` renders the same folder-list screen at ANY path (so a pushed `.folder` recurses
   into another instance), projecting its rows through `FolderListModel`; it owns the folder-CRUD alerts,
@@ -464,7 +499,17 @@ republishes; conflict + invalid-name rejection), the injected-UndoManager regist
 (`ThoughtDeletionControllerTests` - a delete registers "Undo Delete" on the injected manager; the shake
 gesture and the undo-through-the-manager restore stay manual-verify), and contextual folder filing
 (`DictationViewModelTests` - a session created from path `[X]` files its thought in `[X]`; the default
-files at the root).
+files at the root). Plus the iPad adaptive layout (spec 0022): `AdaptiveLayoutTests` cover
+`StreamContainer.decide` (regular -> split, compact -> stack, nil -> stack), the bar-ownership mapping
+(`folderScreenShowsOwnBottomBar` - compact true, split false, locking the single-bottom-bar invariant),
+`StreamSearchProjection` (the lifted, one-scan search projection: not-loaded -> normal/no-results,
+empty-store, normal, global active-query matches in preserved order, no-matches, and parity with
+`FolderScreenState.select`), the sidebar demotion (`sidebarProjection` demotes active-search states to
+`.normal` so only ONE results list shows), and the detail reconcile (`SplitDetailReconcile` clears the
+selection when the shown thought is deleted, keeps it otherwise, clears nothing when none shown). The
+split-view column LAYOUT, the one-projection sharing across columns (wiring, not unit-proven),
+rotation/multitasking adaptivity, and the cross-column Shake-to-Undo re-home + layout-pass self-heal are
+UI-only and verified on device / in the iPad simulator.
 The generated scheme runs them.
 
 ## Design tokens
