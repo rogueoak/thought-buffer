@@ -352,6 +352,119 @@ final class NoteStoreTests: XCTestCase {
         XCTAssertEqual(all.first?.folderPath.map { $0.lowercased() }, ["work"])
     }
 
+    // MARK: - Recoverable delete (spec 0020)
+
+    /// Soft-delete moves the note out of the tree (it no longer loads) but does NOT destroy it, and
+    /// restore brings it back to its original folder with its content intact.
+    func testSoftDeleteThenRestoreRoundTrip() throws {
+        let note = Note(title: "Recoverable", paragraphs: ["Keep me around."], createdAt: Date(),
+                        folderPath: ["Work"])
+        try store.save(note)
+
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+        XCTAssertEqual(token.id, note.id)
+        XCTAssertEqual(token.formerFolderPath, ["Work"])
+        XCTAssertNil(token.audioFilename, "no recording, so no audio filename")
+        // Gone from the visible tree.
+        XCTAssertNil(store.load(id: note.id))
+        XCTAssertEqual(store.loadAll().count, 0)
+
+        let restored = try store.restore(token)
+        XCTAssertEqual(restored.folderPath, ["Work"])
+        XCTAssertFalse(restored.landedAtRoot)
+        let back = try XCTUnwrap(store.load(id: note.id))
+        XCTAssertEqual(back.folderPath, ["Work"])
+        XCTAssertEqual(back.paragraphs, ["Keep me around."])
+    }
+
+    /// The audio SIBLING is moved into the trash on soft-delete and moved back on restore, so an undo
+    /// fully recovers a recorded note.
+    func testSoftDeleteAndRestoreMovesAudioSibling() throws {
+        let id = UUID()
+        let note = Note(id: id, title: "Rec", paragraphs: ["Body."], createdAt: Date(),
+                        folderPath: ["Voice"])
+        try store.save(note)
+        try store.saveAudio(from: makeTempRecording(), for: id)
+        XCTAssertTrue(store.audioExists(for: id))
+
+        let token = try XCTUnwrap(try store.softDelete(id: id))
+        XCTAssertEqual(token.audioFilename, "\(id.uuidString).m4a")
+        XCTAssertFalse(store.audioExists(for: id), "audio moved to trash, not beside a live note")
+
+        _ = try store.restore(token)
+        XCTAssertNotNil(store.load(id: id))
+        let resolved = try XCTUnwrap(store.audioURL(for: id))
+        XCTAssertEqual(resolved.deletingLastPathComponent().lastPathComponent, "Voice")
+        XCTAssertTrue(store.audioExists(for: id), "audio restored beside the note")
+    }
+
+    /// Restoring a note whose original folder was deleted meanwhile lands it at ROOT (never a failure),
+    /// and the result records that it landed at root.
+    func testRestoreWhenOriginalFolderGoneLandsAtRoot() throws {
+        let note = Note(title: "Orphan", paragraphs: ["Body."], createdAt: Date(), folderPath: ["Temp"])
+        try store.save(note)
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+
+        // The folder is gone (empty after the note left, then removed by the user).
+        try store.deleteFolder(at: ["Temp"])
+        XCTAssertFalse(store.folders(at: []).contains("Temp"))
+
+        let restored = try store.restore(token)
+        XCTAssertTrue(restored.landedAtRoot)
+        XCTAssertEqual(restored.folderPath, [])
+        let back = try XCTUnwrap(store.load(id: note.id))
+        XCTAssertEqual(back.folderPath, [], "restored to root because the original folder was gone")
+    }
+
+    /// Purge permanently removes a trashed note: after purge, restore recovers nothing.
+    func testPurgeRemovesTrashedNotePermanently() throws {
+        let note = Note(title: "Doomed", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+
+        try store.purge(token)
+        _ = try store.restore(token) // no-op now: files are gone
+        XCTAssertNil(store.load(id: note.id))
+    }
+
+    /// purgeAllTrash empties every trashed note (the launch sweep), and never touches live notes.
+    func testPurgeAllTrashEmptiesTrashKeepingLiveNotes() throws {
+        let live = Note(title: "Alive", paragraphs: ["Here."], createdAt: Date())
+        let gone = Note(title: "Trashed", paragraphs: ["Bye."], createdAt: Date())
+        try store.save(live)
+        try store.save(gone)
+        let token = try XCTUnwrap(try store.softDelete(id: gone.id))
+
+        try store.purgeAllTrash()
+        _ = try store.restore(token) // nothing to bring back
+        XCTAssertNil(store.load(id: gone.id))
+        XCTAssertNotNil(store.load(id: live.id), "the live note is untouched by the trash sweep")
+    }
+
+    /// The trash NEVER escapes the store root: the trashed files sit under `.trash/` inside the store
+    /// directory, and a soft-deleted note is not visible to `loadAll` (which skips the hidden dir).
+    func testTrashStaysInsideStoreRoot() throws {
+        let note = Note(title: "x", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        _ = try XCTUnwrap(try store.softDelete(id: note.id))
+
+        // The trashed file lives under <root>/.trash/<id>/<id>.md - strictly inside the root.
+        let trashDir = tempDir.appendingPathComponent(".trash", isDirectory: true)
+            .appendingPathComponent(note.id.uuidString, isDirectory: true)
+        let trashedNote = trashDir.appendingPathComponent("\(note.id.uuidString).md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedNote.path),
+                      "trashed file must sit under <root>/.trash/, inside the store root")
+        XCTAssertTrue(trashedNote.standardizedFileURL.path.hasPrefix(tempDir.standardizedFileURL.path + "/"),
+                      "trash path must never escape the store root")
+        // Hidden trash is not surfaced as a note.
+        XCTAssertEqual(store.loadAll().count, 0)
+    }
+
+    /// Soft-deleting a missing note returns nil (nothing to trash), not a throw.
+    func testSoftDeleteMissingReturnsNil() throws {
+        XCTAssertNil(try store.softDelete(id: UUID()))
+    }
+
     /// Write a stand-in recording to a temp file the store will move into place.
     private func makeTempRecording(content: String = "audio-bytes") throws -> URL {
         let url = FileManager.default.temporaryDirectory

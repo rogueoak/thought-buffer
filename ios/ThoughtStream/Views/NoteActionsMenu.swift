@@ -117,3 +117,89 @@ extension View {
         modifier(CopiedConfirmationModifier(trigger: trigger, isShown: isShown, alignment: alignment))
     }
 }
+
+/// The transient "Note deleted - Undo" affordance (spec 0020): a muted capsule matching the copied chip,
+/// with an Undo button that calls back the same restore path shake-to-undo uses. Shown after any delete
+/// (list swipe, list/detail menu) for a few seconds so undo is discoverable without shaking.
+struct UndoDeleteAffordance: View {
+    /// Called when the user taps Undo. Restores the note (see `NoteDeletionController.undo`).
+    let onUndo: () -> Void
+
+    var body: some View {
+        HStack(spacing: CanopySpacing.x3) {
+            Image(systemName: "trash")
+            Text("Note deleted")
+                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+            Button(action: onUndo) {
+                Text("Undo")
+                    .font(.system(size: CanopyFont.sizeSm, weight: .bold))
+                    .foregroundStyle(CanopyColor.primary)
+            }
+            .accessibilityLabel("Undo delete")
+        }
+        .foregroundStyle(CanopyColor.mutedForeground)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.muted)
+        .clipShape(Capsule())
+        .shadow(color: CanopyColor.overlay.opacity(0.2), radius: 8, y: 4)
+    }
+}
+
+/// The lifecycle-tied host for the "Note deleted - Undo" affordance (spec 0020), the same shape as the
+/// copied-confirmation modifier so its auto-hide re-arms on a rapid second delete and cancels on view
+/// teardown - never a detached `asyncAfter`. When the window (~5s) elapses WITHOUT an undo, it calls
+/// `onExpire` so the caller commits the delete (purges the trashed files). An undo clears `pending`,
+/// which restarts the `.task(id:)` and skips the expire.
+private struct UndoDeleteAffordanceModifier: ViewModifier {
+    /// Bumped by the caller on each delete; the affordance shows while a delete is pending and re-arms
+    /// its window on every change so a second delete never fires the first delete's purge early.
+    let trigger: Int
+    /// Whether a delete is currently pending an undo window. The affordance shows while true.
+    let isPending: Bool
+    let alignment: Alignment
+    /// Tapped Undo -> restore.
+    let onUndo: () -> Void
+    /// The window elapsed with no undo -> commit (purge).
+    let onExpire: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: alignment) {
+                if isPending {
+                    UndoDeleteAffordance(onUndo: onUndo)
+                        .padding(.top, alignment == .top ? CanopySpacing.x2 : 0)
+                        .padding(.bottom, alignment == .bottom ? CanopySpacing.x8 : 0)
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isPending)
+            // Keyed on `trigger`: each delete re-arms a fresh ~5s window; a second delete cancels the
+            // first's window (whose caller already committed the first). Cancellation on teardown stops a
+            // stale timer from purging after navigation. The expire only fires when still pending, so an
+            // undo (which clears pending) races cleanly - the reordered task sees `isPending == false`.
+            .task(id: trigger) {
+                guard trigger > 0, isPending else { return }
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                onExpire()
+            }
+    }
+}
+
+extension View {
+    /// Show the shared "Note deleted - Undo" affordance over this view (spec 0020), auto-committing the
+    /// delete after ~5s if the user does not undo. `trigger` is bumped on each delete; `isPending` holds
+    /// whether an undo window is open. The window is tied to this view's lifecycle (see the modifier).
+    func undoDeleteAffordance(
+        trigger: Int,
+        isPending: Bool,
+        alignment: Alignment,
+        onUndo: @escaping () -> Void,
+        onExpire: @escaping () -> Void
+    ) -> some View {
+        modifier(UndoDeleteAffordanceModifier(
+            trigger: trigger, isPending: isPending, alignment: alignment,
+            onUndo: onUndo, onExpire: onExpire))
+    }
+}

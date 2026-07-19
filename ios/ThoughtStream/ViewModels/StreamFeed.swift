@@ -37,9 +37,21 @@ final class StreamFeed: ObservableObject {
     /// Reload the list off the main thread. Call after a dictation session saves.
     func reload() async { await driver.reload() }
 
-    /// Delete a note (and its sibling recording) through the store, then reload. Call from the
-    /// list's swipe-to-delete action. A failure surfaces via `deleteFailed`.
-    func delete(id: UUID) async { await driver.delete(id: id) }
+    /// Soft-delete a note (spec 0020): move it to the store's trash, then reload. Returns a
+    /// `DeletedNote` token to register with the UndoManager and the in-app undo affordance, or nil when
+    /// the delete failed / there was nothing to delete. A failure surfaces via `deleteFailed`.
+    @discardableResult
+    func delete(id: UUID) async -> DeletedNote? { await driver.delete(id: id) }
+
+    /// Restore a soft-deleted note (spec 0020) - undo a delete - then reload so it reappears.
+    func restore(_ token: DeletedNote) async { await driver.restore(token) }
+
+    /// Permanently remove a soft-deleted note's trashed files (spec 0020): commit the delete when its
+    /// undo window closes.
+    func purge(_ token: DeletedNote) async { await driver.purge(token) }
+
+    /// Empty the whole trash (spec 0020): an opportunistic launch-time sweep, called once on start.
+    func purgeAllTrash() async { await driver.purgeAllTrash() }
 
     /// Clear a surfaced delete-failure message once the view has shown it.
     func clearDeleteFailure() { driver.clearDeleteFailure(); mirror() }

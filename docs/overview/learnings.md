@@ -514,3 +514,30 @@ counter instead - it re-arms on each event and cancels on teardown - the same li
 sibling error banners already used. Generalizes to any transient, self-dismissing UI (toasts, chips,
 "copied"/"saved" flashes): key the dismissal on the view's lifecycle and a monotonic trigger, never a
 free-floating timer.
+
+## Make a destructive action reversible by moving, not removing - and route every entry point through one seam (spec 0020)
+
+"Delete" that unlinks files immediately has no undo to offer, so the iOS Shake to Undo gesture and an
+in-app "Undo" both have nothing to restore. The fix models delete as a MOVE into a per-store trash
+directory plus a `restore`/`purge` pair, returning a lightweight token (id + former location +
+filenames) that is enough to put the files back OR commit their removal - the files are never gone
+until the undo window closes. Three shape choices made it safe and non-duplicative. First: the trash
+is a HIDDEN subdirectory inside the store root (`.trash/`), so the existing tree walks that already
+`skipsHiddenFiles` never surface a trashed note and nothing downstream changed; keeping it inside the
+root means the reused path-safety guard still holds (a soft-delete only ever moves within the tree).
+Second: restore needs its OWN destination guard, subtly different from the delete-time one - a
+top-level note legitimately restores to the ROOT, so the guard is "at or BELOW root" where the folder
+delete/rename guard is "strictly below root"; copying the strict guard verbatim would reject every
+top-level restore, and dropping the guard would let a crafted former-folder path escape the tree. When
+you reuse a safety check for a new operation, re-derive its exact predicate for that operation rather
+than pasting it. Third: a destructive action reachable from several places (a swipe, a list menu, a
+detail menu) must route through ONE coordinator, or the "make it undoable" wiring (register with the
+UndoManager, show the affordance, arm the purge timer) is duplicated and one site drifts - here a
+single `@MainActor` controller owned by the composition root serves every entry point, and a delete
+from a pushed detail screen pops back to the list FIRST so the shared affordance is visible where it
+lives. And tie the undo window's timer to the view lifecycle (a `.task(id:)` on a monotonic trigger),
+never a detached `asyncAfter`, so a rapid second delete re-arms it and teardown cancels it - the same
+rule the transient-confirmation chips already follow. Generalizes to any destructive operation that
+should be undoable: move to a quarantine inside the same trust boundary, hand back a restore token,
+funnel all triggers through one seam, and re-derive the path/permission guard for the restore
+direction rather than reusing the delete-direction one.

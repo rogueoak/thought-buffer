@@ -283,6 +283,60 @@ final class ICloudNoteStoreTests: XCTestCase {
         XCTAssertTrue(local.folders(at: []).contains("AlsoShared"))
     }
 
+    // MARK: - Recoverable delete (spec 0020)
+
+    /// Coordinated soft-delete then restore round-trips the note back to its folder with content intact,
+    /// including its audio sibling - the same recoverable-delete contract the local store honors.
+    func testCoordinatedSoftDeleteRestoreRoundTripWithAudio() throws {
+        let id = UUID()
+        let note = Note(id: id, title: "Rec", paragraphs: ["Body."], createdAt: Date(),
+                        folderPath: ["Voice"])
+        try store.save(note)
+        try store.saveAudio(from: makeTempRecording(), for: id)
+
+        let token = try XCTUnwrap(try store.softDelete(id: id))
+        XCTAssertEqual(token.formerFolderPath, ["Voice"])
+        XCTAssertEqual(token.audioFilename, "\(id.uuidString).m4a")
+        XCTAssertNil(store.load(id: id))
+        XCTAssertFalse(store.audioExists(for: id))
+
+        let restored = try store.restore(token)
+        XCTAssertEqual(restored.folderPath, ["Voice"])
+        XCTAssertFalse(restored.landedAtRoot)
+        XCTAssertNotNil(store.load(id: id))
+        XCTAssertTrue(store.audioExists(for: id))
+    }
+
+    /// Restore when the original folder is gone lands the note at root (never a failure), coordinated.
+    func testCoordinatedRestoreWhenFolderGoneLandsAtRoot() throws {
+        let note = Note(title: "Orphan", paragraphs: ["Body."], createdAt: Date(), folderPath: ["Temp"])
+        try store.save(note)
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+        try store.deleteFolder(at: ["Temp"])
+
+        let restored = try store.restore(token)
+        XCTAssertTrue(restored.landedAtRoot)
+        XCTAssertEqual(store.load(id: note.id)?.folderPath, [])
+    }
+
+    /// Purge permanently removes the trashed note, coordinated; and the trash sits inside the store root.
+    func testCoordinatedPurgeAndTrashStaysInsideRoot() throws {
+        let note = Note(title: "Doomed", paragraphs: ["Body."], createdAt: Date())
+        try store.save(note)
+        let token = try XCTUnwrap(try store.softDelete(id: note.id))
+
+        let trashedNote = tempDir.appendingPathComponent(".trash", isDirectory: true)
+            .appendingPathComponent(note.id.uuidString, isDirectory: true)
+            .appendingPathComponent("\(note.id.uuidString).md")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trashedNote.path))
+        XCTAssertTrue(trashedNote.standardizedFileURL.path.hasPrefix(tempDir.standardizedFileURL.path + "/"))
+        XCTAssertEqual(store.loadAll().count, 0, "trashed note is hidden from loadAll")
+
+        try store.purge(token)
+        _ = try store.restore(token) // nothing to bring back
+        XCTAssertNil(store.load(id: note.id))
+    }
+
     /// Write a stand-in recording to a temp file the store will move into place.
     private func makeTempRecording(content: String = "audio-bytes") throws -> URL {
         let url = FileManager.default.temporaryDirectory

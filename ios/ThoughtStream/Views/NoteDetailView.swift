@@ -29,6 +29,10 @@ struct NoteDetailView: View {
     /// composition root discards it (never persists it, or deletes it if it was provisionally saved)
     /// rather than leaving a blank note in the list. Nil for a normal saved note.
     private let onDiscardEmpty: (() -> Void)?
+    /// Called with this note's id when the user taps Delete in the "..." menu (spec 0020), so the
+    /// composition root soft-deletes it through the shared undoable path AND pops back to the list where
+    /// the undo affordance is visible. Nil at bare/preview call sites (no Delete shown).
+    private let onDelete: ((UUID) -> Void)?
     /// Whether this note is a brand-new, not-yet-persisted note opened straight into the editor
     /// (spec 0013). It stays true until the first non-empty commit persists real content; while true,
     /// leaving with no title and no body discards the note via `onDiscardEmpty`.
@@ -74,6 +78,7 @@ struct NoteDetailView: View {
         onResume: ((Note) -> Void)? = nil,
         onCommitEdit: ((Note) -> Void)? = nil,
         onDiscardEmpty: (() -> Void)? = nil,
+        onDelete: ((UUID) -> Void)? = nil,
         startInEdit: Bool = false
     ) {
         self.note = note
@@ -82,6 +87,7 @@ struct NoteDetailView: View {
         self.onResume = onResume
         self.onCommitEdit = onCommitEdit
         self.onDiscardEmpty = onDiscardEmpty
+        self.onDelete = onDelete
         _paragraphs = State(initialValue: note.paragraphs)
         _hasCustomTitle = State(initialValue: note.hasCustomTitle)
         _customTitleText = State(initialValue: note.title)
@@ -226,7 +232,18 @@ struct NoteDetailView: View {
                 // that flashes the shared confirmation chip.
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        NoteActionsMenu(note: currentNote) { copiedTrigger += 1 }
+                        NoteActionsMenu(note: currentNote, onCopied: { copiedTrigger += 1 }) {
+                            // Delete (spec 0020) via the shared undoable path: the composition root
+                            // soft-deletes and pops back to the list where the undo affordance shows.
+                            // Only when a call site supplied `onDelete` (a bare/preview note has none).
+                            if let onDelete {
+                                Button(role: .destructive) {
+                                    onDelete(note.id)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
                     } label: {
                         Image(systemName: "ellipsis")
                     }

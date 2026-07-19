@@ -192,6 +192,127 @@ struct NoteStore: NoteStoring {
         }
     }
 
+    // MARK: - Recoverable delete (spec 0020)
+
+    /// The store's trash root: a hidden `.trash/` directory INSIDE the store root, so soft-deleted files
+    /// never leave the tree and are skipped by `loadAll` (which skips hidden files). Each deleted note
+    /// gets its own `<id>/` subdirectory under it, holding its `<id>.md` (and `<id>.m4a`).
+    private var trashRoot: URL {
+        directory.appendingPathComponent(Self.trashDirectoryName, isDirectory: true)
+    }
+
+    /// The trash subdirectory for one note id: `.trash/<id>/`. Kept per-note so restore/purge operate on
+    /// exactly this note's files and a whole-trash sweep is a single directory removal.
+    private func trashDirectory(for id: UUID) -> URL {
+        trashRoot.appendingPathComponent(id.uuidString, isDirectory: true)
+    }
+
+    /// Resolve a folder path to a destination directory for RESTORE that is at or below the store root,
+    /// or nil when it escapes. Empty path resolves to the root itself (a top-level restore); anything
+    /// that would collapse/escape above the root is rejected so a crafted former-folder path can never
+    /// place a restored file outside the tree. Distinct from `resolvedFolderDirectory` (which rejects the
+    /// root) because restoring a top-level note legitimately targets the root.
+    private func resolvedRestoreDirectory(for path: [String]) -> URL? {
+        let dir = directoryURL(for: path).standardizedFileURL
+        let root = directory.standardizedFileURL
+        guard dir == root || dir.path.hasPrefix(root.path + "/") else { return nil }
+        return dir
+    }
+
+    /// Soft-delete a note: MOVE its `<id>.md` (and sibling `<id>.m4a` if present) into `.trash/<id>/`,
+    /// returning a `DeletedNote` token that records its former folder path and filenames so `restore`
+    /// can put it back. Returns nil when the note has no `.md` file to trash. The move only ever lands
+    /// inside the store root (the trash is a subdirectory of it).
+    @discardableResult
+    func softDelete(id: UUID) throws -> DeletedNote? {
+        let fm = FileManager.default
+        guard let noteURL = locateFile(id: id) else { return nil }
+        let sourceDir = noteURL.deletingLastPathComponent()
+        let folderPath = Self.relativeFolderPath(of: noteURL, under: directory)
+
+        let trashDir = trashDirectory(for: id)
+        // A stale trash subdir for this id (a re-delete after a crash mid-purge) is cleared first so the
+        // move never fails on an occupied destination.
+        if fm.fileExists(atPath: trashDir.path) { try fm.removeItem(at: trashDir) }
+        try ensureDirectory(at: trashDir)
+
+        let noteName = noteURL.lastPathComponent
+        try fm.moveItem(at: noteURL, to: trashDir.appendingPathComponent(noteName, isDirectory: false))
+
+        var audioName: String?
+        let audioSibling = sourceDir.appendingPathComponent(
+            "\(id.uuidString).\(Self.audioFileExtension)", isDirectory: false)
+        if fm.fileExists(atPath: audioSibling.path) {
+            let name = audioSibling.lastPathComponent
+            try fm.moveItem(at: audioSibling, to: trashDir.appendingPathComponent(name, isDirectory: false))
+            audioName = name
+        }
+
+        return DeletedNote(
+            id: id, formerFolderPath: folderPath, noteFilename: noteName, audioFilename: audioName)
+    }
+
+    /// Restore a soft-deleted note: move its trashed `.md` (and `.m4a`) back into its former folder path.
+    /// If that folder no longer exists it lands at ROOT instead (never a failure). Removes the now-empty
+    /// `.trash/<id>/` directory afterward.
+    @discardableResult
+    func restore(_ token: DeletedNote) throws -> RestoredNote {
+        let fm = FileManager.default
+        let trashDir = trashDirectory(for: token.id)
+
+        // Choose the destination: the former folder if it still exists, else the root. `directoryURL` is
+        // only trusted after `resolvedRestoreDirectory` confirms it stays within the tree.
+        let landedAtRoot: Bool
+        let destinationDir: URL
+        if !token.formerFolderPath.isEmpty,
+           let resolved = resolvedRestoreDirectory(for: token.formerFolderPath),
+           fm.fileExists(atPath: resolved.path) {
+            destinationDir = resolved
+            landedAtRoot = false
+        } else {
+            destinationDir = directory
+            landedAtRoot = !token.formerFolderPath.isEmpty
+        }
+        try ensureDirectory(at: destinationDir)
+
+        // Move the note file back FIRST so a partial failure never strands audio without its note.
+        let trashedNote = trashDir.appendingPathComponent(token.noteFilename, isDirectory: false)
+        if fm.fileExists(atPath: trashedNote.path) {
+            let destination = destinationDir.appendingPathComponent(token.noteFilename, isDirectory: false)
+            if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+            try fm.moveItem(at: trashedNote, to: destination)
+        }
+        if let audioName = token.audioFilename {
+            let trashedAudio = trashDir.appendingPathComponent(audioName, isDirectory: false)
+            if fm.fileExists(atPath: trashedAudio.path) {
+                let destination = destinationDir.appendingPathComponent(audioName, isDirectory: false)
+                if fm.fileExists(atPath: destination.path) { try fm.removeItem(at: destination) }
+                try fm.moveItem(at: trashedAudio, to: destination)
+            }
+        }
+
+        if fm.fileExists(atPath: trashDir.path) { try? fm.removeItem(at: trashDir) }
+
+        let restoredPath = landedAtRoot ? [] : token.formerFolderPath
+        return RestoredNote(id: token.id, folderPath: restoredPath, landedAtRoot: landedAtRoot)
+    }
+
+    /// Permanently remove a soft-deleted note's trashed files (commit the delete). No-op if already gone.
+    func purge(_ token: DeletedNote) throws {
+        let trashDir = trashDirectory(for: token.id)
+        if FileManager.default.fileExists(atPath: trashDir.path) {
+            try FileManager.default.removeItem(at: trashDir)
+        }
+    }
+
+    /// Empty the whole trash directory (a launch-time sweep of tokens with no pending undo). No-op when
+    /// the trash is absent.
+    func purgeAllTrash() throws {
+        if FileManager.default.fileExists(atPath: trashRoot.path) {
+            try FileManager.default.removeItem(at: trashRoot)
+        }
+    }
+
     // MARK: - Audio recording (spec 0007)
 
     /// The sibling audio URL for a note id: `<id>.m4a` beside the note's `<id>.md`, wherever the note

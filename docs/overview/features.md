@@ -207,8 +207,9 @@ Fixes from real device testing:
   never loses text.
 - **Keyword-led command mode** - anything that leads with the control word is treated as a command
   and never transcribed; an unrecognized keyword-led phrase is dropped with a chip (see Mira above).
-- **Swipe to delete** - the Stream list is a `List` with iOS-standard swipe-to-delete that removes
-  the note and its sibling recording through the store, then reloads.
+- **Swipe to delete** - the Stream list is a `List` with iOS-standard swipe-to-delete. As of spec
+  0020 the delete is UNDOABLE (see "Undoable delete" below): the note and its recording are moved to
+  the store's trash, an Undo affordance shows, and shaking the device offers "Undo Delete".
 - **Word count** - note cards and the detail header show a word count ("12 words" / "1 word")
   instead of a paragraph count.
 - **Louder waveform** - the mic-level -> bar-height mapping is tuned (perceptual curve, higher gain)
@@ -478,3 +479,23 @@ use:
   detail header now render one shared `NoteMetaStats` component, so their metadata line cannot drift.
 - **Inline Thoughts header (0016).** The top-level "Thoughts" title sits on the same navigation-bar
   row as the mic and gear buttons (inline title) instead of on its own large-title row below them.
+
+## Undoable delete (spec 0020)
+
+Deleting a note is recoverable, matching the iOS "Shake to Undo" expectation and adding a Delete
+action to the note's actions menu:
+
+- **Delete in the menus.** The shared `NoteActionsMenu` "..." menu (note detail) and the list-row
+  long-press context menu both carry a destructive **Delete**. The list-row swipe deletes through the
+  same path. Deleting from the detail page pops back to the list, where the undo affordance shows.
+- **Soft delete (trash + restore).** A delete does not destroy files: it MOVES the note's `<id>.md`
+  (and sibling `<id>.m4a`) into a hidden `.trash/<id>/` directory inside the store root, returning a
+  lightweight `DeletedNote` token. Restore moves the files back to their original folder - or to the
+  root if that folder was deleted meanwhile (never a failure). The trash never escapes the store root
+  and is skipped by the notes list.
+- **Undo affordance.** A brief, non-blocking "Note deleted - Undo" chip (~5s, styled like the
+  "Copied to clipboard" confirmation) appears after any delete; tapping Undo restores the note.
+- **Shake to Undo.** The delete is registered with the system `UndoManager`, so shaking the device
+  offers "Undo Delete" (and redo re-deletes). Nothing else about shake-to-edit changes.
+- **Purge.** When the undo window elapses the delete is committed (the trashed files are purged), and
+  the trash is swept on launch so it never accumulates across app runs.

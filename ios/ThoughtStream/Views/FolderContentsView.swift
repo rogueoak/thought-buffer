@@ -29,6 +29,10 @@ struct FolderContentsView: View {
     let onNewNote: ([String]) -> Void
     let onNewThought: () -> Void
     let onOpenSettings: () -> Void
+    /// Soft-delete a note by id through the shared undoable path (spec 0020), so the list swipe and the
+    /// list-row context-menu Delete both route through the composition root's `NoteDeletionController`
+    /// (which registers undo + shows the affordance) rather than deleting the store directly.
+    let onDeleteNote: (UUID) -> Void
 
     /// The child folder names at this path, loaded off-main (the store walk can coordinate on iCloud)
     /// and refreshed after a folder edit. Kept local to this screen so each path shows its own folders.
@@ -255,6 +259,13 @@ struct FolderContentsView: View {
                 } label: {
                     Label("Move to folder", systemImage: "folder")
                 }
+                // Delete via the shared undoable path (spec 0020): the same route the swipe uses, so
+                // every entry point registers undo and shows the affordance. Destructive role tints it.
+                Button(role: .destructive) {
+                    onDeleteNote(note.id)
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             }
         }
         .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -276,8 +287,10 @@ struct FolderContentsView: View {
             .tint(CanopyColor.primary)
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            // The swipe deletes through the SAME undoable path (spec 0020) as the menus, so it registers
+            // undo and shows the affordance instead of hard-deleting the store.
             Button(role: .destructive) {
-                Task { await feed.delete(id: note.id) }
+                onDeleteNote(note.id)
             } label: {
                 Label("Delete", systemImage: "trash")
             }

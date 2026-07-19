@@ -88,6 +88,18 @@ How the system is built and why.
     the note file. `NoteStoring` carries these with default no-ops so an in-memory test stub needs no
     audio. `AudioRetentionSweeper` deletes recordings older than the auto-delete window at launch
     (off the main actor), keeping the note text.
+  - Both stores support RECOVERABLE delete (spec 0020). `softDelete(id:)` MOVES a note's `<id>.md`
+    (and sibling `<id>.m4a`) into a hidden `.trash/<id>/` directory INSIDE the store root - never
+    removing them - and returns a lightweight `DeletedNote` token (id + former `folderPath` +
+    filenames) sufficient to `restore`. `restore(_:)` moves the files back to the former folder, or to
+    ROOT when that folder is gone (a `RestoredNote` records `landedAtRoot`, never a failure);
+    `purge(_:)` and `purgeAllTrash()` permanently remove trashed files (undo-window close, launch
+    sweep). The trash is hidden (leading dot) so `loadAll`/`locateFile` (which skip hidden files) never
+    surface a trashed note, and a restore's destination is gated by `resolvedRestoreDirectory` (at or
+    below root) so a crafted former-folder path can never escape the tree - the same path-safety posture
+    as `resolvedFolderDirectory`. `ICloudNoteStore` wraps every trash move/delete/existence-check in
+    `NSFileCoordinator` exactly like the rest of its IO. `NoteStoring` defaults `softDelete` to the
+    hard `delete` and the rest to no-ops so stubs keep compiling.
   - Both stores are FOLDER-AWARE (spec 0010, PR A). A note can live in nested folders: it is a real
     subdirectory on disk (visible in Files / iCloud Drive), and a note in it lives at
     `directory/<folderPath>/<id>.md` with its `<id>.m4a` beside it. `Note.folderPath: [String]` is a
@@ -265,6 +277,19 @@ How the system is built and why.
     projects `NoteStoreDriver.notes` to only notes with a recording, newest first, each with a
     formatted duration (`recordingDuration` = the tail of the last-ending timing range), and refreshes
     on driver change; its duration formatting is a pure, unit-tested static.
+  - **Undoable delete (spec 0020).** The driver/feed route delete through the store's soft-delete:
+    `delete(id:)` calls `softDelete` and RETURNS the `DeletedNote` token (nil on failure/nothing),
+    `restore(_:)` and `purge(_:)` undo/commit it, and `purgeAllTrash()` is the launch sweep - each on a
+    detached task then a reload, like the other store ops. `NoteDeletionController` (`@MainActor
+    ObservableObject`, owned by `StreamListView`) is the ONE undoable-delete coordinator: every delete
+    entry point (list swipe, list-row context menu, note-detail "..." menu) calls it, so the delete is
+    soft, registered with the scene's `UndoManager` (undo -> restore, redo -> re-delete, action named
+    "Delete" so the system prompt reads "Undo Delete"), and shown with the in-app "Note deleted - Undo"
+    affordance. It holds the pending token and a monotonic `deleteTrigger`; the affordance's ~5s window
+    is lifecycle-tied (a `.task(id:)` on the trigger, same shape as the copied-confirmation chip - no
+    detached timer), and on expiry it `purge`s (commits the delete). The controller takes the scene
+    `UndoManager` from SwiftUI's `@Environment(\.undoManager)`; `applicationSupportsShakeToEdit` stays
+    at its default so the shake surfaces the registered action.
 - `Views/` - SwiftUI screens. `StreamListView` is the ROOT of the Thoughts `NavigationStack` whose
   path is an enum route `StreamRoute { case folder([String]); case note(Note); case newNote(Note) }`:
   it owns the shared session/settings/playback wiring and the sort-order state, and renders
@@ -311,7 +336,12 @@ routing through the shared `SessionStarter`, plus the folder UI models (spec 001
 `FolderListModel` (filter-by-path, folder/note interleave for each sort order, folder date = newest
 descendant recursively, empty-folder-to-the-end), `FolderMoveTargets` (pre-order + depth flatten,
 empty folder still offered, sibling A-Z, subtree exclusion), and `noteSortOrder` persistence /
-unknown-tag fallback in `UserDefaultsSettingsStore`.
+unknown-tag fallback in `UserDefaultsSettingsStore`, plus the recoverable delete (spec 0020): both
+stores' `softDelete`/`restore`/`purge`/`purgeAllTrash` (audio sibling moved + restored, restore to
+root when the original folder is gone, trash stays inside the store root, purge is permanent), and
+the same seam driven through `StreamFeed`/`NoteStoreDriver` (delete returns a restorable token,
+restore re-inserts the note and audio, purge removes it). The system `UndoManager`/shake gesture is
+verified manually, not in tests.
 The generated scheme runs them.
 
 ## Design tokens
