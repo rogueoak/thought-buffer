@@ -164,39 +164,6 @@ final class ResumeAudioViewModelTests: XCTestCase {
         XCTAssertEqual(reloaded.timing(forParagraphAt: 2)?.start ?? -1, 12.0, accuracy: 0.001, "8.0 + 4.0")
     }
 
-    // MARK: - Trim the NEW segment: remap onto the shorter segment, THEN offset (engineer review)
-
-    func testTrimmedNewSegmentRemapsThenOffsetsSoNewParagraphsDoNotOvershoot() async throws {
-        let original = try makeThoughtWithRecording() // 8s existing recording
-        let service = RecordingStubCaptureService()
-        service.stubRecordingURL = try makeTempRecordingURL()
-        // The trimmer cuts [1.0, 3.0) (2s) out of the NEW segment. A new paragraph timed at 5.0 in the
-        // untrimmed segment sits at 3.0 in the trimmed segment, so after the 8s offset it lands at 11.0
-        // (NOT 13.0, which is the overshoot the naive offset-only path would produce).
-        let trimmedSegment = try makeTempRecordingURL(contents: "trimmed-new-segment")
-        let trimmer = StubAudioTrimmer(result: .trimmed(
-            trimmedFileURL: trimmedSegment,
-            removedRanges: [SilenceTrimmer.KeepRange(start: 1.0, end: 3.0)]))
-        let combined = try makeTempRecordingURL(contents: "combined-trimmed")
-        let concatenator = StubAudioConcatenator(
-            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
-        let model = DictationViewModel(
-            service: service, store: store, recordsAudio: true,
-            audioTrimmer: trimmer, audioConcatenator: concatenator, resuming: original
-        )
-
-        service.emitFinalized("New after a silence.", range: ParagraphTiming(start: 5.0, duration: 1.0))
-
-        let saved = try XCTUnwrap(try model.finish())
-        let reloaded = try await awaitReSave(concatenator: concatenator, id: saved.id, paragraphIndex: 1, expectedStart: 11.0)
-
-        XCTAssertEqual(reloaded.timing(forParagraphAt: 0)?.start ?? -1, 0.0, accuracy: 0.001, "existing untouched")
-        XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 11.0, accuracy: 0.001,
-                       "remapped left 2s onto the trimmed segment (5->3), then offset 8s")
-        // The TRIMMED segment (not the raw one) was joined - the trimmer's temp was consumed by the concat.
-        XCTAssertEqual(try Data(contentsOf: store.audioURL(for: saved.id)!), Data("combined-trimmed".utf8))
-    }
-
     // MARK: - Concurrent edit changing the paragraph count keeps the fresh thought's own timings
 
     func testConcurrentEditChangingParagraphCountKeepsFreshTimings() async throws {
@@ -547,13 +514,6 @@ private final class StubAudioConcatenator: AudioConcatenating, @unchecked Sendab
         lock.unlock()
         toResume.forEach { $0.resume() }
     }
-}
-
-/// A stub `AudioTrimming` returning a fixed result, to exercise the "trim ONLY the new segment then
-/// remap+offset" path at the view-model level.
-private struct StubAudioTrimmer: AudioTrimming {
-    let result: AudioTrimResult
-    func trim(fileAt url: URL) async -> AudioTrimResult { result }
 }
 
 /// A `ThoughtStoring` that forwards to a real `ThoughtStore` but PAUSES inside `replaceAudio` AFTER

@@ -191,7 +191,12 @@ How the system is built and why.
   `resolveTaskEndCommit`, task restart) is gone. The mic is tapped so buffers can be teed to the
   recording writer and level meter and converted into the analyzer's format for an
   `AsyncStream<AnalyzerInput>`. Pause finalizes the analyzer so the in-progress utterance commits;
-  stop stops emitting and lets the view model fold the last live partial. The on-device model is
+  stop stops emitting and lets the view model fold the last live partial. The record session uses mode
+  `.spokenAudio` (Apple's dictation mode - it keeps the input signal conditioning the recognizer needs),
+  NOT `.measurement` (which disabled it and degraded transcription, feedback 0026); the transcriber runs
+  with EMPTY `transcriptionOptions` for verbatim output (punctuation is NATIVE to `SpeechTranscriber`, and
+  its one option `.etiquetteReplacements` REDACTS words, so it is deliberately unset - verified against
+  the SDK). The on-device model is
   installed once via `AssetInventory` during authorization (a model download, not audio leaving the
   device). Also holds the Mira control-word pieces: `MiraCommandParser` (pure segment ->
   `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST token matching ANY trigger
@@ -230,47 +235,20 @@ How the system is built and why.
     relative-skip. IN-SESSION "read that back" stays on the text-to-speech `Speaker`: the live `.m4a`
     is still open for writing (finalized only at `stop()`), so there is no finalized file to play
     mid-session; both share the `readBackDidFinish` resume handshake.
-  - **Dead-air removal (spec 0019).** Three pieces, two pure. `SilenceTrimmer` (pure, no AVFoundation)
-    turns a sequence of windowed RMS levels plus a window duration into the KEEP time-ranges: the
-    complement of every silence run longer than `minPauseSeconds` (2.0s), each trimmed to leave a
-    `breathGapSeconds` (~0.6s) natural gap, above a `silenceFloor` RMS. Named constants; an all-silent
-    clip is kept whole (nothing to tighten). `TimingRemapper` (pure) shifts each paragraph's start left
-    by the removed silence preceding it, durations unchanged - sound only because the trim floor stays
-    strictly ABOVE `ParagraphGrouper.defaultGapThreshold` (a guard test asserts it), so a trimmable
-    silence is always a paragraph boundary and never lies inside a paragraph. `AudioTrimmer` (the
-    `AudioTrimming` seam, AVFoundation) reads the finished `.m4a` via `AVAudioFile`, computes windowed
-    RMS, feeds `SilenceTrimmer`, writes only the kept frame ranges to a PROTECTED temp `.m4a` by
-    `AVAudioFile` read/write (concatenation - no `AVAssetExportSession`, which is load-gated on modern
-    iOS; the temp is created `completeUnlessOpen` before any audio is written, like `RecordingWriter`),
-    and VERIFIES the temp is a valid non-empty audio file - but it NEVER touches the original. It hands
-    the verified temp + the removed original-timeline ranges back; ANY failure returns `.notTrimmed` and
-    writes nothing (the trim is non-reversible, so it never loses the recording); the temp is removed on
-    every non-success exit via a `defer` so a mid-write failure never orphans a partial voice copy. The
-    COORDINATED atomic swap is a store seam (`ThoughtStoring.replaceAudio(from:for:) -> URL?`): `ThoughtStore`
-    uses `replaceItemAt`; `ICloudThoughtStore` does the `replaceItemAt` INSIDE an `NSFileCoordinator`
-    `.forReplacing` block so the swap never races the sync daemon (a bare replace on a ubiquity-container
-    file would). Both re-assert audio protection, and both REFUSE to create a file when the slot is
-    absent - they delete the temp and return nil ("nothing to replace") rather than materialize an orphan
-    `.m4a` that `loadAll`/`purgeAllTrash` would never see. `DictationViewModel` runs the trim OFF the main
-    actor in a detached task after `finish()` returns the (untrimmed) thought - only for a thought that just
-    adopted a NEW recording - then RE-READS the thought fresh from disk by id and confirms it still EXISTS
-    before adopting the trimmed audio via `replaceAudio` (so a thought soft-deleted during the trim window
-    leaves no orphan recording and stays deleted - belt-and-suspenders with the primitive's no-create
-    rule; a concurrent edit/move is likewise preserved, not clobbered by the stale finish()-time
-    snapshot), applies only the timings remap via `Thought.withTimings`, re-saves, and calls back `onTrimmed`
-    on the main actor so the host reloads the feed (dropping the stale un-remapped in-memory thought; an
-    already-open detail view keeps its snapshot, harmless while playback is whole-file - a future
-    per-paragraph seek must revisit it). A nil `AudioTrimming` (the "Trim silences" setting OFF) means NO
-    code path touches the audio.
-    `StreamListView.makeAudioTrimmer()` builds the trimmer whenever the setting is on for a session
-    capturing new audio - including a RESUME that continues the recording (feedback 0022), where the
-    trimmer tightens only the NEW segment before it is concatenated.
+  - **Dead-air removal (spec 0019) - REMOVED (feedback 0026).** The dead-air trim (`AudioTrimmer` /
+    `SilenceTrimmer` / `TimingRemapper`, the `AudioTrimming` seam, the `trimSilence` setting, and the
+    trim step in the recording/save path) was removed: the trimmed playback was poor on device and it was
+    not worth the complexity. No code path touches recording audio after capture. Two things it once used
+    remain because the resume-continues-audio concatenation (feedback 0022) also uses them: the coordinated
+    `ThoughtStoring.replaceAudio(from:for:) -> URL?` atomic-swap seam (`ThoughtStore` via `replaceItemAt`;
+    `ICloudThoughtStore` via `replaceItemAt` inside an `NSFileCoordinator` `.forReplacing` block, both
+    refusing to create a file when the slot is absent), and `Thought.withTimings`.
   - **Resume continues the recording (feedback 0022).** Resuming a thought that ALREADY has audio, with
     audio retention on, now RECORDS a new segment and CONCATENATES it onto the thought's existing `.m4a` so
     the recording continues as ONE file (superseding feedback 0008's "a resumed session records no new
     audio" text-only append). `StreamListView` passes `recordsAudio: audioRetention.recordsAudio` for the
     resume cover regardless of `thought.hasAudio`, plus an `AudioConcatenator` when the thought has audio.
-    `AudioConcatenator` (the `AudioConcatenating` seam, AVFoundation, mirroring `AudioTrimmer`'s thin glue)
+    `AudioConcatenator` (the `AudioConcatenating` seam, AVFoundation, a thin off-main read/write glue)
     reads the existing `.m4a` and the new segment, writes ONE combined AAC file to a PROTECTED temp
     (`completeUnlessOpen`, defer-cleaned on any mid-write failure) via chunked `AVAudioFile` read/write,
     VERIFIES it, and reports the existing recording's measured duration - never touching either input. The
@@ -278,11 +256,11 @@ How the system is built and why.
     `RecordingTiming.offsetResumedTimings` shifts only the new paragraphs (index >= existing count) right by
     that measured duration (pre-existing timings untouched; a zero-length text-only placeholder left in
     place). `DictationViewModel.finish()` returns the FALLBACK thought (original recording kept, new
-    paragraphs text-only) and schedules an OFF-main concatenation - the same shape as the dead-air trim:
-    trim ONLY the new segment (the original was already trimmed on its first save), concatenate, re-read
-    the thought fresh + confirm it still exists, swap through the COORDINATED `replaceAudio`, then re-save
-    the fresh thought with the offset timings (only when the paragraph count still aligns 1:1, so a
-    concurrent edit is preserved) and reload the feed via the shared `onTrimmed` hook. Every failure (empty
+    paragraphs text-only) and schedules an OFF-main concatenation: concatenate the new segment (joined AS
+    CAPTURED - the per-segment dead-air trim was removed in feedback 0026), re-read the thought fresh +
+    confirm it still exists, swap through the COORDINATED `replaceAudio`, then re-save the fresh thought
+    with the offset timings (only when the paragraph count still aligns 1:1, so a concurrent edit is
+    preserved) and reload the feed via the shared `onBackgroundAudioResave` hook. Every failure (empty
     new segment - which must not corrupt the original, incompatible format, verify failure, a delete racing
     the swap) leaves the fallback standing, so the original recording is never lost. A resume onto a
     text-only thought (spec 0013) still adopts a fresh recording, and retention OFF stays a text-only append.
@@ -328,9 +306,9 @@ How the system is built and why.
   keep / transcript-only / auto-delete after N days, persisted as a small string tag so an unknown
   value falls back to `.keep`), and `refineTranscript` (spec 0016: a `Bool` defaulting to `true` -
   presence-checked on read so a fresh install reads ON, not the `bool(forKey:)` false default - gating
-  the filler stage and the edit-save reflow), and `trimSilence` (spec 0019: a `Bool` defaulting to
-  `true`, presence-checked the same way - gating dead-air removal on a new recording at save; OFF means
-  no code path touches the audio). Local only - no cloud sync, no per-thought settings.
+  the filler stage and the edit-save reflow). The `trimSilence` setting (spec 0019 dead-air trim) was
+  REMOVED in feedback 0026; its `settings.trimSilence` UserDefaults key is no longer read or written (an
+  old stored value is a harmless orphan). Local only - no cloud sync, no per-thought settings.
 - `ViewModels/` - `DictationViewModel` (`@MainActor ObservableObject`) is the one place with
   logic: it drives `DictationView` from the speech service, routes finalized segments through the
   `TextProcessor`, executes `MiraCommand`s (thought mutations, new thought save+reset, read-back), and
