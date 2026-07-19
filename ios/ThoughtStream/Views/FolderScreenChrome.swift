@@ -107,6 +107,11 @@ extension View {
         self
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+            // Tighten the large default top margin `.insetGrouped` reserves above the first row
+            // (feedback 0026, item 1) so the scrolling title header sits close to the toolbar rather than
+            // floating with a wide gap, matching the Notes app. Only the TOP margin is overridden; the
+            // side/bottom grouped margins stay so the inset card keeps its shape.
+            .contentMargins(.top, CanopySpacing.x2, for: .scrollContent)
     }
 }
 
@@ -158,12 +163,18 @@ enum FolderDialog: Identifiable, Equatable {
     var isDeleteFolder: Bool { if case .deleteFolder = self { return true }; return false }
 }
 
-/// The empty-state call to action (spec 0021): when a list or folder has no thoughts anywhere, show the
-/// RECORD button in the middle of the screen WITH its text label, and a NEW-THOUGHT button directly below
-/// it. This is the ONE place record/new-thought keep their labels (the persistent bottom bar drops them).
+/// The empty-state call to action (spec 0021, extended feedback 0026 item 6): when a list or folder has no
+/// thoughts, show the actions in the middle of the screen. It offers up to THREE actions: MOVE thoughts into
+/// this folder (only inside a user folder that could receive thoughts - `onMoveToFolder` non-nil), RECORD a
+/// thought, and NEW keyboard thought. This is the ONE place these actions keep their text labels (the
+/// persistent bottom bar drops them). The Move action is omitted where "move into this folder" is meaningless
+/// (the root / All Thoughts / an alias, or a truly empty store with nothing to move).
 struct FolderEmptyStateCTA: View {
     /// Whether this is the root list (vs a folder), only for the supporting copy.
     let isRoot: Bool
+    /// Move existing thoughts INTO this folder (feedback 0026, item 6). Nil omits the action where moving
+    /// into "this folder" makes no sense (root / alias) or there is nothing to move.
+    var onMoveToFolder: (() -> Void)?
     let onRecord: () -> Void
     let onNewKeyboardThought: () -> Void
 
@@ -184,20 +195,31 @@ struct FolderEmptyStateCTA: View {
             RecordButton(action: onRecord)
                 .padding(.top, CanopySpacing.x2)
             Button(action: onNewKeyboardThought) {
-                HStack(spacing: CanopySpacing.x2) {
-                    Image(systemName: "square.and.pencil")
-                    Text("New thought")
-                        .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
-                }
-                .foregroundStyle(CanopyColor.primary)
-                .padding(.horizontal, CanopySpacing.x6)
-                .padding(.vertical, CanopySpacing.x3)
-                .overlay(
-                    Capsule().stroke(CanopyColor.primary, lineWidth: 1)
-                )
+                capsuleLabel(systemImage: "square.and.pencil", title: "New thought")
             }
             .accessibilityLabel("New thought")
+            if let onMoveToFolder {
+                Button(action: onMoveToFolder) {
+                    capsuleLabel(systemImage: "folder", title: "Move thoughts here")
+                }
+                .accessibilityLabel("Move thoughts here")
+            }
         }
+    }
+
+    /// A bordered-capsule secondary action label, shared by the New-thought and Move buttons.
+    private func capsuleLabel(systemImage: String, title: String) -> some View {
+        HStack(spacing: CanopySpacing.x2) {
+            Image(systemName: systemImage)
+            Text(title)
+                .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
+        }
+        .foregroundStyle(CanopyColor.primary)
+        .padding(.horizontal, CanopySpacing.x6)
+        .padding(.vertical, CanopySpacing.x3)
+        .overlay(
+            Capsule().stroke(CanopyColor.primary, lineWidth: 1)
+        )
     }
 }
 

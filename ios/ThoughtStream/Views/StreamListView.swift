@@ -299,9 +299,48 @@ struct StreamListView: View {
             onOpenSettings: { showSettings = true },
             onDeleteThought: { id in deleteThought(id) },
             deletion: deletion,
+            onRenameFolder: { path, newName in renameFolderFromScreen(at: path, to: newName) },
+            onDeleteFolder: { path in deleteFolderFromScreen(at: path) },
             showsBottomBar: showsBottomBar,
             resolvedContent: resolved
         )
+    }
+
+    /// Rename a folder from its own "..." menu (feedback 0026, item 5): rename through the store, then
+    /// re-point navigation at the new name so the folder screen keeps showing the same (now-renamed)
+    /// folder rather than an empty list keyed on the old name. On a rejected/conflicting name the folder
+    /// is unchanged, so navigation is left as-is.
+    private func renameFolderFromScreen(at path: [String], to newName: String) {
+        let container = StreamContainer.decide(horizontalSizeClass: horizontalSizeClass)
+        Task {
+            guard let applied = await feed.renameFolder(at: path, to: newName) else { return }
+            switch container {
+            case .stack:
+                if self.path.last == .folder(path) {
+                    self.path[self.path.count - 1] = .folder([applied])
+                }
+            case .split:
+                if selectedSubject == .userFolder(path.first ?? "") {
+                    selectSubject(.userFolder(applied))
+                }
+            }
+        }
+    }
+
+    /// Delete a folder from its own "..." menu (feedback 0026, item 5): delete the cascade through the
+    /// store, then pop back to the top-level screen (compact) or clear the selection (split).
+    private func deleteFolderFromScreen(at path: [String]) {
+        let container = StreamContainer.decide(horizontalSizeClass: horizontalSizeClass)
+        switch container {
+        case .stack:
+            if self.path.last == .folder(path) { self.path.removeLast() }
+        case .split:
+            if selectedSubject == .userFolder(path.first ?? "") {
+                selectedSubject = nil
+                selectedRoute = nil
+            }
+        }
+        Task { await feed.deleteFolder(at: path) }
     }
 
     /// Open a thought in whichever container is active (compact pushes, split selects in the detail column).

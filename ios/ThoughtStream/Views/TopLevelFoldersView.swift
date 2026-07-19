@@ -88,6 +88,12 @@ struct TopLevelFoldersView: View {
                         onNewKeyboardThought: { onNewKeyboardThought(topLevelPlacement) },
                         onNewThought: { onNewThought(topLevelPlacement) }
                     )
+                    // Pin a STABLE identity on the bottom stack (feedback 0026, item 3): when the primary
+                    // content swaps one List for another on the first keystroke (normal -> searchResults),
+                    // the `.safeAreaInset` re-lays-out; without a fixed id SwiftUI can rebuild the stack's
+                    // search `TextField` and drop first responder, so the field lost focus after one letter.
+                    // A constant id keeps the field the SAME instance across every content-state flip.
+                    .id("stream-bottom-stack")
                 }
             }
             .overlay(alignment: .top) {
@@ -346,7 +352,17 @@ struct TopLevelFoldersView: View {
         Color.clear
             .alert("Rename folder", isPresented: dialogBinding { $0.isRenameFolder }) {
                 folderNameTextField(placeholder: "Name")
-                Button("Rename") { Task { await renameFolder() } }
+                Button("Rename") {
+                    // Capture the target path SYNCHRONOUSLY here, before the async work (feedback 0026,
+                    // item 4): tapping an alert button dismisses the alert, which fires the dialog
+                    // binding's setter and clears `activeDialog`. A `Task { ... activeDialog ... }` runs
+                    // on a LATER runloop tick, by which point `activeDialog` is already nil, so the old
+                    // `guard case .renameFolder(path)? = activeDialog` failed and the rename silently did
+                    // nothing. Read the payload now, act on the captured value.
+                    guard case let .renameFolder(path, _)? = activeDialog else { return }
+                    let newName = folderNameField
+                    Task { await renameFolder(at: path, to: newName) }
+                }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             }
     }
@@ -354,7 +370,11 @@ struct TopLevelFoldersView: View {
     private var deleteFolderAlertAnchor: some View {
         Color.clear
             .alert("Delete folder?", isPresented: dialogBinding { $0.isDeleteFolder }) {
-                Button("Delete", role: .destructive) { Task { await deleteFolder() } }
+                Button("Delete", role: .destructive) {
+                    // Capture the path synchronously (feedback 0026, item 4), same reason as rename above.
+                    guard case let .deleteFolder(path)? = activeDialog else { return }
+                    Task { await deleteFolder(at: path) }
+                }
                 Button("Cancel", role: .cancel) { activeDialog = nil }
             } message: {
                 Text("This deletes the folder and everything inside it - its thoughts and their recordings. This can't be undone.")
@@ -383,9 +403,7 @@ struct TopLevelFoldersView: View {
         }
     }
 
-    private func renameFolder() async {
-        guard case let .renameFolder(path, _)? = activeDialog else { return }
-        let newName = folderNameField
+    private func renameFolder(at path: [String], to newName: String) async {
         activeDialog = nil
         let renamed = await feed.renameFolder(at: path, to: newName)
         await reloadFolders()
@@ -394,8 +412,7 @@ struct TopLevelFoldersView: View {
         }
     }
 
-    private func deleteFolder() async {
-        guard case let .deleteFolder(path)? = activeDialog else { return }
+    private func deleteFolder(at path: [String]) async {
         activeDialog = nil
         await feed.deleteFolder(at: path)
         await reloadFolders()

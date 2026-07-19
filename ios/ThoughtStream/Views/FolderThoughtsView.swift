@@ -31,6 +31,13 @@ struct FolderThoughtsView: View {
     let onDeleteThought: (UUID) -> Void
     @ObservedObject var deletion: ThoughtDeletionController
 
+    /// Rename this (user) folder from the nav-bar "..." menu (feedback 0026, item 5): the root renames it
+    /// through the store and re-points navigation at the new name. Nil on an alias screen (no rename).
+    var onRenameFolder: ((_ path: [String], _ newName: String) -> Void)?
+    /// Delete this (user) folder from the nav-bar "..." menu (feedback 0026, item 5): the root deletes it
+    /// through the store (a cascade) and pops back to the top-level screen. Nil on an alias screen.
+    var onDeleteFolder: ((_ path: [String]) -> Void)?
+
     /// Whether this screen renders its own bottom stack (compact stack: true; split columns: false, the
     /// stack is lifted). Same contract as the retired interleaving screen.
     var showsBottomBar: Bool = true
@@ -40,6 +47,19 @@ struct FolderThoughtsView: View {
     @State private var moveThought: Thought?
     @State private var copiedTrigger = 0
     @State private var showCopiedConfirmation = false
+    /// Presents the multi-select "move thoughts into this folder" picker (feedback 0026, item 6).
+    @State private var showMoveIntoFolder = false
+
+    /// The active folder dialog (rename / delete) from the "..." menu (feedback 0026, item 5). One enum
+    /// state hosts both alerts, matching `TopLevelFoldersView`'s pattern (feedback 0018 un-stacked alerts).
+    @State private var activeDialog: FolderDialog?
+    @State private var folderNameField = ""
+
+    /// The name of the user folder shown, or nil on an alias (aliases cannot be renamed/deleted).
+    private var userFolderName: String? {
+        if case let .userFolder(name) = subject { return name }
+        return nil
+    }
 
     /// The placement `folderPath` for a new thought created on this screen (spec 0026), from the pure
     /// `NewThoughtPlacement`: a user folder files contextually into `[name]`; an alias files uncategorized.
@@ -86,6 +106,9 @@ struct FolderThoughtsView: View {
                         onNewKeyboardThought: { onNewKeyboardThought(newThoughtFolderPath) },
                         onNewThought: { onNewThought(newThoughtFolderPath) }
                     )
+                    // Pin a STABLE identity so the search field survives the content-state flip on the first
+                    // keystroke (feedback 0026, item 3) - see TopLevelFoldersView for the full rationale.
+                    .id("stream-bottom-stack")
                 }
             }
             .overlay(alignment: .top) {
@@ -101,6 +124,8 @@ struct FolderThoughtsView: View {
             .copiedConfirmation(trigger: copiedTrigger, isShown: $showCopiedConfirmation, alignment: .top)
             .animation(.easeInOut(duration: 0.2), value: feed.deleteFailed)
             .toolbar { toolbarContent }
+            .background(renameFolderAlertAnchor)
+            .background(deleteFolderAlertAnchor)
             .sheet(item: $moveThought) { thought in
                 MoveToFolderSheet(
                     thought: thought,
@@ -109,14 +134,32 @@ struct FolderThoughtsView: View {
                     onMove: { folderPath in await feed.move(thought, to: folderPath) }
                 )
             }
+            .sheet(isPresented: $showMoveIntoFolder) {
+                if let folderName = userFolderName {
+                    MoveThoughtsIntoFolderSheet(
+                        folderName: folderName,
+                        allThoughts: feed.thoughts,
+                        onMove: { ids in await moveIntoFolder(ids: ids, folderName: folderName) }
+                    )
+                }
+            }
+    }
+
+    /// Move every selected thought into this folder (feedback 0026, item 6): re-file each by id, one at a
+    /// time, then reload once so the list reflects them all.
+    private func moveIntoFolder(ids: Set<UUID>, folderName: String) async {
+        let toMove = feed.thoughts.filter { ids.contains($0.id) }
+        for thought in toMove {
+            await feed.move(thought, to: [folderName])
+        }
     }
 
     @ViewBuilder
     private func switchingContent(state screenState: FolderScreenState, results searchResults: [Thought]) -> some View {
         switch screenState {
         case .emptyStore:
-            // A truly empty store (no thoughts anywhere): the centered CTA. Reachable from the aliases and
-            // from a fresh user folder that is empty and the store has nothing.
+            // A truly empty store (no thoughts anywhere): the centered CTA with NO Move action - there is
+            // nothing anywhere to move into this folder (feedback 0026, item 6).
             FolderEmptyStateCTA(
                 isRoot: false,
                 onRecord: { onNewThought(newThoughtFolderPath) },
@@ -129,6 +172,25 @@ struct FolderThoughtsView: View {
             NoSearchMatchesState(query: searchQuery)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .normal:
+            normalContent
+        }
+    }
+
+    /// The normal (non-search) content. An empty USER folder while the store holds thoughts elsewhere shows
+    /// the centered CTA WITH the three actions (Move thoughts here / Record / New) - the meaningful place to
+    /// pull existing thoughts in (feedback 0026, item 6). An empty alias keeps a plain inline message (moving
+    /// into a virtual All/Recents folder is meaningless). A non-empty folder shows the flat list.
+    @ViewBuilder
+    private var normalContent: some View {
+        if thoughts.isEmpty, case .userFolder = subject {
+            FolderEmptyStateCTA(
+                isRoot: false,
+                onMoveToFolder: { showMoveIntoFolder = true },
+                onRecord: { onNewThought(newThoughtFolderPath) },
+                onNewKeyboardThought: { onNewKeyboardThought(newThoughtFolderPath) }
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
             thoughtList(thoughts, showTitle: true)
         }
     }
@@ -185,6 +247,29 @@ struct FolderThoughtsView: View {
             // Recents is defined as newest-first; the sort menu does not apply there.
             .disabled(isAlias(.recents))
         }
+        // A "..." menu to rename or delete THIS folder (feedback 0026, item 5), wired to the same store
+        // ops the top-level screen uses. Shown only for a user folder - an alias (All Thoughts / Recents)
+        // is a virtual projection and cannot be renamed or deleted.
+        if let folderName = userFolderName {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        folderNameField = folderName
+                        activeDialog = .renameFolder(path: [folderName], currentName: folderName)
+                    } label: {
+                        Label("Rename folder", systemImage: "pencil")
+                    }
+                    Button(role: .destructive) {
+                        activeDialog = .deleteFolder(path: [folderName])
+                    } label: {
+                        Label("Delete folder", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .tint(CanopyColor.primary)
+            }
+        }
         ToolbarItem(placement: .topBarTrailing) {
             Button { onOpenSettings() } label: {
                 Image(systemName: "gearshape")
@@ -196,6 +281,45 @@ struct FolderThoughtsView: View {
     private func isAlias(_ alias: AliasFolder) -> Bool {
         if case let .alias(a) = subject { return a == alias }
         return false
+    }
+
+    // MARK: - Folder dialog hosts (feedback 0026, item 5)
+
+    private func dialogBinding(for match: @escaping (FolderDialog) -> Bool) -> Binding<Bool> {
+        Binding(
+            get: { activeDialog.map(match) ?? false },
+            set: { presented in if !presented, let d = activeDialog, match(d) { activeDialog = nil } }
+        )
+    }
+
+    private var renameFolderAlertAnchor: some View {
+        Color.clear
+            .alert("Rename folder", isPresented: dialogBinding { $0.isRenameFolder }) {
+                TextField("Name", text: $folderNameField)
+                Button("Rename") {
+                    // Capture the payload synchronously before the dialog binding clears `activeDialog`
+                    // (feedback 0026, item 4 root cause). The root does the store rename + re-points nav.
+                    guard case let .renameFolder(path, _)? = activeDialog else { return }
+                    let newName = folderNameField
+                    activeDialog = nil
+                    onRenameFolder?(path, newName)
+                }
+                Button("Cancel", role: .cancel) { activeDialog = nil }
+            }
+    }
+
+    private var deleteFolderAlertAnchor: some View {
+        Color.clear
+            .alert("Delete folder?", isPresented: dialogBinding { $0.isDeleteFolder }) {
+                Button("Delete", role: .destructive) {
+                    guard case let .deleteFolder(path)? = activeDialog else { return }
+                    activeDialog = nil
+                    onDeleteFolder?(path)
+                }
+                Button("Cancel", role: .cancel) { activeDialog = nil }
+            } message: {
+                Text("This deletes the folder and everything inside it - its thoughts and their recordings. This can't be undone.")
+            }
     }
 }
 

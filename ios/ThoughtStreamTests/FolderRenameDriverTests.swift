@@ -70,4 +70,59 @@ final class FolderRenameDriverTests: XCTestCase {
         XCTAssertNil(applied)
         XCTAssertTrue(store.folders(at: []).contains("Old"))
     }
+
+    // MARK: - Delete through the feed (feedback 0026, item 4/5)
+
+    /// Deleting a folder through `StreamFeed.deleteFolder(at:)` - the exact call the top-level "..." menu and
+    /// the folder-screen "..." menu make - removes the folder (a cascade) on disk and republishes so the list
+    /// reflects it gone. A regression here is the delete appearing to do nothing in the UI.
+    func testDeleteFolderThroughFeedRemovesOnDiskAndReloads() async throws {
+        try store.save(thought("in doomed", folder: ["Doomed"]))
+        try store.save(thought("keep me", folder: ["Keep"]))
+        await feed.start()
+        XCTAssertTrue(store.folders(at: []).contains("Doomed"))
+
+        await feed.deleteFolder(at: ["Doomed"])
+
+        // The folder and its thought are gone on disk ...
+        XCTAssertFalse(store.folders(at: []).contains("Doomed"))
+        // ... a sibling folder and its thought survive ...
+        XCTAssertTrue(store.folders(at: []).contains("Keep"))
+        // ... and the feed republished so the list no longer shows the deleted thought.
+        XCTAssertEqual(feed.thoughts.count, 1)
+        XCTAssertEqual(feed.thoughts.first?.folderPath, ["Keep"])
+    }
+
+    /// A delete keyed on a collapsing/invalid path (`[]`) is a safe no-op that never wipes the whole tree.
+    func testDeleteFolderWithEmptyPathIsNoOp() async throws {
+        try store.save(thought("safe", folder: ["Keep"]))
+        await feed.start()
+
+        await feed.deleteFolder(at: [])
+
+        XCTAssertTrue(store.folders(at: []).contains("Keep"))
+        XCTAssertEqual(feed.thoughts.count, 1)
+    }
+
+    // MARK: - Move existing thoughts INTO a folder (feedback 0026, item 6)
+
+    /// The empty-folder "Move thoughts here" picker re-files each selected thought through `StreamFeed.move`
+    /// into the target folder. This proves moving several thoughts (uncategorized and from another folder)
+    /// into one folder lands them all there and republishes.
+    func testMoveMultipleThoughtsIntoFolder() async throws {
+        try store.save(thought("loose", folder: []))
+        try store.save(thought("elsewhere", folder: ["Other"]))
+        try store.save(thought("already here", folder: ["Target"]))
+        await feed.start()
+
+        let loose = try XCTUnwrap(feed.thoughts.first { $0.title == "loose" })
+        let elsewhere = try XCTUnwrap(feed.thoughts.first { $0.title == "elsewhere" })
+        await feed.move(loose, to: ["Target"])
+        await feed.move(elsewhere, to: ["Target"])
+
+        let inTarget = feed.thoughts.filter { $0.folderPath.first == "Target" }
+        XCTAssertEqual(Set(inTarget.map(\.title)), ["loose", "elsewhere", "already here"])
+        // "Other" is now empty of thoughts (its only thought moved out).
+        XCTAssertTrue(feed.thoughts.filter { $0.folderPath.first == "Other" }.isEmpty)
+    }
 }
