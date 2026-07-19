@@ -135,7 +135,6 @@ private final class ScreenshotSettings: SettingsStoring {
     var lockScreenTitle: LockScreenTitle = .noteTitle
     var thoughtSortOrder: ThoughtSortOrder = .newest
     var refineTranscript: Bool = true
-    var trimSilence: Bool = true
 }
 
 /// Sample thoughts for screenshot mode.

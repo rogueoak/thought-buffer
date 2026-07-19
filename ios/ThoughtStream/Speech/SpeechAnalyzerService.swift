@@ -308,23 +308,24 @@ final class SpeechAnalyzerService: SpeechCaptureService {
     /// A fresh transcriber for `locale`, configured to report volatile results and per-result audio
     /// time ranges. One place builds it so the probe (asset check) and the live one match.
     ///
-    /// `transcriptionOptions` (capture-pipeline feedback 0026): VERIFIED against the installed iOS 26.5
-    /// SDK's `Speech.swiftinterface` (and the `Speech.framework` headers). For `SpeechTranscriber` the
-    /// `TranscriptionOption` enum has exactly ONE case in this SDK - `etiquetteReplacements` - so that is
-    /// the only option there is to set. IMPORTANT and contrary to a common assumption: punctuation and
-    /// readable formatting are NOT gated behind a transcription option on `SpeechTranscriber`. The
-    /// `punctuation` / `emoji` cases exist only on the SEPARATE `DictationTranscriber.TranscriptionOption`,
-    /// and `addsPunctuation` is a property of the LEGACY `SFSpeechRecognitionRequest` API. `SpeechTranscriber`
-    /// produces punctuated, formatted output natively from its language model, so passing `[]` here was NOT
-    /// what stripped punctuation. Setting `[.etiquetteReplacements]` turns on Apple's etiquette handling
-    /// (masking/replacement of sensitive terms) - the only available quality lever on this transcriber; the
-    /// real transcription-quality wins are the `.spokenAudio` session mode above and the conservative
-    /// refinement layer. DEVICE-VERIFY the actual on-device punctuation quality: the Simulator does not run
-    /// real recognition, so the punctuation improvement can only be confirmed on hardware.
+    /// `transcriptionOptions` is EMPTY on purpose (capture-pipeline feedback 0026). VERIFIED against the
+    /// installed iOS 26.5 SDK's `Speech.swiftinterface` (and the `Speech.framework` headers): for
+    /// `SpeechTranscriber` the `TranscriptionOption` enum has exactly ONE case, `etiquetteReplacements`,
+    /// whose SDK doc string is "Replaces certain words and phrases with a redacted form" - i.e. it CENSORS
+    /// the transcript. For a private, on-device, verbatim thought-capture app that is the opposite of what
+    /// we want, so we do NOT set it: `[]` gives the faithful, unredacted transcription.
+    ///
+    /// IMPORTANT and contrary to a common assumption: punctuation and readable formatting are NOT gated
+    /// behind a transcription option on `SpeechTranscriber`. The `punctuation` / `emoji` cases exist only
+    /// on the SEPARATE `DictationTranscriber.TranscriptionOption`, and `addsPunctuation` is a property of
+    /// the LEGACY `SFSpeechRecognitionRequest` API. `SpeechTranscriber` produces punctuated, formatted
+    /// output natively from its language model, so `[]` does NOT strip punctuation. The real
+    /// transcription-quality win is the `.spokenAudio` session mode above (plus the conservative refinement
+    /// layer). DEVICE-VERIFY on-device quality: the Simulator does not run real recognition.
     private func makeTranscriber(locale: Locale) -> SpeechTranscriber {
         SpeechTranscriber(
             locale: locale,
-            transcriptionOptions: [.etiquetteReplacements],
+            transcriptionOptions: [],
             reportingOptions: [.volatileResults],
             attributeOptions: [.audioTimeRange]
         )

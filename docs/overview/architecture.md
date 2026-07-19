@@ -193,9 +193,10 @@ How the system is built and why.
   `AsyncStream<AnalyzerInput>`. Pause finalizes the analyzer so the in-progress utterance commits;
   stop stops emitting and lets the view model fold the last live partial. The record session uses mode
   `.spokenAudio` (Apple's dictation mode - it keeps the input signal conditioning the recognizer needs),
-  NOT `.measurement` (which disabled it and degraded transcription, feedback 0026); the transcriber sets
-  its one available `transcriptionOption`, `.etiquetteReplacements` (punctuation is NATIVE to
-  `SpeechTranscriber`, not an option to populate - verified against the SDK). The on-device model is
+  NOT `.measurement` (which disabled it and degraded transcription, feedback 0026); the transcriber runs
+  with EMPTY `transcriptionOptions` for verbatim output (punctuation is NATIVE to `SpeechTranscriber`, and
+  its one option `.etiquetteReplacements` REDACTS words, so it is deliberately unset - verified against
+  the SDK). The on-device model is
   installed once via `AssetInventory` during authorization (a model download, not audio leaving the
   device). Also holds the Mira control-word pieces: `MiraCommandParser` (pure segment ->
   `MiraParseResult`: `.text`, or `.split(preText:command:)` at the FIRST token matching ANY trigger

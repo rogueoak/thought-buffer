@@ -19,15 +19,18 @@ speech/recording path.
   DISABLES the input signal conditioning (automatic gain, noise reduction, echo cancellation) that
   speech recognition relies on. `.measurement` is for level metering, not dictation. Apple's dictation
   guidance is `.spokenAudio`. Feeding the recognizer unconditioned input degrades the transcription.
-- **Transcription options - the assumption did not hold.** A prior investigation guessed that
-  `SpeechTranscriber(transcriptionOptions: [])` stripped punctuation and readable formatting, gated
-  behind options that needed populating. VERIFIED against the installed iOS 26.5 SDK
-  (`Speech.swiftinterface` and the framework headers): this is FALSE for `SpeechTranscriber`. Its
-  `TranscriptionOption` enum has exactly ONE case - `etiquetteReplacements`. The `punctuation` / `emoji`
-  cases exist only on the SEPARATE `DictationTranscriber.TranscriptionOption`, and `addsPunctuation` is
-  a property of the LEGACY `SFSpeechRecognitionRequest`. `SpeechTranscriber` punctuates and formats
-  NATIVELY from its language model; `[]` was not the cause of bare output. So the highest-leverage fix
-  was the session mode, not a punctuation option.
+- **Transcription options - the assumption did not hold, and the only option is HARMFUL here.** A prior
+  investigation guessed that `SpeechTranscriber(transcriptionOptions: [])` stripped punctuation and
+  readable formatting, gated behind options that needed populating. VERIFIED against the installed iOS
+  26.5 SDK (`Speech.swiftinterface` and the framework headers): this is FALSE for `SpeechTranscriber`.
+  Its `TranscriptionOption` enum has exactly ONE case - `etiquetteReplacements`, whose SDK doc string is
+  "Replaces certain words and phrases with a redacted form" (it CENSORS the transcript). The `punctuation`
+  / `emoji` cases exist only on the SEPARATE `DictationTranscriber.TranscriptionOption`, and
+  `addsPunctuation` is a property of the LEGACY `SFSpeechRecognitionRequest`. `SpeechTranscriber`
+  punctuates and formats NATIVELY from its language model; `[]` was not the cause of bare output. So
+  `transcriptionOptions` STAYS `[]` (empty = faithful, unredacted): setting `.etiquetteReplacements`
+  would redact the user's own words, the opposite of verbatim thought capture. The highest-leverage
+  quality fix is the session mode, not any transcription option.
 - **Refinement layer.** The default-on filler removal (`FillerRemovalProcessor`) and pause-based
   paragraph grouping (`ParagraphGrouper`, 1.5s gap) were reviewed for non-destructiveness. They were
   already conservative: filler removal is whole-token, case-insensitive, excludes units/interjections
@@ -47,9 +50,9 @@ per-new-segment trim inside the resume-concatenation path). The user asked to cu
 
 - `SpeechAnalyzerService.configureSession()`: mode `.measurement` -> `.spokenAudio` (keeping
   `.duckOthers`). This is the single highest-leverage transcription fix.
-- `SpeechAnalyzerService.makeTranscriber()`: `transcriptionOptions: []` ->
-  `[.etiquetteReplacements]` - the only option `SpeechTranscriber` exposes in this SDK - with a comment
-  recording the SDK verification and the punctuation-is-native finding.
+- `SpeechAnalyzerService.makeTranscriber()`: `transcriptionOptions` stays `[]` (empty = verbatim). The
+  only option `SpeechTranscriber` exposes, `.etiquetteReplacements`, REDACTS words, so it is deliberately
+  NOT set; a comment records the SDK verification and the punctuation-is-native finding.
 - Audited the refinement layer and PINNED "good output" with `CapturePipelineRefinementTests`:
   representative multi-sentence transcripts with fillers, numbers, units, punctuation, quotes, and a
   natural pause, asserting the refined text is clean and faithful (punctuation preserved, real
@@ -87,6 +90,6 @@ recognition quality can only be judged on hardware.
 
 ## Device-verify (cannot be checked in the Simulator)
 
-- Real on-device transcription quality with `.spokenAudio` + `[.etiquetteReplacements]` (the Simulator
+- Real on-device transcription quality with `.spokenAudio` + empty `transcriptionOptions` (the Simulator
   does not run real recognition). The punctuation improvement in particular is device-only. If output is
   still poor on hardware, this is where to look next.

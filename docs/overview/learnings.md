@@ -781,14 +781,20 @@ iOS 26.5 SDK (`Speech.swiftinterface` plus the framework headers), it was WRONG 
 property of the LEGACY `SFSpeechRecognitionRequest`. `SpeechTranscriber` punctuates NATIVELY from its
 language model, so `[]` never stripped punctuation and the "single highest-leverage fix" was a no-op. The
 real quality lever was the audio-session MODE (`.measurement` disables the input gain/noise/echo
-conditioning the recognizer relies on; `.spokenAudio` keeps it). Two rules generalize. First: an
-option/case named in an investigation is a hypothesis, not a fact - confirm it exists on the EXACT type
-you construct, because sibling types in one framework carry different enums and an old API's flag does not
-carry to its replacement; the `.swiftinterface` is the source of truth, not memory or a plausible-sounding
-name. Second: when a report blames the wrong knob, do not just add the named option and move on - trace
-which knob actually governs the behavior (here: signal conditioning, set by the session mode), or you ship
-a comment-decorated no-op and the regression persists. Generalizes to any platform-API fix handed over as
-"set X" - verify X, and verify X is what controls the symptom.
+conditioning the recognizer relies on; `.spokenAudio` keeps it). WORSE than a no-op: the first attempt set
+the one available option, `.etiquetteReplacements`, "because it was the only lever" - but its SDK doc
+string is "Replaces certain words and phrases with a redacted form", i.e. it CENSORS the transcript, the
+exact opposite of a verbatim thought-capture app's goal (persona review caught it before merge). Three
+rules generalize. First: an option/case named in an investigation is a hypothesis, not a fact - confirm it
+exists on the EXACT type you construct, because sibling types in one framework carry different enums and an
+old API's flag does not carry to its replacement; the `.swiftinterface` is the source of truth. Second:
+when a report blames the wrong knob, trace which knob actually governs the behavior (here: signal
+conditioning, set by the session mode), do not just set the named option and move on. Third and sharpest:
+"it is the only available option, so set it" is NOT a reason to set it - READ WHAT THE OPTION DOES against
+the product's intent before enabling it; the default (empty / off) is often correct, and a wrongly-enabled
+option can actively HARM (here, redact the user's own words), not merely fail to help. Generalizes to any
+platform-API knob handed over as "set X" - verify X exists, verify X controls the symptom, and verify X's
+effect is one you actually want.
 
 ## A device-only quality path still earns a CI gate on its pure half (feedback 0026)
 

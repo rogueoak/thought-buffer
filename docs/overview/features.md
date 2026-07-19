@@ -483,9 +483,10 @@ On-device dictation quality was tuned after a device report that it read poorly.
 - **Dictation-tuned audio session.** The record session mode is `.spokenAudio` (Apple's dictation
   mode), not `.measurement`. `.measurement` disabled the input signal conditioning (gain / noise / echo
   processing) the recognizer relies on; `.spokenAudio` keeps it on, so the recognizer hears clean input.
-- **Native formatting.** The iOS 26 `SpeechTranscriber` punctuates and formats natively from its
-  language model - there is no punctuation "option" to set on it (verified against the SDK). The
-  transcriber uses the one available transcription option, `etiquetteReplacements`.
+- **Native formatting, verbatim words.** The iOS 26 `SpeechTranscriber` punctuates and formats natively
+  from its language model - there is no punctuation "option" to set on it (verified against the SDK). Its
+  one available transcription option, `etiquetteReplacements`, REDACTS words, so it is deliberately NOT
+  set; the transcriber runs with empty `transcriptionOptions` for a faithful, unredacted transcript.
 - **Conservative refinement, pinned.** The default-on filler removal and pause-based paragraph grouping
   are non-destructive: filler removal strikes only genuine whole-token hesitations (never a real word,
   unit, interjection, or quoted span), and grouping breaks paragraphs on a real silence gap (1.5s).
