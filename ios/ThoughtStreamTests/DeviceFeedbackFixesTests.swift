@@ -310,8 +310,8 @@ final class StreamFeedDeleteTests: XCTestCase {
         let store = MemoryThoughtStore()
         let keep = Thought(title: "Keep", paragraphs: ["stays"], createdAt: Date())
         let drop = Thought(title: "Drop", paragraphs: ["goes"], createdAt: Date())
-        try? store.save(keep)
-        try? store.save(drop)
+        _ = try? store.save(keep)
+        _ = try? store.save(drop)
 
         let feed = StreamFeed(store: store)
         await feed.start()
@@ -330,7 +330,7 @@ final class StreamFeedDeleteTests: XCTestCase {
     func testDeleteAlsoRemovesSiblingAudioAtFeedLevel() async {
         let store = MemoryThoughtStore()
         let thought = Thought(title: "Recorded", paragraphs: ["spoken"], createdAt: Date())
-        try? store.save(thought)
+        _ = try? store.save(thought)
 
         let feed = StreamFeed(store: store)
         await feed.start()
@@ -347,7 +347,7 @@ final class StreamFeedDeleteTests: XCTestCase {
     func testFailedDeleteSurfacesErrorAndKeepsThought() async {
         let store = ThrowingDeleteStore()
         let thought = Thought(title: "Sticky", paragraphs: ["stays put"], createdAt: Date())
-        try? store.save(thought)
+        _ = try? store.save(thought)
 
         let feed = StreamFeed(store: store)
         await feed.start()

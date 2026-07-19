@@ -55,11 +55,26 @@ the notes -> thoughts rename (task 11 / follow-up).
    `options.xcodeVersion: "2600"` in `ios/project.yml`, which stamps `LastUpgradeCheck = 2600`
    (Xcode 26) on regenerate. No signing or deployment-target setting changed.
 
+## Residual warnings (second pass - also fixed, for a genuinely clean build)
+
+8. **PhoneConnectivityCoordinator.swift** - "instance method 'lock'/'unlock' is unavailable from
+   asynchronous contexts" (x5). These fired on the `pushLock.lock()`/`unlock()` calls inside the
+   `async` `drainPush()`. `NSLock.lock()`/`unlock()` are unavailable from an async context because
+   holding a lock across a suspension point is a hazard. The critical sections here never actually
+   spanned the `await`-free load/write between them, but the diagnostic is correct in spirit. Fix:
+   moved the two lock-guarded sections into synchronous helpers (`beginDrainCycle()` /
+   `finishDrainCycle()`) and turned `drainPush`'s tail recursion into a `repeat/while` loop. The
+   lock is now only ever taken from synchronous methods (so the diagnostic is gone) AND it is
+   structurally impossible for it to span the load/write (so the fix is real, not a mute). Behavior
+   is unchanged: same coalesce-clear-then-push-then-recheck sequence, same re-push when a change
+   lands mid-push. (The non-async `pushRecentThoughts()` lock sites never warned and are untouched.)
+
+9. **DeviceFeedbackFixesTests.swift** - four "result of 'try?' is unused" on `try? store.save(...)`
+   (the store's `save` is `@discardableResult` returning `URL`, so `try?` yields an unused `URL?`).
+   Fix: `_ =` discard at each of the four sites. No test logic changed.
+
 ## Out of scope (left as-is)
 
-- `PhoneConnectivityCoordinator.swift` `lock`/`unlock` async-context warnings - not in this pass.
-- Four `result of 'try?' is unused` warnings in `DeviceFeedbackFixesTests.swift` - pre-existing
-  test-file warnings, not in the listed files; left to avoid touching unrelated tests.
 - The SwiftUI "Modifying state during view update" warning - owned by feedback 0020.
 
 ## Siri phrase disambiguation (task 11 / follow-up)
@@ -76,3 +91,5 @@ assertion (`SessionStartTests`) now pins that the two phrase-lead sets are disjo
 
 - `xcodebuild ... test` on iPhone 17: **TEST SUCCEEDED**, 631 tests, 0 failures.
 - Each warning string above greps to zero hits in the test build log for the listed files.
+- After both passes the whole test build log contains **0** compiler warnings (no line contains
+  `warning:`) - a genuinely clean build.

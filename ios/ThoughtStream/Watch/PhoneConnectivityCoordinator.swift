@@ -100,26 +100,40 @@ final class PhoneConnectivityCoordinator: NSObject, @unchecked Sendable {
     }
 
     /// Do one push (background), then re-push if more changes arrived while it ran. Loads the projection
-    /// off the delegate thread and writes the application context.
+    /// off the delegate thread and writes the application context. Looped (not recursed) so more changes
+    /// that land during the load simply re-run this body once.
+    ///
+    /// The `pushLock` critical sections live in the synchronous `beginDrainCycle()` / `finishDrainCycle()`
+    /// helpers, NOT inline here: `NSLock.lock()`/`unlock()` are unavailable from an async context (holding a
+    /// lock across a suspension point is a hazard), and calling them from a plain synchronous method both
+    /// silences that (correct) diagnostic and makes it structurally impossible for the lock to span the
+    /// `await`-free load/write between the two critical sections.
     private func drainPush() async {
-        // Coalesce everything that arrived during the debounce window into this one push.
+        repeat {
+            // Coalesce everything that arrived during the debounce window into this one push.
+            beginDrainCycle()
+            let projection = recentThoughtsProvider()
+            writeApplicationContext(WatchConnectivityCodec.encode(recentThoughts: projection))
+        } while finishDrainCycle()
+    }
+
+    /// Start of one drain cycle: clear the pending flag so only changes arriving AFTER this point trigger a
+    /// re-push. Synchronous so the `pushLock` is never taken from an async context.
+    private func beginDrainCycle() {
         pushLock.lock()
         pendingPush = false
         pushLock.unlock()
+    }
 
-        let projection = recentThoughtsProvider()
-        writeApplicationContext(WatchConnectivityCodec.encode(recentThoughts: projection))
-
+    /// End of one drain cycle: return true (and KEEP `pushInFlight` set) when more changes landed during the
+    /// load/write, so the caller loops for one more push; otherwise clear `pushInFlight` and return false.
+    /// Synchronous so the `pushLock` is never taken from an async context.
+    private func finishDrainCycle() -> Bool {
         pushLock.lock()
-        let again = pendingPush
-        if again {
-            // More changes landed during the load/write; keep pushInFlight set and loop.
-            pushLock.unlock()
-            await drainPush()
-            return
-        }
+        defer { pushLock.unlock() }
+        if pendingPush { return true }
         pushInFlight = false
-        pushLock.unlock()
+        return false
     }
 
     /// Write the application context to the session, if activated. Isolated so the debounce path has one
