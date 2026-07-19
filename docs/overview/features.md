@@ -322,9 +322,12 @@ A branded launch moment: on a normal cold launch the app shows a full-screen cov
 background before the Thoughts list.
 
 - **Title over icon over a waveform.** A prominent "Thought Stream" wordmark (Canopy `sizeX3xl`,
-  bold) sits above the app icon (rounded, with a subtle shadow), centered, with a row of eight
-  equalizer bars in the primary token beneath it that rise and fall as if reacting to a voice. The
-  title renders in both the animated and Reduce Motion variants.
+  bold) sits above the app icon, centered, with a row of eight thin equalizer bars in the primary
+  token beneath it that rise and fall as if reacting to a voice. The bars are narrow (a named
+  `barWidth`/`barSpacing`) so the row reads as a fine, logo-like waveform (feedback 0019). The
+  icon is borderless and fades into the background: a soft radial mask (`logoFadeMask`) melts its
+  edges into the River Mist backdrop rather than showing a crisp rounded tile with a shadow
+  (feedback 0019). The title renders in both the animated and Reduce Motion variants.
 - **Speech-like animation.** The bars are driven by a `TimelineView(.animation)`; each bar's height
   is a phase-shifted sum of two sines of the timeline date, so the row ripples like speech rather than
   sweeping as one wave. The per-bar phase is indexed from the far end (`count - 1 - bar`) so the
