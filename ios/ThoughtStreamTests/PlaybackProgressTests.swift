@@ -44,6 +44,17 @@ final class PlaybackProgressTests: XCTestCase {
         )
     }
 
+    /// The drag-BEGIN boundary: the drag flag flips true with the scrub value seeded to the current `elapsed`
+    /// (as `BottomPlayer.onEditingChanged(true)` does), so the first displayed value is the position the thumb
+    /// started at - no jump on grab.
+    func testScrubDisplayAtDragBeginShowsTheSeededElapsed() {
+        XCTAssertEqual(
+            PlaybackProgress.scrubDisplay(isScrubbing: true, scrubValue: 8, elapsed: 8),
+            8,
+            "grabbing the thumb (scrub seeded to elapsed) shows the current position, no jump"
+        )
+    }
+
     /// With no drag in progress, the display shows the controller's live `elapsed`, so the bar tracks
     /// playback.
     func testScrubDisplayShowsElapsedWhenNotScrubbing() {

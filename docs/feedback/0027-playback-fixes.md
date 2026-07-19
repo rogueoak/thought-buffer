@@ -38,6 +38,13 @@ transport works there identically (the controller, the ticker, seek, and Now Pla
 shared). The player renders itself only while a recording is loaded (it collapses to nothing
 otherwise), so a thought with nothing playing shows just the search / resume bar as before.
 
+Whether the detail hosts the player is a SINGLE container decision -
+`StreamContainer.detailHostsBottomPlayer` (the same seam `folderScreenShowsOwnBottomBar` uses):
+true on the compact stack (the push swaps the inset, so the detail re-hosts it), false in the
+split view (the player is lifted above all columns, so the detail column must not host it or it
+double-renders). `StreamListView.detailView` derives the flag from the container rather than
+passing a per-call-site literal, so a future lifting container cannot silently double-render.
+
 Placement decision: the thought detail page HAS a bottom bar by design (its find field + resume
 icon), so the player anchors directly above that bar in the same bottom safe-area inset - the
 exact position the list screens use - and the whole inset stays consistent across screens.
@@ -84,12 +91,23 @@ the bar resumes advancing from it.
 ### Tests
 
 - `PlaybackProgressTests.testScrubDisplayShowsScrubValueWhileScrubbing` /
-  `...ShowsElapsedWhenNotScrubbing` / `...IgnoresStaleScrubValueAfterDragEnds`: the pure display
-  rule proves the editing state cannot permanently suppress live progress (a leftover scrub value
-  with `isScrubbing == false` still yields `elapsed`).
-- `ThoughtPlaybackControllerTests.testElapsedResumesFromSoughtPositionWhilePlaying`: model-level,
-  no real audio - after a seek while playing, the ticker resumes sampling and `elapsed` advances
-  from the sought position (not from 0, and not frozen).
+  `...AtDragBeginShowsTheSeededElapsed` / `...ShowsElapsedWhenNotScrubbing` /
+  `...IgnoresStaleScrubValueAfterDragEnds`: the pure display rule is the HONEST regression guard
+  for the stall - it proves the editing state cannot permanently suppress live progress (a
+  leftover scrub value with `isScrubbing == false` still yields `elapsed`), which fails against
+  the old `scrubbing ?? elapsed` display. (The stall lived in the view layer, so this pure rule -
+  not a controller test - is what guards it.)
+- `ThoughtPlaybackControllerTests.testSeekDoesNotStopTheTickerSoElapsedKeepsAdvancing`:
+  model-level, no real audio - pins a CONTROLLER-side property behind the fix (a seek must not
+  stop the live-progress ticker), so a future change that DID pause the ticker on seek is caught.
+  It holds on `main` already (this property was never broken), so it is a forward guard, not the
+  stall's regression test - the pure `scrubDisplay` tests are that.
+- `ThoughtPlaybackControllerTests.testSeekWhilePausedThenResumeAdvancesFromSoughtPosition`: the
+  paused-scrub equivalence class - a paused seek sets `elapsed` but does not start the ticker; a
+  following `resume()` advances `elapsed` from the sought position.
+- `AdaptiveLayoutTests.testCompactDetailHostsTheBottomPlayer` /
+  `...testSplitDetailDoesNotHostTheBottomPlayer`: lock the container decision so a future lifting
+  layout cannot silently double-render the player.
 - Existing `testSeekClampsToDuration` / `testSeekUpdatesElapsedAndSeeksPlayer` continue to prove
   the seek clamps to `[0, duration]` and updates `elapsed` immediately.
 

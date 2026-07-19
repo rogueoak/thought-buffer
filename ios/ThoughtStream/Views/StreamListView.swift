@@ -441,9 +441,6 @@ struct StreamListView: View {
                 detailView(
                     for: selectedRoute,
                     showsDetailSearch: false,
-                    // The split view LIFTS the bottom player above all columns (`liftedBottomStack`), so the
-                    // detail column must NOT host its own or the player would render twice (feedback 0027).
-                    showsBottomPlayer: false,
                     onPopThought: { self.selectedRoute = nil },
                     onPopNewThought: { self.selectedRoute = nil }
                 )
@@ -459,11 +456,15 @@ struct StreamListView: View {
     private func detailView(
         for route: StreamRoute,
         showsDetailSearch: Bool = true,
-        showsBottomPlayer: Bool = true,
         onPopThought: @escaping () -> Void,
         onPopNewThought: @escaping () -> Void
     ) -> some View {
         let enablesFind = showsDetailSearch
+        // Whether THIS detail hosts the shared bottom player is a SINGLE container decision (feedback 0027),
+        // not a per-call-site flag: compact re-hosts it (the push swaps the inset), split does not (the player
+        // is lifted above all columns). Deriving it here means a call site cannot forget to opt out and
+        // double-render.
+        let showsBottomPlayer = StreamContainer.decide(horizontalSizeClass: horizontalSizeClass).detailHostsBottomPlayer
         switch route {
         case let .thought(thought):
             ThoughtDetailView(

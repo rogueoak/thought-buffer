@@ -42,11 +42,12 @@ struct ThoughtDetailView: View {
     /// harmless re-open); when a folder queue has advanced to a DIFFERENT recording, this opens that one. The
     /// compact stack pushes it, the split detail selects it. Defaults to a no-op for a bare/preview call site.
     private let onOpenThought: (Thought) -> Void
-    /// Whether this detail screen hosts the shared bottom PLAYER in its own bottom inset (feedback 0027).
-    /// True on the compact (phone) stack, where the pushed detail owns its bottom inset, so the player must be
-    /// repeated here. False in the iPad split view, where the player is LIFTED above all columns
+    /// Whether this detail screen hosts the shared bottom PLAYER in its own bottom inset (feedback 0027). The
+    /// real call site derives this from `StreamContainer.detailHostsBottomPlayer` (the ONE container decision):
+    /// true on the compact (phone) stack, where the pushed detail owns its bottom inset so the player must be
+    /// repeated here; false in the iPad split view, where the player is LIFTED above all columns
     /// (`StreamListView.liftedBottomStack`) - hosting it here too would double-render it. Defaults to true so a
-    /// bare/preview call site still shows it.
+    /// bare/preview call site (compact-like) still shows it.
     private let showsBottomPlayer: Bool
     /// Whether the bottom-bar search field performs IN-THOUGHT find on this detail screen (spec 0025,
     /// superseding spec 0021's "detail search routes to global results"): the field finds within THIS
@@ -428,6 +429,11 @@ struct ThoughtDetailView: View {
     /// thought text is being edited, exactly as it does on the list screens. On the iPad split view this inset
     /// is empty for the detail column (the player is lifted above all columns), so the player never
     /// double-renders there; on compact this IS the player's home while a thought is open.
+    ///
+    /// Unlike the list's `StreamBottomStack` (which also gates its player on `screenState != .emptyStore`),
+    /// the detail player is gated ONLY on `showsBottomPlayer` (architect review): the empty-store gate is
+    /// deliberately omitted here because a thought detail is never the empty-store screen, so the two
+    /// predicates are intentionally not coupled - do not re-add the store-state gate to this call site.
     private var detailBottomStack: some View {
         VStack(spacing: CanopySpacing.x3) {
             if showsBottomPlayer {

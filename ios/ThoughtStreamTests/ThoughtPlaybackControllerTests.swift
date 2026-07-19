@@ -424,12 +424,14 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         XCTAssertEqual(controller.elapsed, 0, "a seek before the start pins to 0")
     }
 
-    /// The feedback-0027 regression guard, at the model level: after a seek WHILE PLAYING, the live-progress
-    /// ticker must RESUME advancing `elapsed` from the sought position - not freeze at it, and not restart at
-    /// 0. Reproduces "progress stops moving after scrubbing" purely (no real audio): seek to 12, then let the
-    /// player advance past it and assert the ticker samples the new positions into `elapsed`. A ticker that
-    /// stopped on seek (the bug) would leave `elapsed` pinned at 12.
-    func testElapsedResumesFromSoughtPositionWhilePlaying() async {
+    /// A CONTROLLER-level property behind the feedback-0027 fix (NOT the stall itself - that lived in the view,
+    /// see `PlaybackProgressTests.scrubDisplay`): a seek must NOT stop the live-progress ticker, so after a
+    /// seek while playing the controller keeps advancing `elapsed` from the sought position. Seek to 12, then
+    /// let the player advance past it and assert the ticker samples the new positions. This holds on `main`
+    /// already (the controller never stopped its ticker on seek); it pins that invariant so a future change
+    /// that DID pause the ticker on seek - which would re-introduce a stall even with the view fix - is caught.
+    /// The user-visible "progress stops after scrubbing" regression is guarded by the pure `scrubDisplay` tests.
+    func testSeekDoesNotStopTheTickerSoElapsedKeepsAdvancing() async {
         let player = SpyPlayer()
         let controller = makeController(player: player)
         controller.play(thought: recordedThought(length: 60))
@@ -449,6 +451,35 @@ final class ThoughtPlaybackControllerTests: XCTestCase {
         player.currentTimeValue = 14
         await eventually({ controller.elapsed == 14 }, tries: 100)
         XCTAssertEqual(controller.elapsed, 14, "progress keeps advancing on the next tick")
+    }
+
+    /// The seek-while-PAUSED equivalence class (tester review): seeking while paused sets `elapsed` to the
+    /// sought position but does NOT start the ticker (nothing is playing); a following `resume()` starts it, so
+    /// `elapsed` advances from the sought position. Covers the paused path the playing-only test above leaves
+    /// out - the bottom player can be scrubbed while paused too.
+    func testSeekWhilePausedThenResumeAdvancesFromSoughtPosition() async {
+        let player = SpyPlayer()
+        let controller = makeController(player: player)
+        controller.play(thought: recordedThought(length: 60))
+        await settle()
+
+        controller.pause()
+        XCTAssertTrue(controller.isPaused)
+
+        // Scrub while paused: elapsed lands at the target, and the ticker stays stopped (nothing plays).
+        player.currentTimeValue = 20
+        controller.seek(to: 20)
+        XCTAssertEqual(controller.elapsed, 20, "a paused seek sets elapsed to the sought position")
+        // A player advance while paused must NOT move elapsed (no ticker running).
+        player.currentTimeValue = 25
+        for _ in 0..<4 { await Task.yield(); try? await Task.sleep(nanoseconds: 300_000_000) }
+        XCTAssertEqual(controller.elapsed, 20, "a paused seek does not start the ticker")
+
+        // Resume from the sought position: the ticker starts and elapsed advances from there.
+        controller.resume()
+        player.currentTimeValue = 26
+        await eventually({ controller.elapsed == 26 }, tries: 100)
+        XCTAssertEqual(controller.elapsed, 26, "resume after a paused seek advances elapsed from the sought position")
     }
 
     /// A skip forward past the end clamps to the duration rather than seeking out of range.
