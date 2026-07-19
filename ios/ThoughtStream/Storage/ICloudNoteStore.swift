@@ -425,17 +425,19 @@ struct ICloudNoteStore: NoteStoring {
         return destination
     }
 
-    /// Atomically replace a note's existing recording with a rewritten one (spec 0019 dead-air trim),
+    /// Atomically replace a note's EXISTING recording with a rewritten one (spec 0019 dead-air trim),
     /// COORDINATED through `NSFileCoordinator` (`.forReplacing`) so the swap never races the sync
     /// daemon on the ubiquity-container file, and using `replaceItemAt` inside the coordination block
-    /// so there is never a window where the note has no recording. Re-asserts protection. When no
-    /// recording exists yet, falls back to a plain coordinated adopt (`saveAudio`).
+    /// so there is never a window where the note has no recording. Re-asserts protection.
+    ///
+    /// It NEVER creates a recording: when the destination is absent (the note was soft-deleted, moved,
+    /// or never had audio) it DELETES the temp and returns nil, rather than materializing an orphan
+    /// `.m4a` at the resolved slot that `loadAll`/`purgeAllTrash` would never see (defeating a delete).
     @discardableResult
-    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL {
-        guard let destination = audioURL(for: id) else { return temporaryURL }
-        try ensureDirectory(at: destination.deletingLastPathComponent())
-        guard coordinatedExists(at: destination) else {
-            return try saveAudio(from: temporaryURL, for: id)
+    func replaceAudio(from temporaryURL: URL, for id: UUID) throws -> URL? {
+        guard let destination = audioURL(for: id), coordinatedExists(at: destination) else {
+            try? fileManager.removeItem(at: temporaryURL)
+            return nil
         }
 
         var coordinationError: NSError?

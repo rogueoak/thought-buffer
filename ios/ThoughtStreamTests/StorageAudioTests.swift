@@ -94,6 +94,75 @@ final class StorageAudioTests: XCTestCase {
         XCTAssertEqual(String(data: data, encoding: .utf8), "second")
     }
 
+    // MARK: - replaceAudio (spec 0019 dead-air trim)
+
+    func testReplaceAudioSwapsAnExistingRecording() throws {
+        let store = NoteStore(directory: tempDir)
+        let id = UUID()
+        try store.saveAudio(from: makeTempRecording(content: "original"), for: id)
+        let replaced = try XCTUnwrap(try store.replaceAudio(from: makeTempRecording(content: "trimmed"), for: id))
+        XCTAssertEqual(replaced, store.audioURL(for: id))
+        XCTAssertEqual(String(data: try Data(contentsOf: replaced), encoding: .utf8), "trimmed")
+    }
+
+    func testReplaceAudioWhenAbsentCreatesNoFileAndConsumesTemp() throws {
+        // The load-bearing safety: replaceAudio must NEVER materialize a recording when the slot is
+        // absent (a deleted/moved note), or it orphans a copy of raw voice. It returns nil and deletes
+        // the temp instead.
+        let store = NoteStore(directory: tempDir)
+        let id = UUID()
+        let temp = try makeTempRecording(content: "trimmed")
+        let result = try store.replaceAudio(from: temp, for: id)
+        XCTAssertNil(result, "nothing to replace -> nil")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.audioURL(for: id)!.path),
+                       "no orphan .m4a is created at the slot")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temp.path), "the temp was consumed")
+    }
+
+    func testReplaceAudioFailureLeavesOriginalIntact() throws {
+        // A replace whose SOURCE temp does not exist throws, and the original recording survives
+        // byte-for-byte (replaceItemAt is atomic; nothing is destroyed on failure).
+        let store = NoteStore(directory: tempDir)
+        let id = UUID()
+        try store.saveAudio(from: makeTempRecording(content: "original"), for: id)
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).m4a")
+        XCTAssertThrowsError(try store.replaceAudio(from: missing, for: id))
+        XCTAssertEqual(String(data: try Data(contentsOf: store.audioURL(for: id)!), encoding: .utf8),
+                       "original", "the original recording is intact after a failed replace")
+    }
+
+    func testICloudReplaceAudioSwapsExistingCoordinated() throws {
+        // The coordinated NSFileCoordinator .forReplacing variant - the load-bearing iCloud safety - was
+        // previously untested. Prove it swaps an existing recording in place.
+        let store = ICloudNoteStore.forTesting(directory: tempDir)
+        let id = UUID()
+        try store.saveAudio(from: makeTempRecording(content: "original"), for: id)
+        let replaced = try XCTUnwrap(try store.replaceAudio(from: makeTempRecording(content: "trimmed"), for: id))
+        XCTAssertEqual(String(data: try Data(contentsOf: replaced), encoding: .utf8), "trimmed")
+    }
+
+    func testICloudReplaceAudioWhenAbsentCreatesNoFileAndConsumesTemp() throws {
+        let store = ICloudNoteStore.forTesting(directory: tempDir)
+        let id = UUID()
+        let temp = try makeTempRecording(content: "trimmed")
+        let result = try store.replaceAudio(from: temp, for: id)
+        XCTAssertNil(result)
+        XCTAssertFalse(store.audioExists(for: id), "no orphan .m4a created via the coordinated path")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temp.path), "the temp was consumed")
+    }
+
+    func testICloudReplaceAudioFailureLeavesOriginalIntact() throws {
+        let store = ICloudNoteStore.forTesting(directory: tempDir)
+        let id = UUID()
+        try store.saveAudio(from: makeTempRecording(content: "original"), for: id)
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).m4a")
+        XCTAssertThrowsError(try store.replaceAudio(from: missing, for: id))
+        XCTAssertEqual(String(data: try Data(contentsOf: store.audioURL(for: id)!), encoding: .utf8),
+                       "original")
+    }
+
     // MARK: - ICloudNoteStore (coordinated)
 
     func testICloudStoreSavesAndDeletesAudioSiblingCoordinated() throws {

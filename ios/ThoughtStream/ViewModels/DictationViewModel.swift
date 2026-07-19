@@ -342,6 +342,13 @@ final class DictationViewModel: ObservableObject {
     /// Called on the main actor after a background dead-air trim finishes and the note's timings were
     /// re-saved (spec 0019), so the host can reload its feed and drop the stale (un-remapped) in-memory
     /// note. Nil when no host wired it (tests, screenshot tooling). Set by the view.
+    ///
+    /// KNOWN LIMITATION (feedback 0017): this reloads the LIST feed, but an ALREADY-OPEN `NoteDetailView`
+    /// pushed on the stack keeps its own un-remapped note snapshot until it is popped and reopened.
+    /// Harmless today because detail playback is whole-file (the total duration is unchanged by trimming
+    /// only interior silence), so a stale per-paragraph timing is never consulted. A future PER-PARAGRAPH
+    /// SEEK feature MUST revisit this - it would seek against timings that no longer match the shorter
+    /// audio - by refreshing the open detail's note here (or re-reading it at seek time).
     var onTrimmed: (() -> Void)?
 
     /// Trim dead air from a just-saved note's recording OFF the main actor, then adopt the trimmed
@@ -349,13 +356,17 @@ final class DictationViewModel: ObservableObject {
     /// the untrimmed note. On any trim failure the original recording and timings are left in place, so
     /// the note is never lost. The task is detached so it outlives the view dismissed after `finish()`.
     ///
-    /// Two review-driven safeguards. First, the swap is done through the store's COORDINATED
+    /// Three review-driven safeguards. First, the swap is done through the store's COORDINATED
     /// `replaceAudio` (not a bare `replaceItemAt`), so an iCloud recording is not raced against the sync
-    /// daemon. Second, the timings re-save reads the note FRESH from disk by id and only replaces its
-    /// timings - it does NOT re-save the stale snapshot captured at `finish()`. The user may edit,
-    /// rename, move, or delete the note on the detail screen while a long trim runs; re-saving the
-    /// snapshot would clobber those edits (or resurrect a deleted note). Reading fresh and skipping when
-    /// the note is gone keeps the trim a pure timings-only update.
+    /// daemon. Second, the note is re-read FRESH from disk by id and CONFIRMED to still exist BEFORE the
+    /// audio is swapped: the user may soft-delete (spec 0020 trash) the note between `finish()` and this
+    /// trim landing, and after a delete the note's `.md` is hidden in trash so its audio slot resolves to
+    /// a non-existent root path - adopting the trimmed temp there would leave an orphan raw-voice `.m4a`,
+    /// invisible to `loadAll` and never purged, defeating the delete. If the note is gone we delete the
+    /// trimmed temp and bail. (`replaceAudio` also refuses to create a file when the slot is absent, so
+    /// this is belt-and-suspenders.) Third, the timings re-save only replaces the fresh note's timings -
+    /// it does NOT re-save the stale snapshot captured at `finish()` - so a concurrent rename/move is
+    /// preserved.
     private func scheduleTrim(for note: Note) {
         guard let audioTrimmer, note.hasAudio,
               let audioURL = store.audioURL(for: note.id) else { return }
@@ -365,23 +376,33 @@ final class DictationViewModel: ObservableObject {
             let result = await audioTrimmer.trim(fileAt: audioURL)
             guard case .trimmed(let trimmedFileURL, let removedRanges) = result else { return }
 
-            // Adopt the verified trimmed file through the coordinated atomic-replace seam. On failure,
-            // clean up the temp and leave the original recording + timings untouched (never lost).
-            do {
-                try store.replaceAudio(from: trimmedFileURL, for: noteID)
-            } catch {
+            // Re-read the note FRESH and confirm it still exists BEFORE touching any audio. If it was
+            // soft-deleted/moved during the trim, discard the trimmed temp and bail - never adopt it
+            // (which would orphan a copy of the just-deleted recording).
+            guard let current = store.loadAll().first(where: { $0.id == noteID }) else {
                 try? FileManager.default.removeItem(at: trimmedFileURL)
                 return
             }
 
-            // Re-read the note FRESH from disk and remap only its timings, so a concurrent edit/move on
-            // the detail screen is preserved and a delete is honored (the note is simply gone here).
-            guard let current = store.loadAll().first(where: { $0.id == noteID }) else { return }
+            // Adopt the verified trimmed file through the coordinated atomic-replace seam. On failure,
+            // clean up the temp and leave the original recording + timings untouched (never lost). A nil
+            // return means the recording slot vanished in the tiny window since the re-read (a delete
+            // that raced the swap): `replaceAudio` created NO orphan and consumed the temp, so bail
+            // without re-saving the timings (which would resurrect the just-deleted note).
+            let replaced: URL?
+            do {
+                replaced = try store.replaceAudio(from: trimmedFileURL, for: noteID)
+            } catch {
+                try? FileManager.default.removeItem(at: trimmedFileURL)
+                return
+            }
+            guard replaced != nil else { return }
+
+            // Remap only the fresh note's timings (its edits are preserved). A save failure leaves the
+            // note with its original timings against the shorter recording - a seek slip, not data loss.
             let remappedNote = current.withTimings(
                 TimingRemapper.remap(timings: current.timings, removedRanges: removedRanges)
             )
-            // A save failure leaves the note with its original timings against the shorter recording - a
-            // seek slip, not data loss - acceptable versus blocking the UI; the audio itself is intact.
             try? store.save(remappedNote)
 
             // Hop back to the main actor so the host reloads and drops the stale in-memory note.

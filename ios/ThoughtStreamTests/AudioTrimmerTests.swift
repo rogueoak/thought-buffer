@@ -49,6 +49,32 @@ final class AudioTrimmerTests: XCTestCase {
         return leadSeconds + silenceSeconds + tailSeconds
     }
 
+    /// Write an `.m4a` from an ordered list of `(seconds, isTone)` segments, so a test can build any
+    /// silence geometry (leading, trailing, back-to-back). Returns the total duration.
+    @discardableResult
+    private func writeSegments(to url: URL, _ segments: [(seconds: Double, isTone: Bool)]) throws -> Double {
+        let format = try XCTUnwrap(AVAudioFormat(
+            commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false))
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: sampleRate, AVNumberOfChannelsKey: 1]
+        let file = try AVAudioFile(forWriting: url, settings: settings)
+        var total = 0.0
+        for segment in segments {
+            guard segment.seconds > 0 else { continue }
+            let frames = AVAudioFrameCount(segment.seconds * sampleRate)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+            buffer.frameLength = frames
+            let channel = buffer.floatChannelData![0]
+            let amplitude: Float = segment.isTone ? 0.5 : 0.0
+            for i in 0..<Int(frames) {
+                channel[i] = amplitude * sinf(2 * .pi * 440 * Float(i) / Float(sampleRate))
+            }
+            try file.write(from: buffer)
+            total += segment.seconds
+        }
+        return total
+    }
+
     private func duration(of url: URL) throws -> Double {
         let file = try AVAudioFile(forReading: url)
         return Double(file.length) / file.processingFormat.sampleRate
@@ -86,6 +112,60 @@ final class AudioTrimmerTests: XCTestCase {
         let trimmedDuration = try duration(of: trimmedFileURL)
         XCTAssertLessThan(trimmedDuration, originalDuration - 2.0)
         XCTAssertGreaterThan(trimmedDuration, 0)
+    }
+
+    /// End-to-end geometry (tester minor #2): exercise the real frame-copy writer against LEADING,
+    /// TRAILING, and BACK-TO-BACK silence, so a frame-rounding / endFrame-clamp bug in
+    /// `writeTrimmed`/`copyFrames` can't slip through the single mid-clip case. Each asserts the trimmed
+    /// temp is shorter by roughly the removed silence (minus the kept breath gaps) and stays valid.
+    func testTrimsLeadingSilenceEndToEnd() async throws {
+        try await assertTrims(
+            segments: [(3, false), (2, true)], // 3s leading silence, 2s tone
+            expectedRemovedApprox: 2.4, // 3s - 0.6 breath
+            approxTotal: 5)
+    }
+
+    func testTrimsTrailingSilenceEndToEnd() async throws {
+        try await assertTrims(
+            segments: [(2, true), (3, false)], // 2s tone, 3s trailing silence
+            expectedRemovedApprox: 2.4,
+            approxTotal: 5)
+    }
+
+    func testTrimsBackToBackSilencesEndToEnd() async throws {
+        try await assertTrims(
+            segments: [(1, true), (3, false), (1, true), (2.5, false), (1, true)],
+            expectedRemovedApprox: 2.4 + 1.9, // (3-0.6) + (2.5-0.6)
+            approxTotal: 8.5)
+    }
+
+    /// Write `segments` to a temp `.m4a`, trim it, and assert the removed total and the shorter valid
+    /// output, with slack for AAC + window rounding.
+    private func assertTrims(
+        segments: [(seconds: Double, isTone: Bool)],
+        expectedRemovedApprox: Double,
+        approxTotal: Double
+    ) async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("trimtest-\(UUID().uuidString).m4a")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try writeSegments(to: url, segments)
+        let originalDuration = try duration(of: url)
+        XCTAssertEqual(originalDuration, approxTotal, accuracy: 0.3)
+
+        let result = await AudioTrimmer().trim(fileAt: url)
+        guard case .trimmed(let trimmedFileURL, let removed) = result else {
+            return XCTFail("expected a trim for \(segments), got \(result)")
+        }
+        defer { try? FileManager.default.removeItem(at: trimmedFileURL) }
+
+        let removedTotal = removed.reduce(0) { $0 + $1.duration }
+        XCTAssertEqual(removedTotal, expectedRemovedApprox, accuracy: 0.5)
+
+        let trimmedDuration = try duration(of: trimmedFileURL)
+        XCTAssertGreaterThan(trimmedDuration, 0, "the trimmed file is valid and non-empty")
+        XCTAssertEqual(trimmedDuration, originalDuration - removedTotal, accuracy: 0.5,
+                       "the trimmed length matches the original minus what was removed")
     }
 
     func testNoLongSilenceLeavesFileUntouched() async throws {

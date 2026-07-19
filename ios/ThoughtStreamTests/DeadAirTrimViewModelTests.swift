@@ -110,6 +110,45 @@ final class DeadAirTrimViewModelTests: XCTestCase {
         XCTAssertTrue(reloaded.hasCustomTitle)
     }
 
+    /// REGRESSION (engineer + tester MAJOR, feedback 0017 round 2): a note SOFT-DELETED during the trim
+    /// window must NOT leave an orphan raw-voice `.m4a` behind, and must STAY deleted. Before the fix,
+    /// `replaceAudio` fell through to `saveAudio` and materialized `root/<id>.m4a` (invisible to
+    /// `loadAll`, never purged), defeating the delete. This test fails without BOTH the existence
+    /// re-check in `scheduleTrim` and `replaceAudio` refusing to create an absent file.
+    func testNoteSoftDeletedDuringTrimLeavesNoOrphanAudio() async throws {
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let trimmedFile = try makeTempRecordingURL(contents: "trimmed-secret-voice")
+        let trimmer = StubAudioTrimmer(result: .trimmed(
+            trimmedFileURL: trimmedFile,
+            removedRanges: [SilenceTrimmer.KeepRange(start: 2.0, end: 5.0)]
+        ))
+        trimmer.pauseUntilReleased = true
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true, audioTrimmer: trimmer
+        )
+        service.emitFinalized("First.", range: ParagraphTiming(start: 0.0, duration: 2.0))
+        service.emitFinalized("Second.", range: ParagraphTiming(start: 5.0, duration: 2.0))
+        let note = try XCTUnwrap(try model.finish())
+        let id = note.id
+        let rootOrphan = tempDir.appendingPathComponent("\(id.uuidString).m4a")
+
+        // The user deletes the note (spec 0020 soft delete) while the trim is paused mid-flight.
+        await trimmer.awaitInvocation()
+        _ = try store.softDelete(id: id)
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "precondition: the note is deleted")
+        trimmer.release() // let the (now-doomed) trim proceed
+
+        // Give the detached trim task time to run its bail path, then assert nothing was resurrected and
+        // no orphan recording was left at the store root.
+        try await pollUntil {
+            !FileManager.default.fileExists(atPath: trimmedFile.path) // temp consumed either way
+        }
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "the note stays deleted")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootOrphan.path),
+                       "no orphan raw-voice .m4a is left at the store root")
+    }
+
     func testTrimReturningNotTrimmedLeavesTimingsUnchanged() async throws {
         let service = RecordingStubCaptureService()
         service.stubRecordingURL = try makeTempRecordingURL()
@@ -130,6 +169,15 @@ final class DeadAirTrimViewModelTests: XCTestCase {
 
 
     // MARK: - Helpers
+
+    /// Poll a condition until it holds (or a bounded number of tries elapse), so a test can wait on a
+    /// detached task's effect without an arbitrary sleep.
+    private func pollUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<50 {
+            if condition() { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
 
     /// Poll the store until the note's second-paragraph start matches the expected remapped value, so
     /// the test does not race the detached re-save.

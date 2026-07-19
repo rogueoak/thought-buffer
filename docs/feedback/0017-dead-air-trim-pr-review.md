@@ -46,9 +46,39 @@ task instead of re-reading the current record and applying only its delta.
   a concurrent-edit test proving a rename during the trim is preserved. The `Task.sleep` was replaced
   with an invocation await.
 
+## Round 2 (independent re-review)
+
+A second, independent persona pass (security approve; engineer + tester needs-changes) found a MAJOR
+the round-1 self-review missed, plus four smaller items - all fixed in the same PR.
+
+- **MAJOR (engineer + tester, independently): delete-mid-trim orphaned a raw-voice `.m4a`.** The
+  round-1 fix re-read the note fresh but called `store.replaceAudio(...)` BEFORE confirming the note
+  still existed. If the user soft-deleted the note (spec 0020 trash) during the trim window, its `.md`
+  is hidden in `.trash`, so `audioURL(for:)` resolves to the (absent) root slot; `replaceAudio` then
+  fell through to `saveAudio` and MOVED the trimmed temp to `root/<id>.m4a` - a full copy of the raw
+  recording the user just deleted, invisible to `loadAll`, never cleared by `purgeAllTrash`. It
+  defeated the delete (privacy + disk leak). Fixed at BOTH layers: (a) `scheduleTrim` re-reads and
+  confirms the note EXISTS before `replaceAudio`, deleting the temp and bailing if gone (and skips the
+  timings re-save when `replaceAudio` returns nil, so a delete that races the swap does not resurrect
+  the note); (b) `replaceAudio` now returns `URL?` and NEVER creates a file when the slot is absent -
+  it deletes the temp and returns nil. Regression: `testNoteSoftDeletedDuringTrimLeavesNoOrphanAudio`
+  (verified to fail without either layer).
+- **minor (tester): `replaceAudio` had no store-level test.** Added `NoteStore` + `ICloudNoteStore`
+  tests (the coordinated `NSFileCoordinator .forReplacing` variant was the untested load-bearing part):
+  swap-existing, replace-when-absent no-ops + consumes temp, and original-survives-a-failed-replace.
+- **minor (tester): the frame-copy writer was only tested with one mid-clip silence.** Added
+  end-to-end leading / trailing / back-to-back geometry tests against synthesized fixtures.
+- **minor (security): temp leak on a mid-write failure.** `writeTrimmed` now `defer`s removal of the
+  temp on every non-success exit, so a throw from open/copy/write never orphans a partial voice copy.
+- **minor (engineer): an already-open `NoteDetailView` keeps un-remapped timings after the trim.**
+  Harmless today (detail playback is whole-file), so left as-is with an explicit `onTrimmed` code
+  comment that a future per-paragraph seek MUST revisit it.
+
 ## Learning
 
 Folded into `overview/learnings.md` ("A non-reversible rewrite is verify-then-atomic-replace..."):
 route a destructive swap through the seam that already coordinates the file; write sensitive
-intermediates protected from byte zero; and when a deferred task re-persists a record, re-read-and-
-delta rather than re-save-a-snapshot.
+intermediates protected from byte zero; when a deferred task re-persists a record, re-read-and-delta
+rather than re-save-a-snapshot; and a "replace" primitive over a slot that a DELETE can vacate must
+refuse to create the slot (return "nothing to replace"), or the replace resurrects the deleted
+artifact as an orphan - gate both the caller (existence recheck) and the primitive (no-create).

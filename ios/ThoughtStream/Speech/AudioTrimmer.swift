@@ -186,6 +186,13 @@ struct AudioTrimmer: AudioTrimming {
             contents: nil,
             attributes: [.protectionKey: FileProtectionType.completeUnlessOpen]
         )
+
+        // Remove the partial temp on EVERY early/error exit (a throw from open/copy/write, or the
+        // empty-result guard), so a mid-write failure never orphans a partial copy of raw voice in the
+        // shared temp dir. Only a clean success clears the flag and keeps the file for the caller.
+        var succeeded = false
+        defer { if !succeeded { try? fm.removeItem(at: tempURL) } }
+
         let settings: [String: Any] = [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: format.sampleRate,
@@ -202,10 +209,8 @@ struct AudioTrimmer: AudioTrimming {
             try copyFrames(from: source, to: output, startFrame: startFrame, endFrame: endFrame, format: format)
             wroteAnyFrames = true
         }
-        guard wroteAnyFrames else {
-            try? FileManager.default.removeItem(at: tempURL)
-            throw TrimError.emptyResult
-        }
+        guard wroteAnyFrames else { throw TrimError.emptyResult }
+        succeeded = true
         return tempURL
     }
 
