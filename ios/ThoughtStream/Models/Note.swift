@@ -329,6 +329,11 @@ extension Note {
     /// `bodyMarkdown`'s joining), but the output is plain text - no Markdown, no frontmatter. A note
     /// with no body shares just its title (no trailing blank line). Pure so it is unit-testable
     /// across custom/derived title and single/multi/empty body.
+    ///
+    /// This leans on `bodyMarkdown`'s CURRENT contract that a paragraph is plain prose (no inline
+    /// Markdown), so the joined body is already the plain text we want to share. If inline Markdown is
+    /// ever introduced into note bodies, sharing/export should move to a dedicated `NoteExport`
+    /// formatter that strips or renders the markup, rather than re-using `bodyMarkdown` here.
     var shareableText: String {
         let body = bodyMarkdown
         if body.isEmpty {

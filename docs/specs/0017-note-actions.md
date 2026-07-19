@@ -44,6 +44,15 @@ string so share and copy are identical and it is unit-testable:
 - The menu must not interfere with the edit / title-edit modes already in the
   toolbar; it is available in the normal (non-editing) state.
 - Keep it accessible: the menu button has an accessibility label ("Note actions").
+- The Share + Copy items, the copy-to-pasteboard call, and the "Copied to clipboard"
+  confirmation live in ONE shared place (`NoteActionsMenu` / `NoteClipboard` /
+  `CopiedConfirmation` + the `copiedConfirmation` view modifier), used by both the detail
+  toolbar and the list-row context menu, so the two never drift. `NoteActionsMenu` takes
+  optional trailing menu content so a caller can append its own items (the list appends
+  "Move to folder"; a future Delete slots in the same way) without re-forking the menu.
+- The confirmation's auto-hide is lifecycle-tied (a `.task(id:)` keyed on a per-copy
+  counter), not a detached timer, so a rapid re-copy re-arms it and navigating away cancels
+  it.
 
 ## Non-goals
 

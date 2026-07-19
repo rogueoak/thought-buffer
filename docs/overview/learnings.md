@@ -495,3 +495,22 @@ on the constant itself and record it as a learning, so a later change to either 
 reconsider the merge rather than silently break the mapping. Generalizes to any pair of thresholds
 where one governs "what we combine" and the other "what we remove", and the combine is only reversible
 while the remove never reaches inside a combined unit.
+
+## Factor a repeated action surface before it forks, and tie its transient confirmation to the view (spec 0017)
+
+The Share + Copy menu, the copy-to-pasteboard-and-flash routine, and the "Copied to clipboard" chip
+were written twice - once in the note detail toolbar, once in the list-row context menu - because the
+second site was easy to reach by pasting the first. Two identical action surfaces are a drift trap: a
+later change (the queued Delete-in-this-menu work) has to be made in both, and one will be missed. The
+fix factors ONE `NoteActionsMenu(note:onCopied:)` that emits the shared items and accepts optional
+trailing content, so a caller appends its own item (Move, later Delete) without re-forking, plus one
+`NoteClipboard.copy` and one `CopiedConfirmation` chip. The rule: when the SAME interactive affordance
+appears on two screens, extract it at the first duplication - and design the shared piece to be
+EXTENDED (a trailing-content slot) rather than copied when a caller needs one extra item. The paired
+lesson is the confirmation's timer: a detached `DispatchQueue.asyncAfter` to hide a transient chip has
+no generation guard and no lifecycle tie, so a rapid second copy hides it early and a fired timer can
+mutate state after the view is gone. Drive the auto-hide from a `.task(id:)` keyed on a per-event
+counter instead - it re-arms on each event and cancels on teardown - the same lifecycle-tied shape the
+sibling error banners already used. Generalizes to any transient, self-dismissing UI (toasts, chips,
+"copied"/"saved" flashes): key the dismissal on the view's lifecycle and a monotonic trigger, never a
+free-floating timer.

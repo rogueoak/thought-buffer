@@ -29,19 +29,23 @@ away behaves exactly like Done:
   `isEditingTitle`) resigns the title focus, which the observer then commits. It is
   `simultaneous` and gated so it never steals a tap from the note text, its buttons, or
   the title field itself.
-- Mutual exclusivity is preserved: tapping into the body resigns the title field's
-  focus, so the observer commits the title FIRST, before body editing begins - the typed
-  title is never dropped. The `isEditingTitle` guard also stops `commitTitle`'s own
+- Mutual exclusivity is preserved AND a single tap does both: tapping the body while the
+  title is focused goes through `beginBodyEditFromTap`, which commits the title (folding
+  the live `titleDraft` in) and THEN opens the body editor in the one gesture - no second
+  tap needed. The body's tap gate is no longer `!isEditingTitle` (which had made the first
+  tap a no-op while the title was still being edited); it is now always active where the
+  call site can persist, and the handler owns the "commit title first" ordering. The
+  `isEditingTitle` guard on the `titleFocused` observer still stops `commitTitle`'s own
   `titleFocused = false` from re-entering, and stops a body-focus change from firing a
-  title commit.
+  spurious title commit.
 - The Done button still calls `commitTitle()` and behaves exactly as before.
 
 ## Acceptance
 
 - Editing the title and tapping the background saves the title and resigns focus, with no
   Done tap needed.
-- Tapping from the title into the body commits the title (keeping the typed text), then
-  begins body editing.
+- Tapping from the title into the body, in a SINGLE tap, commits the title (keeping the
+  typed text) and begins body editing.
 - Done still commits the title.
 - No in-flight title text is ever dropped.
 - Suite stays green (focus-loss behavior itself is manually verified on device; the pure
