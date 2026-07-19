@@ -92,7 +92,37 @@ incompatible, or the output fails verification. A soft-delete/move that races th
   (spec 0013) - unchanged, tested.
 - Full suite green (iPhone 17), no new build warnings.
 
+## PR review fixes (PR #40, four-persona Spectra review)
+
+Three review findings were fixed in the same PR before merge:
+
+1. **New-segment trim was not remapped before the offset** (engineer, MAJOR). When "Trim silences" is on,
+   the new segment is trimmed - but the new paragraphs' committed timings are relative to the UNTRIMMED
+   segment, so offsetting them by only `existingDuration` made every new paragraph after cut silence
+   overshoot its real position in the combined file. Fixed by remapping the new-paragraph slice onto the
+   shorter segment timeline (`TimingRemapper.remap` via the pure
+   `DictationViewModel.remapNewParagraphsOntoSegment`) BEFORE applying the existing-duration offset -
+   exactly what `scheduleTrim` already does for a whole recording.
+2. **Resume boundary drifted on a paragraph removal** (architect, minor -> fixed). `existingParagraphCount`
+   is a positional split, but Mira's `remove last paragraph/sentence` (and a keyboard edit) delete from the
+   END. Removing a pre-existing paragraph and then dictating a new one put the new paragraph at an index
+   BELOW the stale boundary, so it was mistaken for pre-existing and never offset. Fixed by clamping the
+   boundary to the current paragraph count after every removal / edit (`clampExistingParagraphCount`).
+3. **`onTrimmed` callback name no longer matched its contract** (architect, nit -> fixed). It now fires for
+   two background re-saves (trim + resume concatenation), so it was renamed `onBackgroundAudioResave`.
+
+Coverage was added for both majors and the untested safety branches the tester flagged: the trim-then-
+offset remap, the concurrent-edit paragraph-count-misalignment branch, a soft-delete racing the swap
+(no orphan, stays deleted), a multi-new-paragraph offset, and the boundary-drift-after-removal case; the
+success test was made deterministic (signal invocation, then a bounded poll that fails loudly on timeout).
+Security review found nothing (protection, temp cleanup, coordinated swap, no data loss all clean).
+
 ## Learning
 
 See `overview/learnings.md` - "A resume over a continuous artifact must CONTINUE it, not restart or
-append beside it (feedback 0022)".
+append beside it (feedback 0022)". Two review-driven corollaries fold into that same entry: when the
+continuous artifact is re-processed (trimmed) before the join, re-anchor the new positions onto the
+PROCESSED timeline first, then onto the combined one - a single offset over an un-remapped timeline
+double-counts; and a positional split over a mutable list (here the new-vs-existing paragraph boundary)
+must be maintained as the list shifts, not frozen at capture, or an end-delete silently reclassifies a
+later item.

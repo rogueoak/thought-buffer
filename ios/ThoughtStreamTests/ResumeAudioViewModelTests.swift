@@ -88,8 +88,8 @@ final class ResumeAudioViewModelTests: XCTestCase {
         XCTAssertEqual(saved.paragraphs, ["Original spoken paragraph.", "Newly spoken addition."])
         XCTAssertTrue(saved.hasAudio)
 
-        // Poll for the background concatenation to land: the new paragraph's timing offset to start 9.0.
-        let reloaded = try await pollForNewTimingStart(id: id, expected: 9.0)
+        // Wait for the background concatenation to land: the new paragraph's timing offset to start 9.0.
+        let reloaded = try await awaitReSave(concatenator: concatenator, id: id, paragraphIndex: 1, expectedStart: 9.0)
         XCTAssertEqual(reloaded.timing(forParagraphAt: 0)?.start ?? -1, 0.0, accuracy: 0.001,
                        "the pre-existing paragraph's timing is unchanged")
         XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 9.0, accuracy: 0.001,
@@ -136,6 +136,181 @@ final class ResumeAudioViewModelTests: XCTestCase {
                        "the new paragraph stays text-only (TTS on playback) on the fallback")
     }
 
+    // MARK: - Multiple new paragraphs all offset past the existing audio
+
+    func testMultipleNewParagraphsAreEachOffsetPastExisting() async throws {
+        let original = try makeThoughtWithRecording() // one paragraph, recording is 8s
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let combined = try makeTempRecordingURL(contents: "combined")
+        let concatenator = StubAudioConcatenator(
+            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true,
+            audioConcatenator: concatenator, resuming: original
+        )
+
+        // Two new paragraphs, each with a real range relative to the new segment (a >1.5s gap forces a
+        // separate paragraph). Offset should push both past the 8s existing audio.
+        service.emitFinalized("First new.", range: ParagraphTiming(start: 0.5, duration: 1.0))
+        service.emitFinalized("Second new.", range: ParagraphTiming(start: 4.0, duration: 1.0))
+
+        let saved = try XCTUnwrap(try model.finish())
+        let reloaded = try await awaitReSave(concatenator: concatenator, id: saved.id, paragraphIndex: 1, expectedStart: 8.5)
+
+        XCTAssertEqual(reloaded.paragraphs.count, 3)
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 0)?.start ?? -1, 0.0, accuracy: 0.001, "existing untouched")
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 8.5, accuracy: 0.001, "8.0 + 0.5")
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 2)?.start ?? -1, 12.0, accuracy: 0.001, "8.0 + 4.0")
+    }
+
+    // MARK: - Trim the NEW segment: remap onto the shorter segment, THEN offset (engineer review)
+
+    func testTrimmedNewSegmentRemapsThenOffsetsSoNewParagraphsDoNotOvershoot() async throws {
+        let original = try makeThoughtWithRecording() // 8s existing recording
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        // The trimmer cuts [1.0, 3.0) (2s) out of the NEW segment. A new paragraph timed at 5.0 in the
+        // untrimmed segment sits at 3.0 in the trimmed segment, so after the 8s offset it lands at 11.0
+        // (NOT 13.0, which is the overshoot the naive offset-only path would produce).
+        let trimmedSegment = try makeTempRecordingURL(contents: "trimmed-new-segment")
+        let trimmer = StubAudioTrimmer(result: .trimmed(
+            trimmedFileURL: trimmedSegment,
+            removedRanges: [SilenceTrimmer.KeepRange(start: 1.0, end: 3.0)]))
+        let combined = try makeTempRecordingURL(contents: "combined-trimmed")
+        let concatenator = StubAudioConcatenator(
+            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true,
+            audioTrimmer: trimmer, audioConcatenator: concatenator, resuming: original
+        )
+
+        service.emitFinalized("New after a silence.", range: ParagraphTiming(start: 5.0, duration: 1.0))
+
+        let saved = try XCTUnwrap(try model.finish())
+        let reloaded = try await awaitReSave(concatenator: concatenator, id: saved.id, paragraphIndex: 1, expectedStart: 11.0)
+
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 0)?.start ?? -1, 0.0, accuracy: 0.001, "existing untouched")
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 11.0, accuracy: 0.001,
+                       "remapped left 2s onto the trimmed segment (5->3), then offset 8s")
+        // The TRIMMED segment (not the raw one) was joined - the trimmer's temp was consumed by the concat.
+        XCTAssertEqual(try Data(contentsOf: store.audioURL(for: saved.id)!), Data("combined-trimmed".utf8))
+    }
+
+    // MARK: - Concurrent edit changing the paragraph count keeps the fresh thought's own timings
+
+    func testConcurrentEditChangingParagraphCountKeepsFreshTimings() async throws {
+        let original = try makeThoughtWithRecording()
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let combined = try makeTempRecordingURL(contents: "combined")
+        let concatenator = StubAudioConcatenator(
+            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
+        concatenator.pauseUntilReleased = true
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true,
+            audioConcatenator: concatenator, resuming: original
+        )
+        service.emitFinalized("Newly spoken addition.", range: ParagraphTiming(start: 1.0, duration: 2.0))
+        let saved = try XCTUnwrap(try model.finish())
+
+        // While the join is paused mid-flight, the user edits the thought on the detail screen and ADDS a
+        // paragraph, so the on-disk paragraph count (3) no longer matches the captured timings (2).
+        await concatenator.awaitInvocation()
+        let onDisk = try XCTUnwrap(store.loadAll().first { $0.id == saved.id })
+        let edited = onDisk.editedCopy(
+            paragraphs: onDisk.paragraphs + ["A keyboard-added paragraph."],
+            hasCustomTitle: false, customTitle: "")
+        try store.save(edited)
+        concatenator.release()
+
+        // The combined audio still replaces the recording (the join is valid), but because the paragraph
+        // count changed the offset timings are NOT applied - the fresh thought's own timings stand. The
+        // user's added paragraph is preserved (no clobber).
+        try await pollUntil {
+            (try? Data(contentsOf: store.audioURL(for: saved.id)!)) == Data("combined".utf8)
+        }
+        let reloaded = try XCTUnwrap(store.loadAll().first { $0.id == saved.id })
+        XCTAssertEqual(reloaded.paragraphs.count, 3, "the concurrent edit's added paragraph is preserved")
+        XCTAssertEqual(reloaded.paragraphs.last, "A keyboard-added paragraph.")
+    }
+
+    // MARK: - Soft-delete racing the swap leaves no orphan and stays deleted
+
+    func testThoughtSoftDeletedDuringJoinLeavesNoOrphanAndStaysDeleted() async throws {
+        let original = try makeThoughtWithRecording()
+        let id = original.id
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let combined = try makeTempRecordingURL(contents: "combined-secret-voice")
+        let concatenator = StubAudioConcatenator(
+            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
+        concatenator.pauseUntilReleased = true
+        let model = DictationViewModel(
+            service: service, store: store, recordsAudio: true,
+            audioConcatenator: concatenator, resuming: original
+        )
+        service.emitFinalized("Newly spoken addition.", range: ParagraphTiming(start: 1.0, duration: 2.0))
+        _ = try XCTUnwrap(try model.finish())
+        let rootOrphan = tempDir.appendingPathComponent("\(id.uuidString).m4a")
+
+        // The user soft-deletes the thought while the join is paused mid-flight.
+        await concatenator.awaitInvocation()
+        _ = try store.softDelete(id: id)
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "precondition: the thought is deleted")
+        concatenator.release()
+
+        // The doomed join must NOT resurrect the thought or leave an orphan raw-voice .m4a at the root.
+        try await pollUntil { !FileManager.default.fileExists(atPath: combined.path) }
+        XCTAssertNil(store.loadAll().first { $0.id == id }, "the thought stays deleted")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: rootOrphan.path),
+                       "no orphan raw-voice .m4a is left at the store root")
+    }
+
+    // MARK: - Boundary drift: a removed pre-existing paragraph still offsets a later new one (architect)
+
+    func testRemovingPreExistingParagraphThenDictatingStillOffsetsTheNewParagraph() async throws {
+        // A thought with TWO pre-existing spoken paragraphs and a recording.
+        let id = UUID()
+        let recURL = FileManager.default.temporaryDirectory.appendingPathComponent("orig-\(UUID().uuidString).m4a")
+        try Data("original".utf8).write(to: recURL)
+        let base = Thought(id: id, title: "Original",
+                            paragraphs: ["Para one.", "Para two."],
+                            createdAt: Date(timeIntervalSince1970: 1_700_000_000))
+        try store.save(base)
+        let audioURL = try store.saveAudio(from: recURL, for: id)
+        let withAudio = Thought(id: id, title: "Original", paragraphs: ["Para one.", "Para two."],
+                                createdAt: base.createdAt, audioFileName: audioURL.lastPathComponent,
+                                timings: [ParagraphTiming(start: 0, duration: 4), ParagraphTiming(start: 4, duration: 4)])
+        try store.save(withAudio)
+
+        let service = RecordingStubCaptureService()
+        service.stubRecordingURL = try makeTempRecordingURL()
+        let combined = try makeTempRecordingURL(contents: "combined")
+        let concatenator = StubAudioConcatenator(
+            result: .concatenated(combinedFileURL: combined, existingDuration: 8.0))
+        let model = DictationViewModel(
+            service: service, store: store, processor: MiraTextProcessor(controlWord: "mira"),
+            recordsAudio: true, audioConcatenator: concatenator,
+            controlWord: "mira", resuming: withAudio
+        )
+
+        // Remove the last (pre-existing) paragraph via a Mira command, shrinking the pre-existing region,
+        // then dictate a NEW paragraph. Without the boundary clamp the new paragraph would land at index 1
+        // (< the stale existingParagraphCount of 2) and never be offset.
+        service.emitFinalized("mira remove last paragraph", range: nil)
+        service.emitFinalized("A newly spoken paragraph.", range: ParagraphTiming(start: 1.0, duration: 2.0))
+
+        let saved = try XCTUnwrap(try model.finish())
+        XCTAssertEqual(saved.paragraphs, ["Para one.", "A newly spoken paragraph."],
+                       "one pre-existing removed, one new appended")
+        // The new paragraph (now index 1) is correctly treated as NEW and offset past the 8s existing audio.
+        let reloaded = try await awaitReSave(concatenator: concatenator, id: saved.id, paragraphIndex: 1, expectedStart: 9.0)
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 0)?.start ?? -1, 0.0, accuracy: 0.001, "kept pre-existing")
+        XCTAssertEqual(reloaded.timing(forParagraphAt: 1)?.start ?? -1, 9.0, accuracy: 0.001,
+                       "the new paragraph is offset, not mistaken for pre-existing after the removal")
+    }
+
     // MARK: - No concatenator (recording OFF, or a store that keeps no audio): text-only append
 
     func testResumeWithoutConcatenatorStaysTextOnlyAppendAndKeepsOriginal() throws {
@@ -159,15 +334,38 @@ final class ResumeAudioViewModelTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func pollForNewTimingStart(id: UUID, expected: Double) async throws -> Thought {
-        for _ in 0..<50 {
+    /// Poll a condition until it holds (bounded), so a test can wait on a detached task's effect without
+    /// an arbitrary fixed sleep.
+    private func pollUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<100 {
+            if condition() { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+    }
+
+    /// Wait for the detached concatenation task's re-save to land: the concatenator signals invocation
+    /// deterministically (`awaitInvocation`), then a brief bounded poll covers only the store re-save that
+    /// follows. Fails LOUDLY on timeout rather than returning stale data, so a real offset regression
+    /// surfaces as a clear timeout instead of a confusing value mismatch downstream.
+    private func awaitReSave(
+        concatenator: StubAudioConcatenator,
+        id: UUID,
+        paragraphIndex: Int,
+        expectedStart: Double,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async throws -> Thought {
+        await concatenator.awaitInvocation()
+        for _ in 0..<100 {
             if let thought = store.loadAll().first(where: { $0.id == id }),
-               let start = thought.timing(forParagraphAt: 1)?.start,
-               abs(start - expected) < 0.001 {
+               let start = thought.timing(forParagraphAt: paragraphIndex)?.start,
+               abs(start - expectedStart) < 0.001 {
                 return thought
             }
-            try await Task.sleep(nanoseconds: 20_000_000)
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
+        XCTFail("timed out waiting for the concatenation re-save to offset paragraph \(paragraphIndex) to \(expectedStart)",
+                file: file, line: line)
         return try XCTUnwrap(store.loadAll().first { $0.id == id })
     }
 }
@@ -201,22 +399,42 @@ private final class RecordingStubCaptureService: SpeechCaptureService {
 }
 
 /// A stub `AudioConcatenating` returning a fixed result and signaling when it was invoked, so a test can
-/// await the detached concatenation task deterministically.
+/// await the detached concatenation task deterministically. Optionally PAUSES inside `concatenate` (after
+/// signaling invocation) until `release()` is called, so a test can inject a concurrent edit / delete
+/// before the join's re-save reads the thought back.
 private final class StubAudioConcatenator: AudioConcatenating, @unchecked Sendable {
     private let result: AudioConcatenationResult
     private let lock = NSLock()
     private var invoked = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var invocationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    var pauseUntilReleased = false
+    private var released = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(result: AudioConcatenationResult) { self.result = result }
 
     func concatenate(existing: URL, new: URL) async -> AudioConcatenationResult {
         lock.lock()
         invoked = true
-        let toResume = waiters
-        waiters.removeAll()
+        let toResume = invocationWaiters
+        invocationWaiters.removeAll()
+        let mustPause = pauseUntilReleased && !released
         lock.unlock()
         toResume.forEach { $0.resume() }
+
+        if mustPause {
+            await withCheckedContinuation { continuation in
+                lock.lock()
+                if released {
+                    lock.unlock()
+                    continuation.resume()
+                } else {
+                    releaseWaiters.append(continuation)
+                    lock.unlock()
+                }
+            }
+        }
         return result
     }
 
@@ -227,9 +445,25 @@ private final class StubAudioConcatenator: AudioConcatenating, @unchecked Sendab
                 lock.unlock()
                 continuation.resume()
             } else {
-                waiters.append(continuation)
+                invocationWaiters.append(continuation)
                 lock.unlock()
             }
         }
     }
+
+    func release() {
+        lock.lock()
+        released = true
+        let toResume = releaseWaiters
+        releaseWaiters.removeAll()
+        lock.unlock()
+        toResume.forEach { $0.resume() }
+    }
+}
+
+/// A stub `AudioTrimming` returning a fixed result, to exercise the "trim ONLY the new segment then
+/// remap+offset" path at the view-model level.
+private struct StubAudioTrimmer: AudioTrimming {
+    let result: AudioTrimResult
+    func trim(fileAt url: URL) async -> AudioTrimResult { result }
 }

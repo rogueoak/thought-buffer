@@ -274,6 +274,28 @@ final class DictationViewModel: ObservableObject {
         thought.paragraphs.indices.map { thought.timing(forParagraphAt: $0) }
     }
 
+    /// Remap ONLY the newly-recorded paragraphs (index >= `existingParagraphCount`) of `timings` onto the
+    /// SHORTER new-segment timeline produced by trimming silence from the new segment (feedback 0022 +
+    /// engineer review). The new paragraphs' committed ranges are relative to the UNTRIMMED new segment, so
+    /// when the trim cut interior silence out of it, each new paragraph after that silence sits earlier in
+    /// the trimmed segment - it must shift left by the removed duration before it, exactly as `scheduleTrim`
+    /// does for a whole recording. Pure and count-preserving. The PRE-EXISTING paragraphs are left untouched
+    /// (their ranges point at the original recording, which the new segment's trim does not affect). A no-op
+    /// when nothing was removed (no trim, or a `.notTrimmed` result). The `existingDuration` offset is then
+    /// applied by `RecordingTiming.offsetResumedTimings` on the result.
+    nonisolated static func remapNewParagraphsOntoSegment(
+        _ timings: [ParagraphTiming],
+        existingParagraphCount: Int,
+        removedRanges: [SilenceTrimmer.KeepRange]
+    ) -> [ParagraphTiming] {
+        guard !removedRanges.isEmpty, existingParagraphCount >= 0,
+              existingParagraphCount < timings.count else { return timings }
+        let existing = Array(timings.prefix(existingParagraphCount))
+        let newParagraphs = Array(timings.suffix(from: existingParagraphCount))
+        let remappedNew = TimingRemapper.remap(timings: newParagraphs, removedRanges: removedRanges)
+        return existing + remappedNew
+    }
+
     /// The full transcript so far, including the live partial, for display.
     var displayParagraphs: [String] {
         var all = paragraphs
@@ -419,12 +441,13 @@ final class DictationViewModel: ObservableObject {
     /// screenshot tooling). Set by the view.
     ///
     /// KNOWN LIMITATION (feedback 0017): this reloads the LIST feed, but an ALREADY-OPEN `ThoughtDetailView`
-    /// pushed on the stack keeps its own un-remapped thought snapshot until it is popped and reopened.
-    /// Harmless today because detail playback is whole-file (the total duration is unchanged by trimming
-    /// only interior silence), so a stale per-paragraph timing is never consulted. A future PER-PARAGRAPH
-    /// SEEK feature MUST revisit this - it would seek against timings that no longer match the shorter
+    /// pushed on the stack keeps its own stale thought snapshot until it is popped and reopened. Harmless
+    /// today because detail playback is whole-file: a trim changes only interior silence (total duration
+    /// unchanged) and a resume concatenation only EXTENDS the recording (the pre-existing portion still
+    /// plays whole from time 0), so a stale per-paragraph timing is never consulted. A future PER-PARAGRAPH
+    /// SEEK feature MUST revisit this - it would seek against timings that no longer match the re-saved
     /// audio - by refreshing the open detail's thought here (or re-reading it at seek time).
-    var onTrimmed: (() -> Void)?
+    var onBackgroundAudioResave: (() -> Void)?
 
     /// Trim dead air from a just-saved thought's recording OFF the main actor, then adopt the trimmed
     /// audio and remap the thought's timings (spec 0019). Non-blocking: `finish()` has already returned
@@ -484,7 +507,7 @@ final class DictationViewModel: ObservableObject {
             // Hop back to the main actor so the host reloads and drops the stale in-memory thought.
             // Capture `self` explicitly (not the outer `weak var self`) so the concurrently-executing
             // `MainActor.run` closure does not reference the captured `var self` (a Swift 6 error).
-            await MainActor.run { [weak self] in self?.onTrimmed?() }
+            await MainActor.run { [weak self] in self?.onBackgroundAudioResave?() }
         }
     }
 
@@ -523,10 +546,16 @@ final class DictationViewModel: ObservableObject {
             defer { for url in tempsToClean { try? fm.removeItem(at: url) } }
 
             // 1. Trim ONLY the new segment (the original was already trimmed on its first save). A nil
-            //    trimmer or a `.notTrimmed` result leaves the segment as captured - never a failure.
+            //    trimmer or a `.notTrimmed` result leaves the segment as captured - never a failure. KEEP
+            //    the removed ranges: the new paragraphs' `committedTimings` are relative to the UNTRIMMED
+            //    segment, so if the trim cut silence out of it, those timings must first be remapped onto
+            //    the SHORTER segment timeline before the existing-duration offset (step 5) - otherwise
+            //    every new paragraph overshoots its real position by the silence removed before it.
             var segmentToJoin = newSegmentURL
-            if let audioTrimmer, case .trimmed(let trimmedSegment, _) = await audioTrimmer.trim(fileAt: newSegmentURL) {
+            var newSegmentRemovedRanges: [SilenceTrimmer.KeepRange] = []
+            if let audioTrimmer, case .trimmed(let trimmedSegment, let removed) = await audioTrimmer.trim(fileAt: newSegmentURL) {
                 segmentToJoin = trimmedSegment
+                newSegmentRemovedRanges = removed
                 tempsToClean.append(trimmedSegment)
             }
 
@@ -553,16 +582,24 @@ final class DictationViewModel: ObservableObject {
             }
             guard replaced != nil else { return }
 
-            // 5. Offset ONLY the newly-recorded paragraphs (index >= existingParagraphCount) of the REAL
-            //    committed timings (the new paragraphs carry their new-segment-relative ranges) past the
-            //    existing audio, using the combined file's MEASURED existing-duration, so playback seeks
-            //    correctly across the seam. Pre-existing timings are untouched. The offset timings are
-            //    applied to the FRESH thought (its title / paragraph EDITS are preserved) - but only when
+            // 5. Map the newly-recorded paragraphs onto the combined timeline in TWO steps, touching only
+            //    index >= existingParagraphCount (the pre-existing paragraphs still point at the unchanged
+            //    original audio at the front of the join, so they are left exactly as captured):
+            //    (a) REMAP each new timing onto the SHORTER new-segment timeline by the silence the trim
+            //        cut from the new segment (`newSegmentRemovedRanges`, empty when no trim ran), so a
+            //        paragraph after cut silence does not overshoot; then
+            //    (b) OFFSET it past the existing audio by the combined file's MEASURED existing-duration.
+            //    Applied to the FRESH thought (its title / paragraph EDITS are preserved) - but only when
             //    the fresh thought still has the SAME paragraph count, so the timings still align 1:1. A
             //    concurrent edit that ADDED/REMOVED a paragraph broke the alignment, so keep the fresh
             //    thought's own timings against the (now longer) recording - a seek slip, not data loss.
-            let offset = RecordingTiming.offsetResumedTimings(
+            let remappedNewSegment = Self.remapNewParagraphsOntoSegment(
                 committedTimings,
+                existingParagraphCount: existingParagraphCount,
+                removedRanges: newSegmentRemovedRanges
+            )
+            let offset = RecordingTiming.offsetResumedTimings(
+                remappedNewSegment,
                 existingParagraphCount: existingParagraphCount,
                 existingDuration: existingDuration
             )
@@ -572,8 +609,8 @@ final class DictationViewModel: ObservableObject {
             _ = try? store.save(offsetThought)
 
             // Reload so the host drops the stale (un-offset, original-audio) in-memory thought. Reuses the
-            // `onTrimmed` hook: both are "a background audio re-save landed, refresh the feed."
-            await MainActor.run { [weak self] in self?.onTrimmed?() }
+            // `onBackgroundAudioResave` hook: both are "a background audio re-save landed, refresh the feed."
+            await MainActor.run { [weak self] in self?.onBackgroundAudioResave?() }
         }
     }
 
@@ -718,6 +755,9 @@ final class DictationViewModel: ObservableObject {
         if paragraphTimings.count > paragraphs.count {
             paragraphTimings = Array(paragraphTimings.prefix(paragraphs.count))
         }
+        // A keyboard edit can drop paragraphs (feedback 0022): keep the resume boundary from drifting past
+        // the end so a later dictated paragraph is still correctly offset onto the combined timeline.
+        clampExistingParagraphCount()
     }
 
     /// The editable transcript text for the record screen: committed paragraphs plus the live
@@ -963,6 +1003,7 @@ final class DictationViewModel: ObservableObject {
             paragraphs.removeLast()
             if !paragraphTimings.isEmpty { paragraphTimings.removeLast() }
         }
+        clampExistingParagraphCount()
         return true
     }
 
@@ -972,7 +1013,19 @@ final class DictationViewModel: ObservableObject {
         guard !paragraphs.isEmpty else { return false }
         paragraphs.removeLast()
         if !paragraphTimings.isEmpty { paragraphTimings.removeLast() }
+        clampExistingParagraphCount()
         return true
+    }
+
+    /// Keep the resume boundary `existingParagraphCount` from drifting past the end of `paragraphs`
+    /// (feedback 0022, architect review). Mira's `remove last paragraph/sentence` (and a keyboard edit)
+    /// delete from the END, so a removal can eat into the PRE-EXISTING region; without this, a
+    /// subsequently dictated new paragraph would land at an index BELOW the stale boundary and be treated
+    /// as pre-existing - never offset onto the combined timeline, leaving its range pointing at the front
+    /// of the recording (a seek slip). Clamping the boundary to the current paragraph count keeps the
+    /// new-vs-existing split honest: a removed pre-existing paragraph shrinks the pre-existing region.
+    private func clampExistingParagraphCount() {
+        existingParagraphCount = min(existingParagraphCount, paragraphs.count)
     }
 
     /// The outcome of a "new thought" command, so `execute` can pick the right feedback.

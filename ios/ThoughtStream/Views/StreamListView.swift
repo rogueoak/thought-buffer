@@ -180,7 +180,7 @@ struct StreamListView: View {
         (thought.hasAudio && settingsStore.audioRetention.recordsAudio) ? AudioConcatenator() : nil
     }
 
-    /// Build a dictation view model for this session and wire its `onTrimmed` callback to reload the
+    /// Build a dictation view model for this session and wire its `onBackgroundAudioResave` callback to reload the
     /// feed (spec 0019/0022): a background dead-air trim OR a resume concatenation re-saves the thought's
     /// timings + audio off-main, so after it lands the feed must reload to drop the stale in-memory thought
     /// - otherwise playing the just-saved thought would seek against timings that no longer match the audio.
@@ -200,7 +200,7 @@ struct StreamListView: View {
             folderPath: folderPath,
             resuming: resuming
         )
-        model.onTrimmed = { Task { await feed.reload() } }
+        model.onBackgroundAudioResave = { Task { await feed.reload() } }
         return model
     }
 

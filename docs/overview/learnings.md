@@ -696,4 +696,13 @@ segment is trimmed before the join - never re-trim an artifact you already proce
 "resume / continue" over a continuous, non-reversible artifact (a recording, an append-only log, a
 streamed export): CONTINUE the one artifact by joining onto it through the coordinated seam, re-anchor any
 positions onto the combined timeline with pure math, make the safe no-op the synchronous result and the
-join a background upgrade, and process only the new part, never the part already finalized.
+join a background upgrade, and process only the new part, never the part already finalized. Two corollaries
+the PR review surfaced. First: when the new part is itself RE-PROCESSED before the join (the new segment is
+trimmed for silence), re-anchor its positions onto the PROCESSED timeline FIRST, then onto the combined one
+- a single offset over an un-remapped timeline double-counts, so it is remap-then-offset, composing the two
+pure transforms in order, never one lump offset. Second: a POSITIONAL split over a MUTABLE list (here the
+new-vs-existing paragraph boundary, a count) must be MAINTAINED as the list shifts, not frozen at capture:
+an end-delete (a "remove last paragraph" command, a keyboard edit) that eats into the pre-existing region
+silently reclassifies a later new item as pre-existing unless the boundary is clamped to the live count on
+every mutation. Both are the same trap - a value captured once that the rest of the flow then invalidates -
+which is exactly the shape that hid in the happy path and only bit the trimmed / edited-mid-resume cases.
