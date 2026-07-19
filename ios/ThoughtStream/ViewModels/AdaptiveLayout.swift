@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// Pure, unit-testable layout decisions for iPad adaptivity (spec 0022), factored out of the SwiftUI
-/// views the same way `FolderScreenState` / `ThoughtDetailBottomBar` (spec 0021) were. No view state, so
-/// the "which navigation container" and "one shared search projection" choices are provable without UI.
+/// The iPad-adaptivity CONTAINER decision (spec 0022), kept in its own SwiftUI-importing file because it
+/// depends on `UserInterfaceSizeClass`. The SwiftUI-free search/state projection (`StreamSearchProjection`)
+/// lives beside it in a UI-free file so a future Watch target can reuse it (architect review).
 
 /// Which navigation container the Thoughts root presents, chosen by the horizontal size class. On a
 /// REGULAR width (iPad, and iPhone landscape where it fits) the root is a `NavigationSplitView` - folders
@@ -22,40 +22,18 @@ enum StreamContainer: Equatable {
     static func decide(horizontalSizeClass: UserInterfaceSizeClass?) -> StreamContainer {
         horizontalSizeClass == .regular ? .split : .stack
     }
-}
 
-/// The ONE search + content-state projection for a folder screen (spec 0021's `resolveContent`, lifted to
-/// a pure seam for spec 0022). Under the `NavigationSplitView` the sidebar and content columns are both
-/// folder screens on-screen at once; each must NOT run its own copy of the search scan against the one
-/// shared query, or two search surfaces fight one state. So the projection is computed ONCE - at the split
-/// container for the split layout, or once per screen for the stack - and this pure function is that single
-/// definition: it selects the `FolderScreenState` and the flat global results together, scanning the
-/// `thoughts x paragraphs` search at most once, and only when a search is actually active.
-enum StreamSearchProjection {
-    /// The resolved screen state and its search results.
-    struct Result: Equatable {
-        let state: FolderScreenState
-        /// The flat global search results (empty unless the state is `.searchResults`).
-        let results: [Thought]
-    }
-
-    /// Resolve the state + results for the whole search surface.
-    ///
-    /// - `didLoad`: the feed has completed its initial load AND the current folder's children are known.
-    ///   Until then the projection is `.normal` with no results, so a not-yet-loaded feed does not flash the
-    ///   empty-store CTA.
-    /// - `thoughts`: every loaded thought (search is GLOBAL, across all folders).
-    /// - `searchQuery`: the shared live query.
-    static func resolve(didLoad: Bool, thoughts: [Thought], searchQuery: String) -> Result {
-        guard didLoad else { return Result(state: .normal, results: []) }
-        let active = ThoughtSearch.isActive(searchQuery)
-        // Only scan when a search is active; the normal/empty states never look at results.
-        let results = active ? ThoughtSearch.results(in: thoughts, query: searchQuery) : []
-        let state = FolderScreenState.select(
-            storeHasThoughts: !thoughts.isEmpty,
-            searchActive: active,
-            hasSearchMatches: !results.isEmpty
-        )
-        return Result(state: state, results: results)
+    /// Whether a folder SCREEN renders its OWN bottom stack (search field + record actions + now-playing +
+    /// undo chip) in this container (spec 0022 single-bottom-bar invariant, factored to a tested seam). In
+    /// the COMPACT stack one folder screen is on-screen at a time, so it owns its bar (true). In the SPLIT
+    /// view the sidebar and content columns are both folder screens at once, so neither owns a bar - the
+    /// container lifts ONE shared bar above them (false). Deriving this from the container (rather than a
+    /// raw `showsBottomBar:` literal at each call site) means a future edit cannot accidentally give a split
+    /// column its own bar - reintroducing two fields fighting one state - or drop the iPhone bar.
+    var folderScreenShowsOwnBottomBar: Bool {
+        switch self {
+        case .stack: return true
+        case .split: return false
+        }
     }
 }

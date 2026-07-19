@@ -36,6 +36,11 @@ struct UndoManagerHost: UIViewControllerRepresentable {
     /// stays 0 on the compact stack (one screen at a time), so this is a no-op there.
     var reclaimTrigger: Int = 0
 
+    /// Whether a delete is currently pending (spec 0022), so the host's layout-pass self-heal (rotate /
+    /// resize / multitasking) only re-claims first responder when the shake would have something to undo.
+    /// The composition root passes the deletion controller's pending state.
+    var pendingDelete: Bool = false
+
     func makeUIViewController(context: Context) -> FirstResponderUndoController {
         let controller = FirstResponderUndoController()
         onManager(controller.stableUndoManager)
@@ -43,6 +48,7 @@ struct UndoManagerHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: FirstResponderUndoController, context: Context) {
+        controller.pendingDelete = pendingDelete
         // A column change in the split view (spec 0022): re-home first responder so the shake keeps reaching
         // the vended manager after focus moved between columns. Guarded on an actual change so an unrelated
         // SwiftUI update does not yank focus from a field the user is editing (the reclaim itself also
@@ -80,13 +86,17 @@ struct UndoManagerHost: UIViewControllerRepresentable {
             // Re-claim first responder whenever focus should return to this host, so a shake keeps
             // resolving against the vended manager after the user edited a text field (search, title,
             // body). The keyboard-hide and end-editing notifications fire as a field resigns; the
-            // did-become-active notification covers returning from the background.
+            // did-become-active notification covers returning from the background; the orientation-change
+            // notification covers an iPad ROTATE (spec 0022), which - like a resize / multitasking change -
+            // can churn the split view's responder chain without any text/keyboard event or a
+            // sidebar/detail selection change, so a pending delete would otherwise lose the shake.
             let center = NotificationCenter.default
             for name in [
                 UIResponder.keyboardDidHideNotification,
                 UITextField.textDidEndEditingNotification,
                 UITextView.textDidEndEditingNotification,
                 UIApplication.didBecomeActiveNotification,
+                UIDevice.orientationDidChangeNotification,
             ] {
                 center.addObserver(
                     self,
@@ -103,6 +113,22 @@ struct UndoManagerHost: UIViewControllerRepresentable {
             // controller's `undoManager`.
             reclaimFirstResponder()
         }
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            // Self-heal on a layout pass (spec 0022): an iPad RESIZE / multitasking (Split View, Slide Over)
+            // or a rotate re-lays-out the split view and can drop this host from the active responder chain
+            // with NO text/keyboard notification and no selection change. A layout pass is the reliable
+            // signal for those, so re-claim here too - the reclaim is guarded (it no-ops if already first
+            // responder and never steals from an actively-edited field), so this is cheap and safe to run
+            // on every layout. Only worth doing while a delete is pending (the shake has nothing to reach
+            // otherwise), which keeps the common no-pending case a single cheap check.
+            if pendingDelete { reclaimFirstResponder() }
+        }
+
+        /// Whether a delete is pending, so the layout-pass self-heal only fires when the shake would have
+        /// something to undo. Set by the composition root alongside the deletion controller's pending state.
+        var pendingDelete = false
 
         /// Reclaim first responder unless it is already ours or a text field is CURRENTLY being edited
         /// (a notification can fire while another field is taking over focus; stealing it back then would

@@ -73,6 +73,10 @@ struct StreamListView: View {
     /// detail thought selection), driving `UndoManagerHost` to re-home first responder so Shake to Undo
     /// keeps reaching the deletion controller's manager regardless of which column is active (spec 0022).
     @State private var undoReclaimTrigger = 0
+    /// Whether the split view's SIDEBAR folders have loaded at least once (spec 0022), so the lifted
+    /// projection gates on "folders loaded" like the compact `feed.didLoad && folderLoaded` gate and does
+    /// not flash the empty-store CTA mid-load. Set from the sidebar's `onFoldersLoaded`.
+    @State private var splitFoldersLoaded = false
     /// Set when the user taps Resume on a thought: presents a dictation session seeded with that thought.
     @State private var resumeThought: Thought?
     /// The global search query (spec 0021), owned here at the root so it survives navigation and a search
@@ -286,7 +290,11 @@ struct StreamListView: View {
                 // Re-home first responder when the split view's active column changes (spec 0022), so a
                 // shake keeps reaching the vended manager after focus moved between columns. Stays 0 (a
                 // no-op) on the compact stack.
-                reclaimTrigger: undoReclaimTrigger
+                reclaimTrigger: undoReclaimTrigger,
+                // While a delete is pending, let the host self-heal first responder on a layout pass
+                // (rotate / resize / multitasking) so the shake still recovers even when no column selection
+                // changed (spec 0022).
+                pendingDelete: deletion.pending != nil
             )
         )
         // Bump the re-home trigger on a split-view column change (spec 0022 UndoManagerHost re-home): the
@@ -338,7 +346,10 @@ struct StreamListView: View {
                 onNewThought: { folderPath in startNewThought(in: folderPath) },
                 onOpenSettings: { showSettings = true },
                 onDeleteThought: { id in Task { await deletion.delete(id: id) } },
-                deletion: deletion
+                deletion: deletion,
+                // Bar ownership is the tested `StreamContainer` decision, not a raw literal (spec 0022): the
+                // compact stack's one-screen-at-a-time folder screen owns its bottom bar.
+                showsBottomBar: StreamContainer.stack.folderScreenShowsOwnBottomBar
             )
             .navigationTitle("Thoughts")
             // The "Thoughts" title sits BELOW the toolbar buttons as a large title (spec 0021, revising
@@ -360,7 +371,8 @@ struct StreamListView: View {
                         onNewThought: { folderPath in startNewThought(in: folderPath) },
                         onOpenSettings: { showSettings = true },
                         onDeleteThought: { id in Task { await deletion.delete(id: id) } },
-                        deletion: deletion
+                        deletion: deletion,
+                        showsBottomBar: StreamContainer.stack.folderScreenShowsOwnBottomBar
                     )
                     .navigationTitle(folderPath.last ?? "Thoughts")
                     .navigationBarTitleDisplayMode(.large)
@@ -387,8 +399,10 @@ struct StreamListView: View {
     private var splitView: some View {
         // ONE search projection for the whole split view (spec 0022): both columns render from this, so the
         // shared query drives a single results list instead of two fields fighting one state. Scanned once.
+        // Gated on `feed.didLoad && splitFoldersLoaded` (matching the compact `feed.didLoad && folderLoaded`
+        // gate) so the split view does not flash the empty-store CTA mid-load.
         let projection = StreamSearchProjection.resolve(
-            didLoad: feed.didLoad,
+            didLoad: feed.didLoad && splitFoldersLoaded,
             thoughts: feed.thoughts,
             searchQuery: searchQuery
         )
@@ -401,7 +415,8 @@ struct StreamListView: View {
         }
         // The lifted bottom stack for the whole split view (spec 0022 required restructure): the single
         // search field, the now-playing bar, the undo chip, and the record/new-thought actions live here,
-        // above the columns, so there is ONE search surface across the sidebar and content columns.
+        // above the columns, so there is ONE search surface across the sidebar and content columns. It is
+        // the SAME `StreamBottomStack` the compact folder screen renders (de-duped, one component).
         .safeAreaInset(edge: .bottom) {
             liftedBottomStack(state: projection.state)
         }
@@ -410,7 +425,9 @@ struct StreamListView: View {
 
     /// The split-view SIDEBAR: the root folder tree (top-level folders + thoughts). A folder tap selects it
     /// (the content column shows its thoughts); a thought tap routes it to the detail column. Renders no
-    /// bottom bar - the lifted stack owns it.
+    /// bottom bar - the lifted stack owns it. During an active search the sidebar keeps its NORMAL folder
+    /// tree (via `sidebarProjection`), so the ONE global results list shows only in the content column, not
+    /// double-rendered here beside it (spec 0022 fix).
     private func splitSidebar(projection: StreamSearchProjection.Result) -> some View {
         FolderContentsView(
             feed: feed,
@@ -423,10 +440,11 @@ struct StreamListView: View {
             onNewKeyboardThought: { folderPath in selectedRoute = .newThought(makeNewThought(in: folderPath)) },
             onNewThought: { folderPath in startNewThought(in: folderPath) },
             onOpenSettings: { showSettings = true },
-            onDeleteThought: { id in Task { await deletion.delete(id: id) } },
+            onDeleteThought: { id in deleteThoughtFromSplit(id) },
             deletion: deletion,
-            showsBottomBar: false,
-            resolvedContent: projection
+            showsBottomBar: StreamContainer.split.folderScreenShowsOwnBottomBar,
+            resolvedContent: StreamSearchProjection.sidebarProjection(from: projection),
+            onFoldersLoaded: { splitFoldersLoaded = true }
         )
         .navigationTitle("Thoughts")
         .navigationBarTitleDisplayMode(.large)
@@ -463,9 +481,11 @@ struct StreamListView: View {
             onNewKeyboardThought: { newPath in selectedRoute = .newThought(makeNewThought(in: newPath)) },
             onNewThought: { newPath in startNewThought(in: newPath) },
             onOpenSettings: { showSettings = true },
-            onDeleteThought: { id in Task { await deletion.delete(id: id) } },
+            onDeleteThought: { id in deleteThoughtFromSplit(id) },
             deletion: deletion,
-            showsBottomBar: false,
+            // The content column shows the ONE global results list during an active search (the sidebar
+            // stays normal), so it takes the FULL projection.
+            showsBottomBar: StreamContainer.split.folderScreenShowsOwnBottomBar,
             resolvedContent: projection
         )
         .navigationTitle(folderPath.last ?? "Thoughts")
@@ -569,45 +589,51 @@ struct StreamListView: View {
 
     /// The LIFTED bottom stack for the split view (spec 0022 required restructure): the ONE search field +
     /// record/new-thought actions, the now-playing bar, and the undo-delete chip, composed above BOTH
-    /// columns so there is a single search surface across the whole split view (not one per column). It
-    /// reuses the same `BottomBar` component and the same undo-window timer shape as the compact per-screen
-    /// stack; the record/new-thought actions file into the folder currently selected in the sidebar.
+    /// columns so there is a single search surface across the whole split view (not one per column). It is
+    /// the SAME `StreamBottomStack` component the compact folder screen renders (de-duped, one place for the
+    /// composition + the 5s undo-window timer); the record/new-thought actions file into the folder
+    /// currently selected in the sidebar.
     private func liftedBottomStack(state screenState: FolderScreenState) -> some View {
-        VStack(spacing: CanopySpacing.x3) {
-            if deletion.pending != nil {
-                UndoDeleteAffordance(onUndo: { Task { await deletion.undo() } })
-                    .transition(.opacity)
-            }
-            if screenState != .emptyStore {
-                if let controller = playbackController {
-                    NowPlayingBar(controller: controller, onOpenThought: { selectedRoute = .thought($0) })
-                }
-                BottomBar(query: $searchQuery, showsSearchField: screenState.showsSearchField) {
-                    BottomBarIconButton(
-                        systemImage: "square.and.pencil",
-                        accessibilityLabel: "New thought"
-                    ) { selectedRoute = .newThought(makeNewThought(in: selectedFolder)) }
-                    BottomBarRecordButton(accessibilityLabel: "Record") { startNewThought(in: selectedFolder) }
-                }
-            }
-        }
+        StreamBottomStack(
+            query: $searchQuery,
+            screenState: screenState,
+            deletion: deletion,
+            playbackController: playbackController,
+            onOpenThought: { selectedRoute = .thought($0) },
+            onNewKeyboardThought: { selectedRoute = .newThought(makeNewThought(in: selectedFolder)) },
+            onNewThought: { startNewThought(in: selectedFolder) }
+        )
+        // The lifted bar sits above BOTH columns, so it inherits the split's full width; the horizontal
+        // inset keeps the capsule from spanning edge-to-edge on the wide canvas.
         .padding(.horizontal, CanopySpacing.x4)
-        .padding(.bottom, CanopySpacing.x2)
-        .animation(.easeInOut(duration: 0.2), value: deletion.pending != nil)
-        .task(id: deletion.deleteTrigger) {
-            guard deletion.deleteTrigger > 0, deletion.pending != nil else { return }
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard !Task.isCancelled else { return }
-            await deletion.commitWindow()
-        }
     }
 
-    /// Select a folder in the split view's sidebar: point the content column at it and reset that column's
-    /// own navigation stack, so opening a new sidebar folder shows it at its root rather than keeping the
-    /// prior folder's pushed path.
+    /// Delete a thought from the split view (spec 0022): reconcile the DETAIL column first - if the deleted
+    /// thought is the one currently open there, clear the selection so the user cannot keep reading / editing
+    /// / resuming a trashed thought (the pure `SplitDetailReconcile` decides) - then soft-delete through the
+    /// shared undoable path. The undo chip shows in the lifted bar regardless of which column initiated it.
+    private func deleteThoughtFromSplit(_ id: UUID) {
+        if SplitDetailReconcile.deleteClearsSelection(deletedId: id, shownThoughtId: selectedThoughtId) {
+            selectedRoute = nil
+        }
+        Task { await deletion.delete(id: id) }
+    }
+
+    /// The persisted id of the thought currently shown in the detail column, or nil when the column shows the
+    /// placeholder or an unsaved new-thought draft (which has no id to delete against).
+    private var selectedThoughtId: UUID? {
+        if case let .thought(thought) = selectedRoute { return thought.id }
+        return nil
+    }
+
+    /// Select a folder in the split view's sidebar: point the content column at it, reset that column's own
+    /// navigation stack, AND clear the detail column - the previously-open thought belonged to the old
+    /// folder's context, so a fresh folder starts with no thought selected (spec 0022, so folder B does not
+    /// leave folder A's thought open in detail).
     private func selectSidebarFolder(_ folderPath: [String]) {
         selectedFolder = folderPath
         contentPath = []
+        selectedRoute = nil
     }
 
     /// Land on a just-saved thought from a dictation / resume session, in whichever container is active
