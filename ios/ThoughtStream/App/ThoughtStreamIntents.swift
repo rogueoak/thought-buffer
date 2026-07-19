@@ -100,8 +100,8 @@ struct ThoughtStreamShortcuts: AppShortcutsProvider {
 
     /// The leading text of each "new thought" phrase; the app name follows in the literal below.
     static let newThoughtPhraseLeads = [
-        "Make a new thought in",
-        "Jot a thought in"
+        "New thought in",
+        "Start a thought in"
     ]
 
     static var appShortcuts: [AppShortcut] {
@@ -119,8 +119,8 @@ struct ThoughtStreamShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: NewThoughtIntent(),
             phrases: [
-                "Make a new thought in \(.applicationName)",
-                "Jot a thought in \(.applicationName)"
+                "New thought in \(.applicationName)",
+                "Start a thought in \(.applicationName)"
             ],
             shortTitle: "New Thought",
             systemImageName: "mic.fill"
