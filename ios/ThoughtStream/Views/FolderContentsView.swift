@@ -16,6 +16,12 @@ struct FolderContentsView: View {
     /// The shared sort order, bound so the toolbar menu here re-sorts the whole app live.
     @Binding var sortOrder: NoteSortOrder
 
+    /// The ONE shared playback controller (spec 0008), threaded down so a leading swipe can play a note
+    /// or a folder's queue through the same path the detail view, CarPlay, and the now-playing bar
+    /// drive (spec 0015). Optional so a preview / screenshot build without shared playback still
+    /// renders; the swipe Play actions are simply omitted when nil.
+    let playbackController: NotePlaybackController?
+
     let onOpenFolder: ([String]) -> Void
     let onOpenNote: (Note) -> Void
     /// Create a blank keyboard note filed in this screen's folder (spec 0013). Carries `currentPath`
@@ -68,8 +74,16 @@ struct FolderContentsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(CanopyColor.bg.ignoresSafeArea())
         .safeAreaInset(edge: .bottom) {
-            RecordButton { onNewThought() }
-                .padding(.bottom, CanopySpacing.x6)
+            VStack(spacing: CanopySpacing.x3) {
+                // The now-playing bar sits ABOVE the Record button on every folder screen (spec 0015),
+                // shown only while the shared controller has a loaded note. Tapping its title routes to
+                // that note via the same `onOpenNote` the rows use.
+                if let controller = playbackController {
+                    NowPlayingBar(controller: controller, onOpenNote: onOpenNote)
+                }
+                RecordButton { onNewThought() }
+            }
+            .padding(.bottom, CanopySpacing.x6)
         }
         .overlay(alignment: .top) {
             if feed.deleteFailed {
@@ -173,6 +187,19 @@ struct FolderContentsView: View {
                 Label("Delete", systemImage: "trash")
             }
         }
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            // A full leading swipe plays the folder's recordings as a queue (spec 0015): every recorded
+            // note anywhere in this folder's subtree, in the current sort order, auto-advancing. A
+            // folder with no recordings plays nothing (the controller no-ops on an empty queue).
+            if let controller = playbackController {
+                Button {
+                    controller.playQueue(folderQueue(for: folderPath))
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+                .tint(CanopyColor.success)
+            }
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
             Button(role: .destructive) {
                 deleteTarget = folderPath
@@ -187,6 +214,18 @@ struct FolderContentsView: View {
             }
             .tint(CanopyColor.primary)
         }
+    }
+
+    /// The play queue for a folder swipe (spec 0015): every note anywhere in `folderPath`'s subtree
+    /// (its `folderPath` has `folderPath` as a prefix) that carries a recording, ordered by the current
+    /// `NoteSortOrder` via the shared comparator - so a folder plays in the same order its notes appear
+    /// in the list. The controller filters to recordings too, but filtering here keeps the ordering
+    /// honest (it sorts only the notes that will actually play).
+    private func folderQueue(for folderPath: [String]) -> [Note] {
+        let inSubtree = feed.notes.filter { note in
+            note.hasAudio && FolderListModel.isDescendant(note.folderPath, of: folderPath)
+        }
+        return sortOrder.sort(inSubtree)
     }
 
     private func noteRow(note: Note) -> some View {
@@ -204,7 +243,17 @@ struct FolderContentsView: View {
                 Label("Move to folder", systemImage: "folder")
             }
         }
-        .swipeActions(edge: .leading, allowsFullSwipe: false) {
+        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+            // A full leading swipe plays a recorded note immediately through the shared controller
+            // (spec 0015); a text-only note gets no Play action, only Move.
+            if note.hasAudio, let controller = playbackController {
+                Button {
+                    controller.play(note: note)
+                } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+                .tint(CanopyColor.success)
+            }
             Button {
                 moveNote = note
             } label: {

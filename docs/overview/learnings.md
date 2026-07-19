@@ -408,3 +408,19 @@ reconstructs it (`TypeName(` with an existing instance in scope, `.init(`, "edit
 carry the field through; and prefer a single `editedCopy(changing:)`-style mutator on the type over
 ad-hoc `Note(...)` rebuilds scattered across views, so there is ONE place that must know all the
 fields. Generalizes to any immutable model that is copied-with-changes in more than one place.
+
+## A shared teardown that clears everything is wrong when one caller must keep some state (spec 0015)
+
+`NotePlaybackController.play(note:)` calls `clearPlayback()` before loading a note - it stops the
+player and drops Now Playing / remote wiring so no stale playback survives a switch. Adding a queue
+(a folder swipe that auto-advances) meant the queue had to SURVIVE that same teardown on each advance:
+advancing IS a `play(note:)` under the hood, but it must not wipe the `queue`/`hasNext` it is walking.
+The fix split the start path in two - a public `play(note:)` that clears the queue (a deliberate new
+selection ends any queue) and a private `loadAndPlay(note:)` that does NOT, which the queue advance
+and `playQueue` call. The natural-finish advance is told apart from a user stop by the pre-existing
+`suppressFinish` flag: a user `stop()` sets it (via `clearPlayback`) AND clears the queue, so
+`handleFinish` returns early and cannot advance; only a real end-of-track reaches the advance.
+Generalizes: when a shared "reset everything" helper gains a caller that must preserve a slice of the
+state, do not add flags to the helper - split the entry points by intent (the caller that resets vs.
+the caller that keeps), and keep the "is this a natural event or a deliberate one" distinction on the
+single flag that already gates the synchronous-vs-natural teardown, so the two paths never race.
