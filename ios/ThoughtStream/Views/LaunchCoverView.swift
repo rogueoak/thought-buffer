@@ -28,12 +28,14 @@ struct LaunchCoverView: View {
                     .foregroundStyle(CanopyColor.text)
                     .multilineTextAlignment(.center)
 
+                // Borderless logo that melts into the backdrop (feedback 0019): no clip shape or
+                // outline, and a soft radial mask fades the edges into the launch background so the
+                // icon reads as part of the backdrop rather than a crisp tile sitting on top.
                 Image("LaunchIcon")
                     .resizable()
                     .interpolation(.high)
                     .frame(width: iconSize, height: iconSize)
-                    .clipShape(RoundedRectangle(cornerRadius: CanopyRadius.x2xl, style: .continuous))
-                    .shadow(color: CanopyColor.overlay.opacity(0.25), radius: 20, y: 10)
+                    .mask(logoFadeMask)
                     .accessibilityHidden(true)
 
                 bars
@@ -67,7 +69,7 @@ struct LaunchCoverView: View {
 
     /// A row of bars whose normalized 0...1 heights come from `height(_:)`.
     private func barRow(_ height: @escaping (Int) -> Double) -> some View {
-        HStack(alignment: .center, spacing: CanopySpacing.x2) {
+        HStack(alignment: .center, spacing: barSpacing) {
             ForEach(0..<LaunchCoverView.barCount, id: \.self) { bar in
                 Capsule()
                     .fill(CanopyColor.primary)
@@ -76,8 +78,28 @@ struct LaunchCoverView: View {
         }
     }
 
+    /// A soft radial mask so the logo fades into the launch background at its edges rather than
+    /// sitting on top with a hard boundary (feedback 0019). Solid through the center, fully
+    /// transparent by the corners.
+    private var logoFadeMask: some View {
+        RadialGradient(
+            gradient: Gradient(stops: [
+                .init(color: .white, location: 0),
+                .init(color: .white, location: 0.6),
+                .init(color: .clear, location: 1)
+            ]),
+            center: .center,
+            startRadius: 0,
+            endRadius: iconSize / 2
+        )
+    }
+
     private let iconSize: CGFloat = 120
-    private let barWidth: CGFloat = CanopySpacing.x2
+    /// Waveform bar width. Named so it is tunable; thinner than before (feedback 0019) so the row
+    /// reads as a finer, logo-like waveform.
+    private let barWidth: CGFloat = CanopySpacing.x1
+    /// Gap between bars, tightened alongside the thinner bars so the row stays a cohesive waveform.
+    private let barSpacing: CGFloat = CanopySpacing.x1_5
     private let barRowHeight: CGFloat = CanopySpacing.x16
     private let minBarHeight: CGFloat = CanopySpacing.x2
 
