@@ -37,6 +37,10 @@ struct BottomBar<Trailing: View>: View {
     }
 
     var body: some View {
+        // The search field is its OWN bounded (rounded) field; the action buttons sit BESIDE it, visually
+        // OUTSIDE that field's background (feedback 0020). Previously one shared capsule wrapped the field AND
+        // the buttons, so the new-thought / record icons read as being INSIDE the search field. Now only the
+        // field carries the surface + border pill, and the trailing icons stand on the bare bar next to it.
         HStack(spacing: CanopySpacing.x3) {
             if showsSearchField {
                 searchField
@@ -44,19 +48,13 @@ struct BottomBar<Trailing: View>: View {
             trailing
         }
         .padding(.horizontal, CanopySpacing.x4)
-        .padding(.vertical, CanopySpacing.x2)
-        .background(CanopyColor.surface)
-        .clipShape(Capsule())
-        .overlay(
-            Capsule().stroke(CanopyColor.border, lineWidth: 1)
-        )
-        .shadow(color: CanopyColor.overlay.opacity(0.2), radius: 12, y: 6)
-        .padding(.horizontal, CanopySpacing.x4)
     }
 
     /// The search field: a magnifier glyph, a text field filling the remaining width, and a clear
-    /// button when there is text. Uses `.search` submit semantics but never fights the dictation mic -
-    /// the record/resume action is a distinct button in `trailing` (spec 0021 keyboard thought).
+    /// button when there is text, all inside its OWN rounded pill (surface + border + shadow) so it reads as
+    /// a bounded search field distinct from the action buttons beside it (feedback 0020). Uses `.search`
+    /// submit semantics but never fights the dictation mic - the record/resume action is a distinct button in
+    /// `trailing` (spec 0021 keyboard thought).
     private var searchField: some View {
         HStack(spacing: CanopySpacing.x2) {
             Image(systemName: "magnifyingglass")
@@ -82,6 +80,14 @@ struct BottomBar<Trailing: View>: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, CanopySpacing.x4)
+        .padding(.vertical, CanopySpacing.x2)
+        .background(CanopyColor.surface)
+        .clipShape(Capsule())
+        .overlay(
+            Capsule().stroke(CanopyColor.border, lineWidth: 1)
+        )
+        .shadow(color: CanopyColor.overlay.opacity(0.2), radius: 12, y: 6)
     }
 }
 

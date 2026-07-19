@@ -588,7 +588,9 @@ by their whole text, not just the title.
   resume (only when resuming applies per the audio-retention setting). The record/resume icon keeps its
   prominent affordance without a text label, and every now-unlabeled button keeps its accessibility
   label ("New thought", "Record", "Resume recording", "Search thoughts"). The bar is ONE component; each
-  screen passes in its own right-side actions rather than forking it.
+  screen passes in its own right-side actions rather than forking it. The search field is its OWN bounded
+  (rounded) pill and the action buttons sit BESIDE it, visually OUTSIDE the field's background rather than
+  reading as inside it (feedback 0020).
 - **Full-text search.** Typing filters to thoughts whose TITLE or ANY body paragraph contains the query -
   case-insensitive AND diacritic-insensitive, substring (not title-only). Search is GLOBAL across the
   whole folder tree, shown as a flat result list; tapping a result opens that thought, and clearing the
@@ -606,7 +608,9 @@ by their whole text, not just the title.
   overlay clearance for the undo chip is gone (the chip previously overlapped the record control).
 - **Consistent title below the toolbar (revises feedback 0016).** Both the root "Thoughts" screen and
   every folder screen show their title as a large title BELOW the toolbar buttons, reading identically,
-  instead of the inline title (feedback 0016) that read as cramped under the buttons.
+  instead of the inline title (feedback 0016) that read as cramped under the buttons. The title is sized
+  at the Canopy H3 step (`sizeX3xl`), one step below the system large title (feedback 0020), and renders
+  immediately on navigation (feedback 0020 removed a state-during-view-update warning that lazy-rendered it).
 - **Contextual record + new thought.** Recording or creating a thought while inside a folder files it in
   THAT folder, not at the root - the record/mic and new-thought actions carry the current folder path
   through to the dictation session (hands-free Siri/CarPlay starts stay at the root, having no folder
