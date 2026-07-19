@@ -184,6 +184,42 @@ extension Note {
         return "Note " + Note.fallbackDateFormatter.string(from: createdAt)
     }
 
+    /// Whether a brand-new note's editor buffer is still a blank draft (spec 0013): no non-whitespace
+    /// body AND no non-whitespace user-entered title. A derived (non-custom) title never counts as
+    /// content, since it is synthesized from the body. Pure so the discard-vs-keep decision is
+    /// unit-testable rather than trapped in the view (the spec 0009 `resolveTitleEdit` precedent).
+    static func isBlankDraft(paragraphs: [String], hasCustomTitle: Bool, customTitle: String) -> Bool {
+        let hasBody = paragraphs.contains {
+            !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let hasTitle = hasCustomTitle
+            && !customTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return !hasBody && !hasTitle
+    }
+
+    /// A copy of this note with the edited fields applied, PRESERVING its storage location
+    /// (`folderPath`) and recording (`audioFileName`/`timings`, capped so timings never outnumber
+    /// paragraphs after an edit shrinks the body). The title is the user's custom one when set, else
+    /// re-derived from the first sentence so it tracks body edits (spec 0009). Pure so the rebuild -
+    /// and the folder-preservation it guarantees - is unit-testable rather than trapped in the view's
+    /// `currentNote`. A note that lives in a folder MUST keep its `folderPath` here, or `NoteStore.save`
+    /// (which files by `folderPath`) would relocate it to the root on every edit.
+    func editedCopy(paragraphs: [String], hasCustomTitle: Bool, customTitle: String) -> Note {
+        let effectiveTitle = hasCustomTitle
+            ? customTitle
+            : Note.deriveTitle(paragraphs: paragraphs, createdAt: createdAt)
+        return Note(
+            id: id,
+            title: effectiveTitle,
+            paragraphs: paragraphs,
+            createdAt: createdAt,
+            hasCustomTitle: hasCustomTitle,
+            audioFileName: audioFileName,
+            timings: Array(timings.prefix(paragraphs.count)),
+            folderPath: folderPath
+        )
+    }
+
     /// The `(title, isCustom)` a title-edit commit resolves to (spec 0009): a blank entry resets to
     /// the derived first sentence and clears the custom flag; anything else (trimmed) is a user title.
     /// Pure so the reset/set rule is unit-testable rather than trapped in the view's commit handler.

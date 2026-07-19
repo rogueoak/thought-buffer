@@ -7,6 +7,10 @@ import SwiftUI
 struct NoteDetailView: View {
     let note: Note
     @StateObject private var playback: NotePlaybackModel
+    // This view only EMITS intents (`onCommitEdit`/`onDiscardEmpty`); the composition root
+    // (`StreamListView`) owns the actual store write/delete and the route pop. The draft/editing
+    // `@State` stays local so per-note editing is not reworked into the root.
+    @Environment(\.scenePhase) private var scenePhase
 
     /// Called when the user taps the toolbar mic to start a fresh thought (feedback 0011), so the
     /// composition root requests a new session through the same route the list uses. Nil at
@@ -21,12 +25,20 @@ struct NoteDetailView: View {
     /// Called with the edited note when the user commits a keyboard edit, so the composition root can
     /// persist it and refresh the feed. Nil at bare/preview call sites (editing then shows no Save).
     private let onCommitEdit: ((Note) -> Void)?
+    /// Called when a brand-new note (spec 0013) is abandoned with no title and no body, so the
+    /// composition root discards it (never persists it, or deletes it if it was provisionally saved)
+    /// rather than leaving a blank note in the list. Nil for a normal saved note.
+    private let onDiscardEmpty: (() -> Void)?
+    /// Whether this note is a brand-new, not-yet-persisted note opened straight into the editor
+    /// (spec 0013). It stays true until the first non-empty commit persists real content; while true,
+    /// leaving with no title and no body discards the note via `onDiscardEmpty`.
+    @State private var isUnsavedNewNote: Bool
 
     /// The note's paragraphs as shown/edited. Seeded from the note; edits mutate this and, on commit,
     /// build an updated note handed back through `onCommitEdit`.
     @State private var paragraphs: [String]
-    @State private var isEditing = false
-    @State private var draft = ""
+    @State private var isEditing: Bool
+    @State private var draft: String
     @FocusState private var editorFocused: Bool
 
     /// Whether the title is user-set (spec 0009). When false, the shown title derives from the first
@@ -54,16 +66,25 @@ struct NoteDetailView: View {
         onNewThought: (() -> Void)? = nil,
         onOpenSettings: (() -> Void)? = nil,
         onResume: ((Note) -> Void)? = nil,
-        onCommitEdit: ((Note) -> Void)? = nil
+        onCommitEdit: ((Note) -> Void)? = nil,
+        onDiscardEmpty: (() -> Void)? = nil,
+        startInEdit: Bool = false
     ) {
         self.note = note
         self.onNewThought = onNewThought
         self.onOpenSettings = onOpenSettings
         self.onResume = onResume
         self.onCommitEdit = onCommitEdit
+        self.onDiscardEmpty = onDiscardEmpty
         _paragraphs = State(initialValue: note.paragraphs)
         _hasCustomTitle = State(initialValue: note.hasCustomTitle)
         _customTitleText = State(initialValue: note.title)
+        // A brand-new note (spec 0013) opens straight into the body editor and is unsaved until the
+        // first non-empty commit. `startInEdit` drives both: the editor opens focused, and the note is
+        // tracked as unsaved so backing out untouched discards it.
+        _isEditing = State(initialValue: startInEdit)
+        _draft = State(initialValue: startInEdit ? note.paragraphs.joined(separator: "\n\n") : "")
+        _isUnsavedNewNote = State(initialValue: startInEdit)
         // The full note is passed through so the shared playback controller titles the system Now
         // Playing item (lock screen / Control Center) and reads the recording duration.
         let controller = controller ?? NotePlaybackController(resolver: resolver, player: player)
@@ -141,7 +162,10 @@ struct NoteDetailView: View {
         // Resume sits centered at the bottom of the screen (feedback 0008), clear of the scrolling
         // note body. Hidden while editing text, and only when a call site can reopen a session.
         .safeAreaInset(edge: .bottom) {
-            if let onResume, !isEditingAnything {
+            // Hide the record affordance while a brand-new note is still empty (spec 0013): there is
+            // nothing to record onto yet, and it would race the discard-on-leave. It appears once the
+            // note has content (committed, so no longer unsaved).
+            if let onResume, !isEditingAnything, !isUnsavedNewNote {
                 resumeButton { onResume(currentNote) }
                     .padding(.bottom, CanopySpacing.x4)
             }
@@ -182,31 +206,41 @@ struct NoteDetailView: View {
                 }
             }
         }
+        // A brand-new note (spec 0013) opens with the body editor focused so the user can type at once.
+        // Focus is set here (not in init) because a FocusState only takes effect once the view exists.
+        .onAppear { if isUnsavedNewNote { editorFocused = true } }
         // Stop playback if the user navigates away mid-play, so audio never keeps running off-screen.
-        .onDisappear { playback.stop() }
+        // Also finalize a brand-new note the user backed out of WITHOUT tapping Done (spec 0013):
+        // keep it if anything was typed (auto-save, so typed content is never lost on back), discard it
+        // only if still blank. A committed note has cleared `isUnsavedNewNote` already.
+        .onDisappear {
+            playback.stop()
+            if isUnsavedNewNote { finalizeUnsavedNote() }
+        }
+        // `onDisappear` covers back-navigation but does NOT fire on app suspend/terminate, so a typed
+        // brand-new note could otherwise be lost if the app is backgrounded before Done or back (spec
+        // 0013). Observe the scene phase: on the way to background/inactive, finalize an unsaved new
+        // note (persist typed content, or discard a still-blank one). `finalizeUnsavedNote` clears
+        // `isUnsavedNewNote` before it acts, so a following back-navigation cannot persist/pop twice.
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase != .active, isUnsavedNewNote { finalizeUnsavedNote() }
+        }
     }
 
     /// Whether the user is editing the body OR the title, so read-mode affordances (mic/gear, Resume)
     /// hide and the Done button shows for either.
     private var isEditingAnything: Bool { isEditing || isEditingTitle }
 
-    /// The note as it currently stands (edits applied), with the recording/timings preserved. The
-    /// title is the user's custom one when set, else re-derived from the first sentence so it tracks
-    /// body edits (spec 0009). Handed to `onCommitEdit` and `onResume`.
+    /// The note as it currently stands (edits applied). The rebuild lives in a pure model helper
+    /// (`Note.editedCopy`) so the recording, timings, AND `folderPath` are all preserved in one place:
+    /// dropping `folderPath` here would make `NoteStore.save` re-file every foldered note to the root
+    /// on commit. The title is the user's custom one when set, else re-derived from the first sentence
+    /// so it tracks body edits (spec 0009). Handed to `onCommitEdit` and `onResume`.
     private var currentNote: Note {
-        let effectiveTitle = hasCustomTitle
-            ? customTitleText
-            : Note.deriveTitle(paragraphs: paragraphs, createdAt: note.createdAt)
-        return Note(
-            id: note.id,
-            title: effectiveTitle,
+        note.editedCopy(
             paragraphs: paragraphs,
-            createdAt: note.createdAt,
             hasCustomTitle: hasCustomTitle,
-            audioFileName: note.audioFileName,
-            // An edit can shrink the paragraph count; cap timings so the note never carries more
-            // timings than paragraphs (parity with the record-screen edit; engineer review).
-            timings: Array(note.timings.prefix(paragraphs.count))
+            customTitle: customTitleText
         )
     }
 
@@ -240,13 +274,16 @@ struct NoteDetailView: View {
         }
     }
 
-    /// The Resume control (reopen the note into a recording session), styled as a prominent pill for
-    /// the bottom bar.
+    /// The record affordance (reopen the note into a dictation session), styled as a prominent pill
+    /// for the bottom bar. Labeled "Record" when the note has no audio yet - tapping it captures a
+    /// real recording (spec 0013) - and "Resume" once it already carries a recording (feedback 0008).
     private func resumeButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        let hasAudio = currentNote.hasAudio
+        let title = hasAudio ? "Resume" : "Record"
+        return Button(action: action) {
             HStack(spacing: CanopySpacing.x2) {
                 Image(systemName: "mic.fill")
-                Text("Resume")
+                Text(title)
                     .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
             }
             .foregroundStyle(CanopyColor.primaryForeground)
@@ -256,7 +293,7 @@ struct NoteDetailView: View {
             .clipShape(Capsule())
             .shadow(color: CanopyColor.overlay.opacity(0.25), radius: 12, y: 6)
         }
-        .accessibilityLabel("Resume dictating this note")
+        .accessibilityLabel(hasAudio ? "Resume dictating this note" : "Record audio for this note")
     }
 
     /// The simple play / stop control for the note's recording. Play / stop only - no scrubbing or
@@ -304,14 +341,60 @@ struct NoteDetailView: View {
         hasCustomTitle = resolved.isCustom
         isEditingTitle = false
         titleFocused = false
-        onCommitEdit?(currentNote)
+        persistOrDiscard()
     }
 
     private func commitEdit() {
         paragraphs = Note.splitParagraphs(draft)
         isEditing = false
         editorFocused = false
+        persistOrDiscard()
+    }
+
+    /// Commit an edit: persist the note through `onCommitEdit`, unless this is a brand-new note left
+    /// with no title and no body (spec 0013), in which case discard it so no blank note is saved. Once
+    /// a new note has real content, it is persisted and stops being tracked as unsaved.
+    private func persistOrDiscard() {
+        if isUnsavedNewNote, isEmptyNewNote {
+            // Nothing typed into the fresh note: discard rather than persist a blank note. Clear the
+            // flag so a following `onDisappear` cannot discard (and pop) a second time.
+            isUnsavedNewNote = false
+            onDiscardEmpty?()
+            return
+        }
+        isUnsavedNewNote = false
         onCommitEdit?(currentNote)
+    }
+
+    /// Finalize a fresh note the user left without tapping Done: fold any in-progress body/title edit
+    /// into the model first (the typed text lives in `draft`/`titleDraft`, not yet in `paragraphs`),
+    /// then persist it if it has content or discard it if still blank (spec 0013). This is what keeps
+    /// typed-but-not-committed content from being lost on a back-navigation.
+    private func finalizeUnsavedNote() {
+        if isEditing { paragraphs = Note.splitParagraphs(draft) }
+        if isEditingTitle {
+            let resolved = Note.resolveTitleEdit(
+                rawTitle: titleDraft,
+                paragraphs: paragraphs,
+                createdAt: note.createdAt
+            )
+            customTitleText = resolved.title
+            hasCustomTitle = resolved.isCustom
+        }
+        persistOrDiscard()
+    }
+
+    /// Whether a brand-new note is still a blank draft: no body text and no user-entered custom title.
+    /// The rule lives in a pure model helper (`Note.isBlankDraft`) so it is unit-tested, not trapped in
+    /// view state (the spec 0009 `resolveTitleEdit` precedent). A title-only new note counts as content
+    /// (kept, not discarded): a user who dismisses the body editor and types only a title still has
+    /// their note saved. That path is reachable because the title stays tappable once `!isEditing`.
+    private var isEmptyNewNote: Bool {
+        Note.isBlankDraft(
+            paragraphs: paragraphs,
+            hasCustomTitle: hasCustomTitle,
+            customTitle: customTitleText
+        )
     }
 }
 

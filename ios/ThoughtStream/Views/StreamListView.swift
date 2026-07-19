@@ -8,6 +8,10 @@ import SwiftUI
 enum StreamRoute: Hashable {
     case folder([String])
     case note(Note)
+    /// A brand-new, not-yet-persisted note (spec 0013) opened straight into the keyboard editor. It is
+    /// a separate route from `.note` so the detail view knows to start in edit mode and to discard the
+    /// note if the user backs out without typing. It becomes an ordinary saved note on first commit.
+    case newNote(Note)
 }
 
 /// The notes feed: a folder-aware, sortable list of real saved notes on the River Mist palette, with
@@ -66,6 +70,14 @@ struct StreamListView: View {
         _sortOrder = State(initialValue: settingsStore.noteSortOrder)
     }
 
+    /// A fresh, empty note filed in `folderPath` (spec 0013), opened straight into the editor. It has
+    /// no paragraphs and no custom title (its shown title derives once the user types), and it is not
+    /// saved until the first non-empty commit.
+    private func makeNewNote(in folderPath: [String]) -> Note {
+        // Empty title -> the detail view derives one once the user types (spec 0009); non-custom.
+        Note(title: "", paragraphs: [], createdAt: Date(), folderPath: folderPath)
+    }
+
     var body: some View {
         NavigationStack(path: $path) {
             FolderContentsView(
@@ -74,6 +86,7 @@ struct StreamListView: View {
                 sortOrder: $sortOrder,
                 onOpenFolder: { childPath in path.append(.folder(childPath)) },
                 onOpenNote: { note in path.append(.note(note)) },
+                onNewNote: { folderPath in path.append(.newNote(makeNewNote(in: folderPath))) },
                 onNewThought: { sessionRoute.startNewSession() },
                 onOpenSettings: { showSettings = true }
             )
@@ -88,6 +101,7 @@ struct StreamListView: View {
                         sortOrder: $sortOrder,
                         onOpenFolder: { childPath in path.append(.folder(childPath)) },
                         onOpenNote: { note in path.append(.note(note)) },
+                        onNewNote: { newPath in path.append(.newNote(makeNewNote(in: newPath))) },
                         onNewThought: { sessionRoute.startNewSession() },
                         onOpenSettings: { showSettings = true }
                     )
@@ -106,6 +120,35 @@ struct StreamListView: View {
                                 await feed.reload()
                             }
                         }
+                    )
+                case let .newNote(note):
+                    // A fresh keyboard note (spec 0013): opens straight into the body editor. It is not
+                    // on disk yet - `onCommitEdit` persists it on the first non-empty commit, and
+                    // `onDiscardEmpty` deletes any provisional save and pops the route if the user backs
+                    // out without typing, so no blank note is left behind.
+                    NoteDetailView(
+                        note: note,
+                        resolver: StoreAudioURLResolver(store: store),
+                        controller: playbackController,
+                        onNewThought: { sessionRoute.startNewSession() },
+                        onOpenSettings: { showSettings = true },
+                        onResume: { current in resumeNote = current },
+                        onCommitEdit: { edited in
+                            Task {
+                                _ = try? store.save(edited)
+                                await feed.reload()
+                            }
+                        },
+                        onDiscardEmpty: {
+                            // Never persisted, so nothing to delete; just leave the stack. A guard on
+                            // the top route avoids popping if the user already navigated elsewhere.
+                            Task {
+                                try? store.delete(id: note.id)
+                                await feed.reload()
+                            }
+                            if case .newNote = path.last { path.removeLast() }
+                        },
+                        startInEdit: true
                     )
                 }
             }
@@ -131,7 +174,10 @@ struct StreamListView: View {
                     model: DictationViewModel(
                         store: store,
                         processor: makeTextProcessor(),
-                        recordsAudio: false,
+                        // A note with NO recording captures real audio when the user records into it
+                        // (spec 0013), subject to the transcript-only retention setting; a note that
+                        // already has audio stays text-only append so its original recording is intact.
+                        recordsAudio: !note.hasAudio && settingsStore.audioRetention.recordsAudio,
                         resuming: note
                     )
                 ) { savedNote in

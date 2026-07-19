@@ -393,3 +393,18 @@ and keyed the refresh on that. Generalizes to any `onChange`/`.task(id:)`/cache-
 that watches a summary (a count, a hash of a subset, a "last item id") to decide when to recompute:
 if two distinct states can share the token, the refresh is lossy - drive it off a real version
 counter bumped at the single write point instead.
+
+## When you add a field to a value type, audit every REBUILD site, not just constructors (spec 0013)
+
+`NoteDetailView.currentNote` rebuilds a `Note` from the view's edited fields and hands it to
+`store.save`. When folders (spec 0010) added `Note.folderPath`, that rebuild was never updated, so it
+defaulted `folderPath` to `[]` - and because the store files a note by its `folderPath`, editing ANY
+note that lived in a folder silently RE-FILED it to the root. The feature that added the field had
+green tests and shipped; the regression hid in an unrelated view's rebuild. A fresh `init` with a
+default is fine for NEW values, but a REBUILD/copy of an existing value that omits the new field is a
+silent data-mutation: it doesn't fail to compile and it doesn't fail a test that only checks the
+fields it does set. Two defenses: when adding a field to a shared value type, grep for every site that
+reconstructs it (`TypeName(` with an existing instance in scope, `.init(`, "edited copy" helpers) and
+carry the field through; and prefer a single `editedCopy(changing:)`-style mutator on the type over
+ad-hoc `Note(...)` rebuilds scattered across views, so there is ONE place that must know all the
+fields. Generalizes to any immutable model that is copied-with-changes in more than one place.
