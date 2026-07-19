@@ -99,26 +99,30 @@ struct NoteDetailView: View {
 
     var body: some View {
         ZStack {
+            // A background tap while editing the title resigns its focus, which commits it via the
+            // `titleFocused` observer below (feedback 0014): tapping the empty area around the note now
+            // saves the title just like Done. Gated on `isEditingTitle` so it is inert in the normal
+            // read/body-edit states, and `simultaneous` so it never steals a tap from the note text,
+            // its buttons, or the title field itself (those have their own gestures / begin body edit).
             CanopyColor.bg.ignoresSafeArea()
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        if isEditingTitle { titleFocused = false }
+                    },
+                    isEnabled: isEditingTitle
+                )
 
             ScrollView {
                 VStack(alignment: .leading, spacing: CanopySpacing.x4) {
                     titleHeader
 
-                    HStack(spacing: CanopySpacing.x2) {
-                        Image(systemName: "clock")
-                        // Same live-reference fix as the note card (feedback 0011): without a
-                        // TimelineView this label freezes at render and only looked correct because the
-                        // detail page is rebuilt on each navigation - it would go stale if left open.
-                        TimelineView(.periodic(from: .now, by: 60)) { context in
-                            Text(RelativeTime.label(for: note.createdAt, relativeTo: context.date))
-                        }
-                        Text("-")
-                        // Recording duration for a recorded note, else word count (feedback 0010).
-                        Text(currentNote.metaStatLabel)
-                    }
-                    .font(.system(size: CanopyFont.sizeXs))
-                    .foregroundStyle(CanopyColor.textSubtle)
+                    // The metadata line is shared with the list card via `NoteMetaStats`: the duration
+                    // now uses the SAME timer glyph and tight `x1` spacing as the card instead of a dash
+                    // separator (feedback 0015), so the detail header and the card present it identically.
+                    NoteMetaStats(note: currentNote)
+                        .font(.system(size: CanopyFont.sizeXs))
+                        .foregroundStyle(CanopyColor.textSubtle)
 
                     if playback.canPlay {
                         playButton
@@ -262,6 +266,15 @@ struct NoteDetailView: View {
         // `isUnsavedNewNote` before it acts, so a following back-navigation cannot persist/pop twice.
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase != .active, isUnsavedNewNote { finalizeUnsavedNote() }
+        }
+        // Tapping out of the title field saves it - no Done required (feedback 0014). The title field
+        // loses focus whenever the user taps elsewhere (the background tap below, or into the body,
+        // which resigns the field). Committing on that focus loss makes "tap away" behave exactly like
+        // Done: `commitTitle` reads the LIVE `titleDraft` (never a stale `paragraphs`-derived value), so
+        // in-flight text is never dropped. Guarded on `isEditingTitle` so `commitTitle`'s own
+        // `titleFocused = false` cannot re-enter, and so losing body focus never triggers a title commit.
+        .onChange(of: titleFocused) { _, focused in
+            if !focused, isEditingTitle { commitTitle() }
         }
     }
 

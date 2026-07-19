@@ -439,3 +439,17 @@ A note's text can leave the app: send it to another app or copy it to the clipbo
   `Note.shareableText`: the title on its own line, a blank line, then the body paragraphs joined by
   blank lines. A note with no custom title shares its derived title; a note with no body shares just
   its title. Audio is never shared here - text only.
+
+## Note UX polish, round 3 (feedback 0013-0015)
+
+Small consistency fixes to the note card and detail page, from a round of device use:
+
+- **Tighter timer spacing (0013).** The note card's timer/duration glyph sits as close to its label
+  as the clock glyph does to its relative time, both using the same `CanopySpacing.x1` token.
+- **Tap out to save a title (0014).** Editing a note's title and tapping anywhere outside the field
+  (the background, or into the body) now commits the title and resigns focus, just like the Done
+  button - no Done tap required. The commit reads the live edited text, and title/body editing stay
+  mutually exclusive (tapping into the body commits the title first).
+- **Matching duration on the detail page (0015).** The note detail header shows the recording
+  duration with the same timer glyph and spacing as the list card, not a dash. Both the card and the
+  detail header now render one shared `NoteMetaStats` component, so their metadata line cannot drift.

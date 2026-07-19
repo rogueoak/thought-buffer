@@ -27,24 +27,10 @@ struct NoteCard: View {
                 .multilineTextAlignment(.leading)
 
             HStack(spacing: CanopySpacing.x3) {
-                // Relative time must carry a time dependency or it FREEZES at render (feedback 0011):
-                // SwiftUI has no wall-clock trigger, so a "3 min ago" written just after save stayed
-                // "3 min ago" (which read as the note's own length). A `TimelineView` re-evaluates the
-                // label every minute against a live `context.date`, so the list never goes stale. The
-                // glyph is paired tight (`x1`) with its text instead of the default Label gap.
-                TimelineView(.periodic(from: .now, by: 60)) { context in
-                    HStack(spacing: CanopySpacing.x1) {
-                        Image(systemName: "clock")
-                        Text(RelativeTime.label(for: note.createdAt, relativeTo: context.date))
-                    }
-                }
-                // Duration for a recorded note (timer glyph), word count otherwise (feedback 0010).
-                // Paired with the SAME tight `x1` gap as the clock pair above (feedback 0013) instead
-                // of the looser default `Label` spacing, so the two metadata pairs stay in sync.
-                HStack(spacing: CanopySpacing.x1) {
-                    Image(systemName: note.hasAudio ? "timer" : "text.alignleft")
-                    Text(note.metaStatLabel)
-                }
+                // The clock/time-since-created and timer/duration pairs are shared with the note detail
+                // header via `NoteMetaStats` (feedback 0013 tightens both to `x1`; feedback 0015 gives
+                // the detail duration the same timer glyph) so the card and the detail page can't drift.
+                NoteMetaStats(note: note)
                 // A small play affordance so a note with a recording is discoverable at a glance
                 // (feedback 0005); tapping the card still navigates to the detail view to play.
                 if note.hasAudio {
