@@ -86,6 +86,11 @@ struct SettingsView: View {
                 .foregroundStyle(CanopyColor.text)
                 .onChange(of: controlPhrase) { _, newValue in
                     settings.controlPhrase = newValue
+                    // Aliases are validated against the CURRENT primary word on read, so renaming the
+                    // assistant to a word already in the alias list drops that now-colliding alias in
+                    // the store. Sync the displayed list back so the UI shows what actually persisted
+                    // rather than a stale entry the store already rejected.
+                    aliases = settings.controlPhraseAliases
                 }
         } header: {
             Text("Assistant")

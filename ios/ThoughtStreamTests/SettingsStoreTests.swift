@@ -316,6 +316,19 @@ final class SettingsStoreTests: XCTestCase {
         XCTAssertEqual(store.controlPhraseAliases, ["meera"])
     }
 
+    /// An alias token is capped at `ControlPhrase.maxLength`, mirroring the primary word. Exercised at
+    /// the on/off boundary (max accepted, max+1 rejected) where an off-by-one would live.
+    func testAliasLengthBoundary() {
+        let atMax = String(repeating: "a", count: ControlPhrase.maxLength)
+        let overMax = String(repeating: "a", count: ControlPhrase.maxLength + 1)
+        XCTAssertEqual(ControlPhrase.validatedAlias(atMax), atMax)
+        XCTAssertNil(ControlPhrase.validatedAlias(overMax))
+        // And through the store on read: the over-long alias is dropped, the at-max one kept.
+        let store = UserDefaultsSettingsStore(defaults: defaults)
+        store.controlPhraseAliases = [overMax, atMax]
+        XCTAssertEqual(store.controlPhraseAliases, [atMax])
+    }
+
     func testAliasCountIsCappedOnWrite() {
         let store = UserDefaultsSettingsStore(defaults: defaults)
         let cap = UserDefaultsSettingsStore.maxAliasCount
