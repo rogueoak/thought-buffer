@@ -23,10 +23,20 @@ struct LaunchCoverView: View {
             CanopyColor.bg.ignoresSafeArea()
 
             VStack(spacing: CanopySpacing.x8) {
-                Text("Thought Stream")
-                    .font(.system(size: CanopyFont.sizeX3xl, weight: .bold))
-                    .foregroundStyle(CanopyColor.text)
-                    .multilineTextAlignment(.center)
+                // Title and tagline sit together (feedback 0028): the tagline reads directly under
+                // the wordmark, so they share a tight inner stack while the x8 spacing keeps the
+                // pair clear of the icon below.
+                VStack(spacing: CanopySpacing.x2) {
+                    Text("Thought Stream")
+                        .font(.system(size: CanopyFont.sizeX3xl, weight: .bold))
+                        .foregroundStyle(CanopyColor.text)
+                        .multilineTextAlignment(.center)
+
+                    Text("Capture your thoughts, hands free")
+                        .font(.system(size: CanopyFont.sizeBase))
+                        .foregroundStyle(CanopyColor.textMuted)
+                        .multilineTextAlignment(.center)
+                }
 
                 // Borderless logo that melts into the backdrop (feedback 0019): no clip shape or
                 // outline, and a soft radial mask fades the edges into the launch background so the
