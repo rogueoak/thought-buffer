@@ -899,3 +899,22 @@ user's later edits stand), tested at the pure "first hit" boundary (`ThoughtFind
 view code - the view just seeds the existing find pipeline, which already highlights and scrolls. Generalizes
 to any "resume the state I was in" hand-off into a child screen: pass the state as an apply-once input, let
 the child's existing machinery act on it, and unit-test the pure decision the seed drives.
+
+## Never change an AVAudioSession category/mode blind - it fails on device, not in the Simulator (feedback 0031)
+
+To chase a transcription-quality concern, capture-pipeline feedback 0026 changed the record session from
+`.measurement` to `.spokenAudio` (`setCategory(.record, mode: .spokenAudio, ...)`). `.spokenAudio` is a
+PLAYBACK mode (long-form spoken content) and is NOT valid with the `.record` category; setting an
+incompatible mode makes `setCategory` THROW, which surfaced as the generic engine-failure ("something went
+wrong starting the recorder") on EVERY record tap - recording was completely broken. The "quality fix" never
+even ran, because it threw before capture started. Two compounding traps: (1) the Simulator does not exercise
+the real `AVAudioSession`, so the full suite stayed green and CI could not catch it - this class of change is
+DEVICE-ONLY verifiable; and (2) persona review accepted the confident-but-wrong claim that `.spokenAudio` is
+"Apple's dictation mode". The fix restored `.measurement`, the last known-working value and the mode Apple's
+own Speech-framework dictation samples use with `.record`. Rules: do not swap an audio session category/mode
+(or other AVFoundation/CoreAudio config) on the strength of a plausible-sounding rationale - verify the
+category+mode pair is COMPATIBLE and test the capture start ON HARDWARE before shipping; treat "it compiles
+and the Simulator suite is green" as no evidence at all for audio-session behavior; and when a whole feature
+(record, playback) suddenly fails after a config tweak, suspect that exact tweak first. Sits alongside the
+device-only transcription-quality note: the raw-capture path is hardware-verified end to end, so guard what
+you can in pure code and confirm the rest on a real device.

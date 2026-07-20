@@ -284,13 +284,15 @@ final class SpeechAnalyzerService: SpeechCaptureService {
 
     private func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
-        // `.spokenAudio` is Apple's dictation-tuned input mode: unlike `.measurement` (which DISABLES
-        // the input signal conditioning - automatic gain, noise, and echo processing - that speech
-        // recognition relies on), it keeps that conditioning on and is tuned for continuous speech. The
-        // old `.measurement` mode starved the recognizer of clean input and made transcription noticeably
-        // worse (capture-pipeline feedback 0026). Keep `.duckOthers` so other audio is quieted while
-        // dictating.
-        try session.setCategory(.record, mode: .spokenAudio, options: [.duckOthers])
+        // `.measurement` is Apple's documented mode for speech recognition (it is what the Speech
+        // framework's own dictation samples use with the `.record` category). It is restored here after
+        // `.spokenAudio` (tried in capture-pipeline feedback 0026) broke recording entirely on device:
+        // `.spokenAudio` is a PLAYBACK mode (long-form spoken content, e.g. podcasts) and is NOT valid
+        // for a `.record` input session, so `setCategory` THREW at capture start and surfaced as
+        // `.engineFailure` ("Something went wrong starting the recorder"). The Simulator does not exercise
+        // the real audio session, so it never caught this - device-only. Any future change to this mode
+        // MUST be verified on hardware. Keep `.duckOthers` so other audio is quieted while dictating.
+        try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
         try session.setActive(true, options: .notifyOthersOnDeactivation)
     }
 
