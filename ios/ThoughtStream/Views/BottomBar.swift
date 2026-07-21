@@ -58,10 +58,10 @@ struct BottomBar<Trailing: View>: View {
     private var searchField: some View {
         HStack(spacing: CanopySpacing.x2) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: CanopyFont.sizeSm, weight: .semibold))
+                .font(.system(size: CanopyFont.sizeLg, weight: .semibold))
                 .foregroundStyle(CanopyColor.textSubtle)
             TextField("Search thoughts", text: $query)
-                .font(.system(size: CanopyFont.sizeSm))
+                .font(.system(size: CanopyFont.sizeBase))
                 .foregroundStyle(CanopyColor.text)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -73,7 +73,7 @@ struct BottomBar<Trailing: View>: View {
                     query = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: CanopyFont.sizeSm))
+                        .font(.system(size: CanopyFont.sizeLg))
                         .foregroundStyle(CanopyColor.textSubtle)
                 }
                 .accessibilityLabel("Clear search")
@@ -81,7 +81,7 @@ struct BottomBar<Trailing: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, CanopySpacing.x4)
-        .padding(.vertical, CanopySpacing.x2)
+        .padding(.vertical, CanopySpacing.x3)
         .background(CanopyColor.surface)
         .clipShape(Capsule())
         .overlay(
@@ -129,9 +129,9 @@ struct BottomBarIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: CanopyFont.sizeLg, weight: .semibold))
+                .font(.system(size: CanopyFont.sizeXl, weight: .semibold))
                 .foregroundStyle(CanopyColor.primary)
-                .frame(width: CanopySpacing.x8, height: CanopySpacing.x8)
+                .frame(width: CanopySpacing.x10, height: CanopySpacing.x10)
         }
         .accessibilityLabel(accessibilityLabel)
     }
@@ -148,9 +148,9 @@ struct BottomBarRecordButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "mic.fill")
-                .font(.system(size: CanopyFont.sizeBase, weight: .semibold))
+                .font(.system(size: CanopyFont.sizeLg, weight: .semibold))
                 .foregroundStyle(CanopyColor.primaryForeground)
-                .frame(width: CanopySpacing.x8, height: CanopySpacing.x8)
+                .frame(width: CanopySpacing.x10, height: CanopySpacing.x10)
                 .background(CanopyColor.primary)
                 .clipShape(Circle())
                 .shadow(color: CanopyColor.overlay.opacity(0.25), radius: 8, y: 4)
