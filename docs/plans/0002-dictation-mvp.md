@@ -11,7 +11,7 @@ This is the original MVP build log. Capture has since moved to iOS 26 `SpeechAna
 1. **Model + storage**
    - `Models/Note.swift`: add Markdown (de)serialization (`markdown`, `init(markdown:filename:)`),
      `bodyMarkdown`, title derivation, `updatedAt`/extensibility notes. Keep value type.
-   - `Storage/NoteStore.swift`: `Documents/ThoughtStream/` dir; `save`, `loadAll` (newest first),
+   - `Storage/NoteStore.swift`: `Documents/ThoughtBuffer/` dir; `save`, `loadAll` (newest first),
      `delete`. Atomic writes, tolerant parse.
 
 2. **Speech**
@@ -30,10 +30,10 @@ This is the original MVP build log. Capture has since moved to iOS 26 `SpeechAna
    - `App`: keep screenshot launch arg (mock preview mode ok).
 
 5. **Config**
-   - `project.yml`: usage strings; add test target `ThoughtStreamTests`.
+   - `project.yml`: usage strings; add test target `ThoughtBufferTests`.
 
 6. **Tests**
-   - `ThoughtStreamTests/NoteStoreTests.swift`, `NoteMarkdownTests.swift`.
+   - `ThoughtBufferTests/NoteStoreTests.swift`, `NoteMarkdownTests.swift`.
 
 7. **Build + verify**
    - `xcodegen generate`; build iPhone 17; iterate to BUILD SUCCEEDED. Launch, screenshot.

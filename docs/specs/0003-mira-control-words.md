@@ -3,7 +3,7 @@
 ## Problem
 
 Dictation (spec 0002) turns speech into a saved note, but editing still means touching the
-screen. The whole point of Thought Stream is hands-free capture: you should be able to fix a
+screen. The whole point of Thought Buffer is hands-free capture: you should be able to fix a
 stray sentence, start a fresh note, or hear what you just said without stopping to tap. This
 milestone adds voice editing. Mid-dictation you say a control word ("Mira") and a command, and
 the app acts on it instead of writing it into your note.

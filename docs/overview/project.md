@@ -2,8 +2,8 @@
 
 ## Mission
 
-Thought Stream is a hands-free, on-device dictation thoughts app for iPhone, iPad, Apple Watch, and
-CarPlay. You start a stream, talk, pause to think, and edit by voice with a control word (default
+Thought Buffer is a hands-free, on-device dictation thoughts app for iPhone, iPad, Apple Watch, and
+CarPlay. You start a thought, talk, pause to think, and edit by voice with a control word (default
 "Mira"), so you never have to touch the screen. Speech-to-text runs entirely on device; thoughts are
 Markdown files you own. On the watch you capture a thought from the wrist and it syncs to the phone,
 which transcribes and files it. See the README for the full product story.

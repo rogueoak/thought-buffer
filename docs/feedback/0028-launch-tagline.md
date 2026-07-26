@@ -7,7 +7,7 @@ A small user-feedback polish to the animated launch cover (spec 0012).
 > On the loading screen, we need a tagline under the title. Maybe "capture your thoughts, hands
 > free".
 
-The launch cover showed the "Thought Stream" wordmark, the fading icon, and the waveform, but
+The launch cover showed the "Thought Buffer" wordmark, the fading icon, and the waveform, but
 nothing told a first-time viewer what the app is for in that branded moment.
 
 ## Root cause

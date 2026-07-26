@@ -1,12 +1,12 @@
 # CarPlay Audio entitlement request
 
 A concise, honest justification for requesting the CarPlay **Audio** category entitlement
-(`com.apple.developer.carplay-audio`) for Thought Stream, plus the exact steps to enable it once
+(`com.apple.developer.carplay-audio`) for Thought Buffer, plus the exact steps to enable it once
 Apple grants it.
 
-## What Thought Stream is
+## What Thought Buffer is
 
-Thought Stream is an on-device voice-notes app. You dictate a thought; it transcribes it on device
+Thought Buffer is an on-device voice-notes app. You dictate a thought; it transcribes it on device
 and, alongside the transcript, keeps the actual voice as a compressed `.m4a` recording per note
 (spec 0007). A saved note can be played back in your own voice. Nothing is sent off the device -
 recognition is on-device (`requiresOnDeviceRecognition`), notes are Markdown files stored locally or
@@ -16,7 +16,7 @@ account.
 ## Why the Audio category fits
 
 Apple grants the CarPlay entitlement only for specific app categories: audio, communication,
-navigation, EV charging, parking, fueling, and a few more. Thought Stream is genuinely an **audio**
+navigation, EV charging, parking, fueling, and a few more. Thought Buffer is genuinely an **audio**
 app for the CarPlay surface:
 
 - It has a real library of audio recordings (the user's voice notes) with durations and titles.
@@ -54,9 +54,9 @@ None of the above needs Apple's approval; it improves the phone app and proves t
 
 When the CarPlay Audio entitlement is granted for the app's App ID:
 
-1. **Add the entitlement.** In `ios/project.yml`, under the `ThoughtStream` target's
+1. **Add the entitlement.** In `ios/project.yml`, under the `ThoughtBuffer` target's
    `entitlements.properties`, add `com.apple.developer.carplay-audio: true`. XcodeGen writes it into
-   `ThoughtStream/ThoughtStream.entitlements`.
+   `ThoughtBuffer/ThoughtBuffer.entitlements`.
 2. **Set a signing team.** The CarPlay entitlement is validated at sign time, so a real
    `DEVELOPMENT_TEAM` and code signing are required for device / App Store builds. Keep a Simulator
    config that leaves signing disabled so the unsigned Simulator build stays green (the CarPlay scene
@@ -68,8 +68,8 @@ When the CarPlay Audio entitlement is granted for the app's App ID:
    already implemented - no change.
 6. **Verify** on a CarPlay head unit or the CarPlay Simulator (Xcode > Simulator > I/O > External
    Displays > CarPlay): the recordings browser lists notes with audio, tapping one plays it and
-   shows Now Playing with working transport, and the "Start a thought stream" row still begins a
+   shows Now Playing with working transport, and the "Start a thought" row still begins a
    hands-free dictation session on the phone.
 
-Until then, Siri (spec 0005: `StartThoughtStreamIntent` / `NewNoteIntent`, which work through
+Until then, Siri (spec 0005: `StartThoughtBufferIntent` / `NewNoteIntent`, which work through
 CarPlay's Siri button without any CarPlay entitlement) is the shippable hands-free-in-car path.

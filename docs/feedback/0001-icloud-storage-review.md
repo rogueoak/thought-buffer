@@ -19,7 +19,7 @@ Two majors and several minors surfaced in review of the first cut:
 - **Stale closure on a lifetime observer (engineer).** `onChange` was set but never cleared, so
   the app-lifetime observer kept a closure capturing a gone view.
 - **Two same-typed initializers with different semantics (architect).** `ICloudNoteStore` had
-  `init(containerDocumentsURL:)` (appends `ThoughtStream/`) and `init(directory:)` (exact dir),
+  `init(containerDocumentsURL:)` (appends `ThoughtBuffer/`) and `init(directory:)` (exact dir),
   both taking a `URL` - a mislabel footgun at the call site.
 
 ## Root cause

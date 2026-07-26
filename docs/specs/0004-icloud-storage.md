@@ -2,7 +2,7 @@
 
 ## Problem
 
-Notes today are Markdown files under the app's local `Documents/ThoughtStream/`. They live on
+Notes today are Markdown files under the app's local `Documents/ThoughtBuffer/`. They live on
 one device and are invisible outside the app. The product promise is that notes are "markdown
 files stored in an iCloud folder, automatically synced" - visible in the Files app and mirrored
 across a user's devices. This milestone moves storage into the user's iCloud Drive when iCloud
@@ -16,12 +16,12 @@ across devices and show up in Files, without losing the app's offline-first beha
 Observable behavior when done:
 
 - When the app can resolve its iCloud ubiquity container (signed in, container provisioned),
-  notes are read and written as `.md` files in the container's `Documents/ThoughtStream/`
-  folder. That folder is user-visible in the Files app as "Thought Stream".
+  notes are read and written as `.md` files in the container's `Documents/ThoughtBuffer/`
+  folder. That folder is user-visible in the Files app as "Thought Buffer".
 - Notes written on one device sync to the user's other devices; the Stream list refreshes when
   an external edit or a synced-in file changes, without a manual reload.
 - When iCloud is unavailable (not signed in, no provisioning, or the Simulator with no account),
-  the app behaves exactly as today: notes read and write under local `Documents/ThoughtStream/`.
+  the app behaves exactly as today: notes read and write under local `Documents/ThoughtBuffer/`.
 - Which backend is in use is observable by the composition root, so a later Settings status can
   surface "syncing via iCloud" vs "on this device".
 - The simulator build stays green unsigned, with no development team set.
@@ -33,7 +33,7 @@ In:
   ubiquity container URL off the main actor. A real provider backed by `FileManager`, plus a
   test double.
 - An `iCloudNoteStore` conforming to `NoteStoring`, doing all reads/writes through
-  `NSFileCoordinator` (coordinated IO) against the container's `Documents/ThoughtStream/`.
+  `NSFileCoordinator` (coordinated IO) against the container's `Documents/ThoughtBuffer/`.
 - A live-update boundary (`UbiquitousNoteObserving`) backed by `NSMetadataQuery`
   (`NSMetadataQueryUbiquitousDocumentsScope`) that enumerates iCloud note files, triggers
   downloads for not-yet-local items, and notifies on change. A test stub for unit tests.
@@ -75,7 +75,7 @@ Key decisions and trade-offs:
   signing is disabled (`CODE_SIGNING_ALLOWED=NO`) so they are not validated. `DEVELOPMENT_TEAM`
   stays empty. At runtime in the Simulator the container resolves to nil and the app falls back
   to local - the app always runs. On a device, the developer sets their Team and the capability
-  auto-provisions `iCloud.com.rogueoak.thoughtstream`.
+  auto-provisions `iCloud.com.rogueoak.thoughtbuffer`.
 
 ## Acceptance
 
@@ -87,8 +87,8 @@ Key decisions and trade-offs:
       and change notifications (test).
 - [ ] Fallback correctness: with no container, behavior matches the local store (test).
 - [ ] `ios/project.yml` declares the iCloud entitlement (iCloud Documents, container
-      `iCloud.com.rogueoak.thoughtstream`) and `NSUbiquitousContainers` Info.plist with display
-      name "Thought Stream", public document scope, Documents supported scope.
+      `iCloud.com.rogueoak.thoughtbuffer`) and `NSUbiquitousContainers` Info.plist with display
+      name "Thought Buffer", public document scope, Documents supported scope.
 - [ ] `xcodegen generate` then build for `platform=iOS Simulator,name=iPhone 17` succeeds
       **unsigned, no team** -> `** BUILD SUCCEEDED **`.
 - [ ] App launches in the Simulator, uses local storage (no iCloud), existing dictation/list

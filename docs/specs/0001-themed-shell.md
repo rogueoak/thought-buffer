@@ -2,7 +2,7 @@
 
 ## Problem
 
-Thought Stream has no running app yet, only a README and design assets. Before wiring
+Thought Buffer has no running app yet, only a README and design assets. Before wiring
 on-device speech, CarPlay, or persistence, the team needs a buildable visual shell: a SwiftUI
 app that runs in the simulator, wears the River Mist design tokens and the app icon, and shows
 the notes-feed UI with mock data. This gives every later milestone a real surface to build on
@@ -38,8 +38,8 @@ Out:
 ## Approach
 
 - XcodeGen keeps the project file out of git so it never drifts or conflicts; contributors run
-  `xcodegen generate`. `project.yml` pins bundle id `com.rogueoak.thoughtstream`, display name
-  "Thought Stream", `IPHONEOS_DEPLOYMENT_TARGET: 17.0`, `SWIFT_VERSION: 5.0`, iPhone-only.
+  `xcodegen generate`. `project.yml` pins bundle id `com.rogueoak.thoughtbuffer`, display name
+  "Thought Buffer", `IPHONEOS_DEPLOYMENT_TARGET: 17.0`, `SWIFT_VERSION: 5.0`, iPhone-only.
 - Tokens are vendored, not fetched at build time: copy Canopy's generated `Tokens.swift` under
   `DesignSystem/`, keep its generated header, note it is vendored and how to regenerate. All
   views read `CanopyColor` / `CanopySpacing` / `CanopyRadius` - no hardcoded hex.
@@ -50,8 +50,8 @@ Out:
 
 ## Acceptance
 
-- [ ] `cd ios && xcodegen generate` produces `ThoughtStream.xcodeproj` (gitignored).
-- [ ] `xcodebuild ... -scheme ThoughtStream -destination 'platform=iOS Simulator,name=iPhone 17' build` succeeds.
+- [ ] `cd ios && xcodegen generate` produces `ThoughtBuffer.xcodeproj` (gitignored).
+- [ ] `xcodebuild ... -scheme ThoughtBuffer -destination 'platform=iOS Simulator,name=iPhone 17' build` succeeds.
 - [ ] App installs and launches in the iPhone 17 simulator; icon shows on the home screen.
 - [ ] Stream list, note detail, and dictation screens render themed with River Mist tokens.
 - [ ] `design/screenshots/stream-light.png`, `stream-dark.png`, `dictation.png` committed.

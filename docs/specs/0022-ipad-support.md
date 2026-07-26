@@ -6,7 +6,7 @@ Device feedback from Matthew (2026-07-19):
 
 > The app should work on iPad.
 
-Make Thought Stream a first-class iPad app, not a stretched iPhone app.
+Make Thought Buffer a first-class iPad app, not a stretched iPhone app.
 
 ## Depends on
 

@@ -12,28 +12,28 @@ this; it is purely a signing/capability matter.
 
 ## To re-enable on a paid Apple Developer account
 
-1. In `ios/project.yml`, under the `ThoughtStream` target, restore the entitlements block (it sits
+1. In `ios/project.yml`, under the `ThoughtBuffer` target, restore the entitlements block (it sits
    right after `sources:`):
 
    ```yaml
    entitlements:
-     path: ThoughtStream/ThoughtStream.entitlements
+     path: ThoughtBuffer/ThoughtBuffer.entitlements
      properties:
        com.apple.developer.icloud-container-identifiers:
-         - iCloud.com.rogueoak.thoughtstream
+         - iCloud.com.rogueoak.thoughtbuffer
        com.apple.developer.icloud-services:
          - CloudDocuments
        com.apple.developer.ubiquity-container-identifiers:
-         - iCloud.com.rogueoak.thoughtstream
+         - iCloud.com.rogueoak.thoughtbuffer
    ```
 
 2. In the same target's `info.properties`, restore the Files-app visibility entry:
 
    ```yaml
    NSUbiquitousContainers:
-     iCloud.com.rogueoak.thoughtstream:
+     iCloud.com.rogueoak.thoughtbuffer:
        NSUbiquitousContainerIsDocumentScopePublic: true
-       NSUbiquitousContainerName: Thought Stream
+       NSUbiquitousContainerName: Thought Buffer
        NSUbiquitousContainerSupportedFolderLevels: One
    ```
 
@@ -41,7 +41,7 @@ this; it is purely a signing/capability matter.
    `cd ios && xcodegen generate`.
 
 4. On the device, sign into iCloud. The app will resolve the ubiquity container and use
-   `ICloudNoteStore`; notes appear in the Files app under "Thought Stream" and sync across devices.
+   `ICloudNoteStore`; notes appear in the Files app under "Thought Buffer" and sync across devices.
 
 The Simulator build stays green either way (code signing is disabled for the simulator SDK, and the
 runtime falls back to local when no container resolves).

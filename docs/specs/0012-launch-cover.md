@@ -40,7 +40,7 @@ per-launch configurability. No storage, capture, or navigation change.
   (`.animation`) or a repeating `withAnimation` timer, each bar's height a phase-shifted sine so the
   row looks like speech, using `CanopyColor.primary`. Pure visual; no mic, no audio, no dependencies.
   A `reduceMotion` environment check swaps the animation for a static row.
-- **Gate in `ThoughtStreamApp`.** Add a `@State showLaunchCover = true` shown as an overlay/`ZStack`
+- **Gate in `ThoughtBufferApp`.** Add a `@State showLaunchCover = true` shown as an overlay/`ZStack`
   on top of `content` for normal launches only (skipped when `-uiScreen` is present). A `.task`
   waits `max(minimum hold, until dependencies resolve)` then sets it false inside a
   `withAnimation(.easeOut)` so it cross-fades out; a tap on the cover sets it false early. The cover

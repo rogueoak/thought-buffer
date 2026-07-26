@@ -15,8 +15,8 @@ Two visual issues on the animated launch cover (spec 0012):
 
 ## Fix
 
-Visual-only changes in `ios/ThoughtStream/Views/LaunchCoverView.swift`. The animation math and
-direction, bar count, heights, and the "Thought Stream" title (feedback 0018) are unchanged.
+Visual-only changes in `ios/ThoughtBuffer/Views/LaunchCoverView.swift`. The animation math and
+direction, bar count, heights, and the "Thought Buffer" title (feedback 0018) are unchanged.
 
 1. **Thinner bars.** Narrowed the bar width from `CanopySpacing.x2` (8pt) to `CanopySpacing.x1`
    (4pt) and tightened the gap from `x2` (8pt) to a named `barSpacing` of `x1_5` (6pt), so the
