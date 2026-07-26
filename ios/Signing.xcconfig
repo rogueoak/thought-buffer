@@ -1,4 +1,4 @@
-// Signing configuration for Thought Stream.
+// Signing configuration for Thought Buffer.
 //
 // Simulator builds need no team: code signing is disabled for the simulator SDK, so the
 // unsigned Simulator build and the test suite stay green with no Apple Developer account.

@@ -71,14 +71,14 @@ working offline-first when iCloud is not available.
 
 - **iCloud when available** - at launch the app resolves its iCloud Drive ubiquity container. When
   it resolves (signed in, provisioned), thoughts read and write as `<id>.md` files in the container's
-  `Documents/ThoughtStream/` folder, which shows up in the Files app as "Thought Stream" and syncs
+  `Documents/ThoughtBuffer/` folder, which shows up in the Files app as "Thought Buffer" and syncs
   across the user's devices.
 - **Coordinated IO** - every read, write, and delete goes through `NSFileCoordinator` so the app
   never races the iCloud sync daemon on the same file.
 - **Live refresh** - an `NSMetadataQuery` watches the folder, triggers downloads for thoughts synced
   in from other devices, and refreshes the Stream list on external edits without a manual reload.
 - **Graceful fallback** - when iCloud is unavailable (not signed in, no provisioning, or the
-  Simulator with no account), the app falls back to local `Documents/ThoughtStream/` and behaves
+  Simulator with no account), the app falls back to local `Documents/ThoughtBuffer/` and behaves
   exactly as before. The choice is made once and is observable, so a later Settings status can show
   where thoughts live. Both backends share `Thought`'s Markdown format, so switching never loses thoughts.
 
@@ -91,24 +91,24 @@ of pre-existing local thoughts into iCloud are still out.
 Start a dictation session without touching the phone - the reason the product exists for people
 whose hands are busy driving.
 
-- **Siri (shippable).** "Hey Siri, start a stream in Thought Stream" (and friendly variants -
-  "start dictating", "new thought", "new thought in Thought Stream") launches the app straight into a
+- **Siri (shippable).** "Hey Siri, start a thought in Thought Buffer" (and friendly variants -
+  "start dictating", "new thought", "add a thought in Thought Buffer") launches the app straight into a
   fresh dictation session with capture starting. Siri works through the phone and through CarPlay's
-  Siri button, so this is the real hands-free-in-car path today. Backed by `StartThoughtStreamIntent`
+  Siri button, so this is the real hands-free-in-car path today. Backed by `StartThoughtBufferIntent`
   / `NewThoughtIntent` (`AppIntent`, `openAppWhenRun`) and an `AppShortcutsProvider` that registers the
   phrases on install.
 - **One shared session start.** The Record button, the Siri intent, and CarPlay all request a start
   through one seam (`SessionStarter` / `PendingSessionRoute` on the composition root), so every entry
   point opens the same fresh `DictationView` and begins capture identically.
 - **CarPlay (scaffolded, gated).** A `CPTemplateApplicationSceneDelegate` presents a list template
-  with a "Start a thought stream" row that calls the same starter. It is wired via the CarPlay scene
+  with a "Start a thought" row that calls the same starter. It is wired via the CarPlay scene
   role in the scene manifest but is DORMANT: Apple grants the CarPlay entitlement only for specific
   app categories (audio, navigation, communication, EV, parking, ...), and a dictation / thoughts app is
   not one of them, so no CarPlay entitlement is declared. Without it the system never creates the
   scene, so the default unsigned build and the App Store build are unaffected. Activating CarPlay
   needs Apple's entitlement plus a CarPlay head unit or the CarPlay simulator - pending approval.
 
-Parameterized intents ("start a stream about X"), a fully in-CarPlay live-capture UI, and Shortcuts
+Parameterized intents ("start a thought about X"), a fully in-CarPlay live-capture UI, and Shortcuts
 actions beyond start / new thought are still out.
 
 ## Settings (spec 0006)
@@ -180,7 +180,7 @@ Apple's CarPlay **Audio** entitlement.
 
 - **CarPlay recordings browser + Now Playing.** The CarPlay root is a `CPListTemplate` listing thoughts
   that HAVE a recording (title, relative date, duration), newest first, driven by the headless
-  `ThoughtStoreDriver` through a `RecordingsListModel`. A top "Start a thought stream" row still begins
+  `ThoughtStoreDriver` through a `RecordingsListModel`. A top "Start a thought" row still begins
   a hands-free session through the shared `SessionStarter`. Tapping a recording plays its `.m4a` and
   pushes `CPNowPlayingTemplate` with working play / pause and skip (+/-15s over the thought). The list
   refreshes live when a session saves or a thought syncs in.
@@ -325,7 +325,7 @@ Thoughts get a real, editable title instead of an always-derived one.
 A branded launch moment: on a normal cold launch the app shows a full-screen cover on the River Mist
 background before the Thoughts list.
 
-- **Title over icon over a waveform.** A prominent "Thought Stream" wordmark (Canopy `sizeX3xl`,
+- **Title over icon over a waveform.** A prominent "Thought Buffer" wordmark (Canopy `sizeX3xl`,
   bold) sits above the app icon, centered, with a tagline directly beneath it - "Capture your
   thoughts, hands free" (Canopy `sizeBase`, `textMuted`), in a tight inner stack so it reads as a
   subtitle under the title (feedback 0028). Below the pair is a row of eight thin equalizer bars in
@@ -355,7 +355,7 @@ navigation changes.
 
 The flat, newest-first Thoughts stream becomes a browsable tree with a chosen sort order. Folders are
 real directories on disk (visible in Files / iCloud Drive), not tags - a thought in a folder lives at
-`Documents/ThoughtStream/<folder>/.../<id>.md` with its `<id>.m4a` beside it.
+`Documents/ThoughtBuffer/<folder>/.../<id>.md` with its `<id>.m4a` beside it.
 
 - **Nested folders.** Create a folder from the Thoughts toolbar (the folder-plus button); open it to
   see its thoughts and subfolders; create a folder inside a folder. The Thoughts screen is a navigation
@@ -637,7 +637,7 @@ by their whole text, not just the title.
 
 ## iPad support - adaptive split view (spec 0022)
 
-Thought Stream is a first-class iPad app, not a stretched iPhone app: on a wide canvas it presents a
+Thought Buffer is a first-class iPad app, not a stretched iPhone app: on a wide canvas it presents a
 multi-column layout, and on iPhone it is unchanged.
 
 - **Adaptive navigation.** On REGULAR width (iPad, and iPhone landscape where it fits) the Thoughts root
@@ -662,7 +662,7 @@ multi-column layout, and on iPhone it is unchanged.
 
 ## Apple Watch quick-capture and browse (spec 0023)
 
-Thought Stream reaches the wrist: record a voice thought from the watch, and browse recent thoughts on
+Thought Buffer reaches the wrist: record a voice thought from the watch, and browse recent thoughts on
 it. The watch does NOT transcribe - it captures audio and syncs it to the phone, which transcribes and
 files it as a normal thought. This is a paired watchOS app, embedded in and a companion of the iPhone
 app.

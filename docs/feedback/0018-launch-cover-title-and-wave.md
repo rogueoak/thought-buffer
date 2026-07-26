@@ -2,7 +2,7 @@
 
 - **Source:** Device feedback from Matthew (2026-07-19).
 - **Observation:** "The loading screen is super cool but the audio wave is backwards. Can you
-  add title text of 'Thought Stream' above the logo and reverse the direction of the wave."
+  add title text of 'Thought Buffer' above the logo and reverse the direction of the wave."
 
 ## Symptom
 
@@ -21,9 +21,9 @@ Two issues on the animated launch cover (spec 0012):
 
 ## Fix
 
-1. Added a prominent "Thought Stream" title (Canopy `sizeX3xl` / `.bold`, `CanopyColor.text`)
+1. Added a prominent "Thought Buffer" title (Canopy `sizeX3xl` / `.bold`, `CanopyColor.text`)
    above the icon in the shared `body` VStack, so it renders in both the animated and Reduce
-   Motion variants. Moved the "Thought Stream" accessibility label off the icon (now
+   Motion variants. Moved the "Thought Buffer" accessibility label off the icon (now
    `accessibilityHidden`) since the visible title now announces the brand to VoiceOver.
 2. Reversed the traveling-wave direction in the pure height function by flipping the per-bar
    index used for the phase term: `let index = Double(count - 1 - bar)`. The function stays pure
@@ -32,7 +32,7 @@ Two issues on the animated launch cover (spec 0012):
 
 ## Acceptance
 
-- The launch cover shows "Thought Stream" centered above the icon, in both the animated and
+- The launch cover shows "Thought Buffer" centered above the icon, in both the animated and
   Reduce Motion variants.
 - The equalizer wave travels in the reversed direction (device-verifiable).
 - `LaunchCoverViewTests.testWaveTravelsInReversedDirection` locks the reversed direction: it

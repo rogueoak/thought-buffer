@@ -3,15 +3,15 @@
 ## Problem
 
 Ideas arrive when your hands are busy - driving above all. Today the only way to start a
-Thought Stream is to open the app and tap Record. In the car that is exactly the friction the
+Thought Buffer is to open the app and tap Record. In the car that is exactly the friction the
 product exists to remove. The user needs to begin dictating without touching the phone.
 
 Two hands-free entry points are in scope:
 
-- **Siri (primary, shippable).** "Hey Siri, start a Thought Stream" begins a new dictation
+- **Siri (primary, shippable).** "Hey Siri, start a Thought Buffer" begins a new dictation
   session. Siri works in the car through the phone and through CarPlay's Siri button, so this is
   the real, distributable hands-free-in-car capability.
-- **CarPlay (scaffold, gated).** A CarPlay screen with a "Start a thought stream" action.
+- **CarPlay (scaffold, gated).** A CarPlay screen with a "Start a thought" action.
 
 ## The CarPlay entitlement constraint (read first)
 
@@ -31,7 +31,7 @@ Therefore CarPlay here is built but gated:
 
 ## Outcome
 
-- Say "Hey Siri, start a stream in Thought Stream" (or friendly variants) and the app launches
+- Say "Hey Siri, start a stream in Thought Buffer" (or friendly variants) and the app launches
   straight into a new dictation session with capture starting - no tap.
 - The App Shortcut is registered on install so the phrases appear in the Shortcuts app and Siri.
 - A single headless "start a new dictation session" entry point is shared by the UI Record
@@ -47,12 +47,12 @@ In:
 - A shared session-start seam in the composition root: a `SessionStarter` protocol plus a
   pending-route mechanism the app consumes on launch/foreground to open `DictationView` and begin
   capture.
-- `StartThoughtStreamIntent` (`AppIntent`, `openAppWhenRun = true`) that requests the pending
+- `StartThoughtBufferIntent` (`AppIntent`, `openAppWhenRun = true`) that requests the pending
   route, and an `AppShortcutsProvider` with natural phrases that include the app name.
 - A second cheap intent, `NewNoteIntent`, sharing the same starter (phrases "New note in
   ${applicationName}" etc.).
 - A `CPTemplateApplicationSceneDelegate` presenting a minimal template (a `CPListTemplate` with a
-  "Start a thought stream" row) that calls the shared starter, wired via the CarPlay scene role in
+  "Start a thought" row) that calls the shared starter, wired via the CarPlay scene role in
   `UIApplicationSceneManifest`.
 - Unit tests for the App Intent (via a stubbed starter), the shared route/starter, and the
   shortcut phrases.
@@ -91,15 +91,15 @@ request that launched the app from being dropped, `AppDependencies.sessionStarte
 root's presentation is a pure function of `startRequested` (`PendingSessionRoute.shouldPresent`, unit
 tested), so the session opens the moment the Stream list appears.
 
-**App Intents (iOS 17+).** `StartThoughtStreamIntent` sets `openAppWhenRun = true` and, in
+**App Intents (iOS 17+).** `StartThoughtBufferIntent` sets `openAppWhenRun = true` and, in
 `perform()`, calls the shared starter to request the route, then returns. iOS foregrounds the app;
 the root observes the pending route and opens dictation. `AppShortcutsProvider` lists phrases for
 both intents, each including `\(.applicationName)` per Apple's requirement, with friendly variants
 ("Start a stream in ${app}", "New thought in ${app}", "Start dictating in ${app}", "New note in
 ${app}").
 
-**CarPlay scene.** `ThoughtStreamCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate`
-sets a `CPListTemplate` with one row, "Start a thought stream", whose handler calls the shared
+**CarPlay scene.** `ThoughtBufferCarPlaySceneDelegate: UIResponder, CPTemplateApplicationSceneDelegate`
+sets a `CPListTemplate` with one row, "Start a thought", whose handler calls the shared
 starter. It is registered as an additional scene configuration under `UIApplicationSceneManifest`
 with the `CPTemplateApplicationSceneSessionRoleApplication` role. Without the CarPlay entitlement
 the system never creates this scene, so it is inert in the shipping build; the phone `WindowGroup`
@@ -122,7 +122,7 @@ phone and the single phone scene is the only one that activates without the enti
 - [ ] `cd ios && xcodegen generate` succeeds; build for `platform=iOS Simulator,name=iPhone 17`
       prints `** BUILD SUCCEEDED **` unsigned, no team, no CarPlay entitlement.
 - [ ] The app still launches to the Stream list and the Record button still opens dictation.
-- [ ] `StartThoughtStreamIntent.perform()` requests a session start through the shared starter;
+- [ ] `StartThoughtBufferIntent.perform()` requests a session start through the shared starter;
       proven with a stub starter in a unit test (no UI).
 - [ ] The shared route, when consumed, drives the same fresh-session open as the Record button.
 - [ ] `AppShortcutsProvider` exposes start + new-note phrases, each referencing the app name;

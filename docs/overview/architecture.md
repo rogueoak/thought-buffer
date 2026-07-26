@@ -13,15 +13,15 @@ How the system is built and why.
   supports all orientations; iPhone stays portrait-only (`UISupportedInterfaceOrientations~ipad`).
 - **XcodeGen.** The project is generated from `ios/project.yml`; the `.xcodeproj` is gitignored
   so it never drifts or conflicts. Contributors run `xcodegen generate`. See README.
-- **Bundle id** `com.rogueoak.thoughtstream`, display name "Thought Stream", publisher Rogue Oak.
-- **Paired watchOS app (spec 0023).** A `ThoughtStreamWatch` watchOS app target (deployment target 26.0),
-  companion bundle id `com.rogueoak.thoughtstream.watchkitapp`, embedded in the iOS app. It quick-captures
+- **Bundle id** `com.rogueoak.thoughtbuffer`, display name "Thought Buffer", publisher Rogue Oak.
+- **Paired watchOS app (spec 0023).** A `ThoughtBufferWatch` watchOS app target (deployment target 26.0),
+  companion bundle id `com.rogueoak.thoughtbuffer.watchkitapp`, embedded in the iOS app. It quick-captures
   audio on the wrist and syncs it to the phone (which transcribes and files it) and browses recent thoughts.
   See "Shared source and the watch target" below.
 
-## Source layout (`ios/ThoughtStream/`)
+## Source layout (`ios/ThoughtBuffer/`)
 
-- `App/` - `ThoughtStreamApp` entry point. Roots to `StreamListView`; a `-uiScreen dictation`
+- `App/` - `ThoughtBufferApp` entry point. Roots to `StreamListView`; a `-uiScreen dictation`
   launch argument roots to `DictationView` and a `-uiScreen settings` argument roots to a seeded
   `SettingsView`, both used only for screenshot tooling. On normal (non-`-uiScreen`) launches the
   root wraps `content` in a `ZStack` and overlays `LaunchCoverView` (spec 0012), gated by
@@ -45,9 +45,9 @@ How the system is built and why.
     is nil) is handled by `ColdStartSessionStarter`, which records the request on a process-wide
     `PendingSessionRoute.pendingColdStart` latch that the route adopts the moment it is created, so
     the request that launched the app is never dropped.
-  - `ThoughtStreamIntents.swift` - `StartThoughtStreamIntent` and `NewThoughtIntent` (`AppIntent`,
+  - `ThoughtBufferIntents.swift` - `StartThoughtBufferIntent` and `NewThoughtIntent` (`AppIntent`,
     `openAppWhenRun`) call the starter (injected `SessionStarter`, defaulting to the live route), so
-    they are unit-testable with a stub and never touch the UI. `ThoughtStreamShortcuts`
+    they are unit-testable with a stub and never touch the UI. `ThoughtBufferShortcuts`
     (`AppShortcutsProvider`) registers the spoken phrases, each including `\(.applicationName)` per
     Apple's rule. This is the shippable hands-free-in-car path (Siri works in CarPlay without the
     CarPlay entitlement).
@@ -111,10 +111,10 @@ How the system is built and why.
   and no body calls `onDiscardEmpty` (delete any provisional save, pop the route) so no blank thought is
   persisted.
 - `Storage/` - two `ThoughtStoring` backends behind one seam, chosen at startup:
-  - `ThoughtStore` persists each thought as `Documents/ThoughtStream/<id>.md` (YAML frontmatter + body).
+  - `ThoughtStore` persists each thought as `Documents/ThoughtBuffer/<id>.md` (YAML frontmatter + body).
     Thin and cache-free: the files are the source of truth. `loadAll` returns thoughts newest first.
   - `ICloudThoughtStore` writes the same `<id>.md` files (shared `Thought` serialization) into the app's
-    iCloud Drive ubiquity container `Documents/ThoughtStream/`, wrapping every read/write/delete in
+    iCloud Drive ubiquity container `Documents/ThoughtBuffer/`, wrapping every read/write/delete in
     `NSFileCoordinator` so it never races the sync daemon. Selected only when iCloud resolves.
   - Both stores manage the thought's SIBLING audio recording (spec 0007): `audioURL(for:)` locates
     `<id>.m4a` beside `<id>.md`, `saveAudio(from:for:)` moves a captured temp recording into that
@@ -168,9 +168,9 @@ How the system is built and why.
     edits / other-device syncs. Its pure mapping (`UbiquitousThoughtMapping`) is unit-tested with
     stub items; the container provider and observer are protocols so selection and mapping are
     provable with no real iCloud.
-  - The iCloud entitlement (iCloud Documents, container `iCloud.com.rogueoak.thoughtstream`) and
+  - The iCloud entitlement (iCloud Documents, container `iCloud.com.rogueoak.thoughtbuffer`) and
     the user-visible `NSUbiquitousContainers` Info.plist are declared in `ios/project.yml`;
-    XcodeGen writes `ThoughtStream/ThoughtStream.entitlements` and `ThoughtStream/Info.plist`
+    XcodeGen writes `ThoughtBuffer/ThoughtBuffer.entitlements` and `ThoughtBuffer/Info.plist`
     (both committed). The Simulator config disables code signing so the unsigned, teamless build
     stays green.
 - `Speech/` - `SpeechAnalyzerService` owns the `AVAudioEngine` and the iOS 26 `SpeechAnalyzer` +
@@ -611,7 +611,7 @@ How the system is built and why.
   stays PRISTINE-generated except for ONE loud two-line marker (spec 0023): its `Color(light:dark:)` /
   `Color(rgb:)` extension is wrapped `#if !os(watchOS)`, because that extension uses
   `UIColor(dynamicProvider:)` which is `API_UNAVAILABLE(watchos)`. The actual watch implementation lives in
-  a HAND-OWNED `ThoughtStreamShared/CanopyColorWatch.swift` (`#if os(watchOS)`, resolves each color to its
+  a HAND-OWNED `ThoughtBufferShared/CanopyColorWatch.swift` (`#if os(watchOS)`, resolves each color to its
   dark value), so a Canopy re-sync that overwrites `Tokens.swift` only needs the two-line wrapper re-added
   (the file header says so), not a logic port. The generated `CanopyColor` enum still holds the token
   VALUES on both platforms.
@@ -638,9 +638,9 @@ How the system is built and why.
   debounced `pushRecentThoughts` on every list change so the wrist stays fresh. A no-op where
   WatchConnectivity is unavailable, so the iOS-only path is unchanged.
 
-## Shared source (`ios/ThoughtStreamShared/`) and the watch target
+## Shared source (`ios/ThoughtBufferShared/`) and the watch target
 
-- `ThoughtStreamShared/` (spec 0023) - platform-neutral source compiled into BOTH the iOS app and the
+- `ThoughtBufferShared/` (spec 0023) - platform-neutral source compiled into BOTH the iOS app and the
   watchOS app, so the two sides share ONE definition and cannot drift. Holds `WatchConnectivityPayload`
   (the `WatchCaptureMetadata` and `RecentThoughtProjection` value types plus the pure `WatchConnectivityCodec`
   that encodes/decodes them to the plist-safe `[String: Any]` dictionaries a `WCSession` moves - no
@@ -651,7 +651,7 @@ How the system is built and why.
   call site). Also `RecentThoughtsProjector` (pure `[Thought]` -> capped `[RecentThoughtProjection]`) and
   `CanopyColorWatch` (the hand-owned watchOS `Color(light:dark:)`/`Color(rgb:)` glue, `#if os(watchOS)`,
   kept out of the generated `Tokens.swift`).
-- `ThoughtStreamWatch Watch App/` (spec 0023) - the watchOS app. `ThoughtStreamWatchApp` roots a two-tab
+- `ThoughtBufferWatch Watch App/` (spec 0023) - the watchOS app. `ThoughtBufferWatchApp` roots a two-tab
   `TabView` (Capture / Recent). `WatchRecorder` records the mic to `.m4a` (`AVAudioRecorder`) with a
   start/stop haptic; `WatchConnectivityManager` (the watch `WCSession`) `transferFile`s a capture reliably,
   receives the recent-thoughts application context (published for the list), and requests/receives audio on
@@ -659,13 +659,13 @@ How the system is built and why.
   `WatchThoughtDetailView` shows a thought's text and plays its audio via `WatchAudioPlayer` (`AVAudioPlayer`).
   The watch target also compiles the specific platform-neutral iOS files it reuses (`Thought`,
   `RecordingTiming`, `ParagraphGrouper`, `SentenceTokenizer`, `Tokens`) rather than forking them.
-- **XcodeGen targets (spec 0023):** `ThoughtStreamWatch` is a watchOS `application` (deployment target 26.0),
-  companion bundle id `com.rogueoak.thoughtstream.watchkitapp`, embedded in the iOS app via a `dependencies:
-  embed: true` entry; the iOS app and the watch app both list `ThoughtStreamShared` in their sources. A
-  `ThoughtStreamWatch` scheme builds/runs it on a paired watch simulator. Code signing is disabled for the
+- **XcodeGen targets (spec 0023):** `ThoughtBufferWatch` is a watchOS `application` (deployment target 26.0),
+  companion bundle id `com.rogueoak.thoughtbuffer.watchkitapp`, embedded in the iOS app via a `dependencies:
+  embed: true` entry; the iOS app and the watch app both list `ThoughtBufferShared` in their sources. A
+  `ThoughtBufferWatch` scheme builds/runs it on a paired watch simulator. Code signing is disabled for the
   `watchsimulator` SDK (like the iphonesimulator config), so the unsigned build stays green.
 
-Tests live in `ios/ThoughtStreamTests/` (a `bundle.unit-test` target): `ThoughtStore`, `Thought`
+Tests live in `ios/ThoughtBufferTests/` (a `bundle.unit-test` target): `ThoughtStore`, `Thought`
 Markdown, `DictationViewModel` save/reload, the `MiraCommandParser` grammar, `SentenceTokenizer`,
 Mira command execution (thought mutations, new thought, read-back via a `Speaker` stub, and
 `TextProcessor` result routing via stub capture/speaker doubles), the `ICloudThoughtStore` coordinated

@@ -2,7 +2,7 @@
 
 ## App icon
 
-`app-icon.svg` is the source of truth for the Thought Stream app icon: a voice **soundwave**
+`app-icon.svg` is the source of truth for the Thought Buffer app icon: a voice **soundwave**
 drawn in the Rogue Oak node-graph style (gradient strokes with node caps) on a deep radial
 background, colored with the **River Mist** palette. The gold spark on the tallest peak is the
 "live" indicator and the family tie-in to the Rogue Oak avatar.
@@ -29,7 +29,7 @@ The icon uses no transparency and no rounded corners; iOS applies the rounded-sq
 ## Wordmark
 
 `wordmark.svg` is the horizontal logo: the app-icon soundwave in an 84 x 84 product tile, next to
-the "Thought Stream" wordmark and a one-line descriptor. It is drawn in the shared Rogue Oak logo
+the "Thought Buffer" wordmark and a one-line descriptor. It is drawn in the shared Rogue Oak logo
 language (520 x 150 canvas, monoline mark, accent underline) so it sits in the same family as the
 Spectra, Trellis, and Canopy wordmarks. Use it wherever the name needs to read as a logo - the top
 of this README, the rogueoak.com Coming Soon section, docs. For a square badge (app stores, avatars)

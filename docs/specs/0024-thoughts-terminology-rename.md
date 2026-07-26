@@ -5,7 +5,7 @@
 Device feedback from Matthew (2026-07-19):
 
 > I want to be really consistent with terminology. I keep interchanging notes and
-> thoughts. Let's stick to "thoughts" as the nomenclature. This is Thought Stream
+> thoughts. Let's stick to "thoughts" as the nomenclature. This is Thought Buffer
 > after all.
 
 Decision (confirmed): rename BOTH user-facing text AND code symbols from "note" to
@@ -56,7 +56,7 @@ reduces confusion, but do not churn the whole history.
   contract. Renaming any of these would ORPHAN or corrupt every existing saved
   thought. The rename is code-symbol + UI-text only; the persisted format is
   untouched. Add/keep a test asserting an existing on-disk file still loads.
-- App name, bundle identifier, scheme (`ThoughtStream`) are already correct - leave
+- App name, bundle identifier, scheme (`ThoughtBuffer`) are already correct - leave
   them.
 - No behavior change of any kind - this is a pure rename. The full suite must pass
   unchanged (aside from renamed test symbols).

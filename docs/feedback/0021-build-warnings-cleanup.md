@@ -7,8 +7,8 @@ the notes -> thoughts rename (task 11 / follow-up).
 
 ## Warnings fixed
 
-1. **ThoughtStreamIntents.swift** - "Stored property 'starter' of Sendable-conforming struct
-   'StartThoughtStreamIntent' has non-Sendable type 'any SessionStarter'" (same for
+1. **ThoughtBufferIntents.swift** - "Stored property 'starter' of Sendable-conforming struct
+   'StartThoughtBufferIntent' has non-Sendable type 'any SessionStarter'" (same for
    `NewThoughtIntent`).
    Fix: made the `SessionStarter` protocol require `Sendable` (`SessionStarter.swift`). Every
    conformer is already a `@MainActor final class` (`PendingSessionRoute`,
@@ -80,9 +80,9 @@ the notes -> thoughts rename (task 11 / follow-up).
 ## Siri phrase disambiguation (task 11 / follow-up)
 
 After notes -> thoughts, the `NewThoughtIntent` phrase "New thought in <app>" was IDENTICAL to a
-phrase on `StartThoughtStreamIntent`, so Siri disambiguated the two intents unpredictably. Fix:
+phrase on `StartThoughtBufferIntent`, so Siri disambiguated the two intents unpredictably. Fix:
 dropped "New thought in" from the start intent's phrase set (and its `startPhraseLeads`), leaving
-it to the new-thought intent alone. The start intent keeps "Start a thought stream in / Start a
+it to the new-thought intent alone. The start intent keeps "Start a thought in / Start a
 stream in / Start dictating in"; the new-thought intent keeps "New thought in / Start a thought
 in". No phrase is now shared across the two intents; each intent's behavior is unchanged. A test
 assertion (`SessionStartTests`) now pins that the two phrase-lead sets are disjoint.

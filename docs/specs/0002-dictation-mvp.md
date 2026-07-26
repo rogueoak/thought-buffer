@@ -3,7 +3,7 @@
 ## Problem
 
 The themed shell (spec 0001) ships a mock dictation screen: a timer reveals a canned string,
-the waveform is decorative, and nothing is saved. To be a real notes app, Thought Stream needs
+the waveform is decorative, and nothing is saved. To be a real notes app, Thought Buffer needs
 to turn speech into text on the device and keep it. This milestone makes dictation real: you
 tap Record, talk, and your words stream into a note that saves as a Markdown file and shows up
 in the Stream list, all on device with no network.
@@ -42,7 +42,7 @@ In:
   is live caret text. No reset guessing, no task-restart heuristics.
 - Start / stop / pause / resume of capture.
 - Real microphone level driving the waveform (RMS of the audio buffer).
-- `NoteStore` that saves and loads notes as Markdown files in `Documents/ThoughtStream/`.
+- `NoteStore` that saves and loads notes as Markdown files in `Documents/ThoughtBuffer/`.
 - Stream list and note detail read real saved notes.
 - Microphone + speech authorization, with denied/restricted/unavailable states handled in-app.
 - Usage strings in `project.yml` (`NSMicrophoneUsageDescription`,
@@ -117,7 +117,7 @@ Speech + microphone authorization is unchanged (`SFSpeechRecognizer.requestAutho
 ### Storage
 
 - `NoteStore` persists each note as one `.md` file under
-  `Documents/ThoughtStream/<id>.md` (directory created if missing).
+  `Documents/ThoughtBuffer/<id>.md` (directory created if missing).
 - Format: YAML frontmatter (`id`, `title`, `created`) then the body, paragraphs joined by a
   blank line. Title is the first line of the first paragraph (trimmed, capped), or a generated
   "Note <date>" if empty.
@@ -150,7 +150,7 @@ Speech + microphone authorization is unchanged (`SFSpeechRecognizer.requestAutho
 - [ ] On first run (or a new locale) the model asset installs and a "preparing on-device speech"
       state shows until it is ready; an unsupported locale / offline failure shows a clear message.
 - [ ] Pause halts capture and keeps the note; resume continues the same note.
-- [ ] Stop saves a `.md` file under `Documents/ThoughtStream/` and returns to the Stream list
+- [ ] Stop saves a `.md` file under `Documents/ThoughtBuffer/` and returns to the Stream list
       with the new note at the top; reopening it shows the saved paragraphs.
 - [ ] Denied/unavailable permission shows a clear in-app message, not a crash or silence.
 - [ ] `NoteStore` unit tests (save/load round-trip, paragraph split/join, sorting, frontmatter

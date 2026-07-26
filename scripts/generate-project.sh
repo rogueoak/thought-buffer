@@ -13,4 +13,4 @@ fi
 
 cd "$root/ios"
 xcodegen generate
-echo "[generate-project] Regenerated ios/ThoughtStream.xcodeproj"
+echo "[generate-project] Regenerated ios/ThoughtBuffer.xcodeproj"

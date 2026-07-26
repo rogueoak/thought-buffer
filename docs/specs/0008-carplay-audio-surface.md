@@ -2,9 +2,9 @@
 
 ## Problem
 
-Spec 0007 gave Thought Stream a real voice-recording and playback identity: each note keeps a
+Spec 0007 gave Thought Buffer a real voice-recording and playback identity: each note keeps a
 compressed `.m4a` of the voice that produced it, with per-paragraph timings, and the detail view
-plays it back. Spec 0005 scaffolded a dormant CarPlay scene with one "Start a thought stream" row.
+plays it back. Spec 0005 scaffolded a dormant CarPlay scene with one "Start a thought" row.
 Neither yet makes the app an Audio app: there is no way to browse and play your recordings in the
 car, and playing a note on the phone shows nothing on the lock screen or Control Center.
 
@@ -21,7 +21,7 @@ Observable behavior when done:
 
 - **CarPlay recordings browser.** The CarPlay root is a `CPListTemplate` listing notes that HAVE a
   recording, newest first, each row showing title, relative date, and recording duration. A top
-  "Start a thought stream" row still triggers the shared `SessionStarter` (hands-free capture).
+  "Start a thought" row still triggers the shared `SessionStarter` (hands-free capture).
   Tapping a note plays its `.m4a` and pushes the CarPlay Now Playing template with working play /
   pause (and skip-forward / skip-back over the note). When the note list changes (a session saved, a
   synced-in note), the list refreshes live.

@@ -82,10 +82,10 @@ play).
 
 ## What shipped
 
-A watchOS app target (`ThoughtStreamWatch`), paired with and embedded in the iOS app
-(companion bundle id `com.rogueoak.thoughtstream.watchkitapp`, watchOS 26). It shares
+A watchOS app target (`ThoughtBufferWatch`), paired with and embedded in the iOS app
+(companion bundle id `com.rogueoak.thoughtbuffer.watchkitapp`, watchOS 26). It shares
 the `Thought` model, timing math, paragraph grouper, and Canopy tokens with the phone
-(added to the watch target's sources), plus a new platform-neutral `ThoughtStreamShared`
+(added to the watch target's sources), plus a new platform-neutral `ThoughtBufferShared`
 group compiled into both sides.
 
 - **Quick capture (watch):** a prominent Record control (`WatchCaptureView` +

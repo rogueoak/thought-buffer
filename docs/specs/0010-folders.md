@@ -21,7 +21,7 @@ hidden tag.
 - **Sort.** The list (top level and inside any folder) sorts by a chosen order, persisted across
   launches: newest-oldest (default), oldest-newest, title A-Z, title Z-A. Folders sort among notes by
   the same key (a folder's "date" is its most recent note; its "title" is its name).
-- **Real files.** A note in a folder lives at `Documents/ThoughtStream/<folder>/.../<id>.md` with its
+- **Real files.** A note in a folder lives at `Documents/ThoughtBuffer/<folder>/.../<id>.md` with its
   `<id>.m4a` beside it, so the grouping is visible and portable in Files / iCloud Drive. The Markdown
   file format is unchanged - a note's folder is its location, not a frontmatter field.
 
